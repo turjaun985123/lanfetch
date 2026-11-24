@@ -43,7 +43,8 @@ object AutoindexParser {
                 URLDecoder.decode(abs.substringAfterLast('/', abs), "UTF-8")
             } catch (e: Exception) { abs.substringAfterLast('/') }
             val isDir = href.endsWith("/") || abs.endsWith("/")
-            val name = decoded.trimEnd('/').ifBlank { continue }
+            val name = decoded.trimEnd('/')
+            if (name.isBlank()) continue
             if (name.equals("Parent Directory", true)) continue
 
             // size / date usually live in the same table row or the same <pre> line
