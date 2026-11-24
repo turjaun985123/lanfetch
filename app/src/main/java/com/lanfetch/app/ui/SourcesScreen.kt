@@ -1,0 +1,182 @@
+package com.lanfetch.app.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.lanfetch.app.data.Source
+import java.text.DateFormat
+import java.util.Date
+
+@Composable
+fun SourcesScreen(vm: MainViewModel) {
+    val sources by vm.sources.collectAsState()
+    val syncing by vm.syncing.collectAsState()
+    val message by vm.syncMessage.collectAsState()
+    var showAdd by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Servers", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    "Directory servers on your LAN. Sync crawls them and builds your catalog.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(onClick = { vm.syncAll() }, enabled = syncing.isEmpty()) {
+                Icon(Icons.Filled.Sync, contentDescription = null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp)); Text("Sync all")
+            }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { showAdd = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp)); Text("Add")
+            }
+        }
+
+        if (message != null) {
+            Text(
+                message!!,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(sources, key = { it.id }) { source ->
+                SourceCard(
+                    source = source,
+                    syncProgress = syncing[source.id],
+                    onSync = { vm.syncSource(source) },
+                    onDelete = { vm.deleteSource(source) },
+                    onEnabled = { vm.setSourceEnabled(source, it) },
+                )
+            }
+        }
+    }
+
+    if (showAdd) {
+        var name by remember { mutableStateOf("") }
+        var url by remember { mutableStateOf("http://") }
+        AlertDialog(
+            onDismissRequest = { showAdd = false },
+            title = { Text("Add directory server") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
+                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Root URL (ends with /)") }, singleLine = true)
+                    Text(
+                        "Any HTTP server with directory listing enabled (Apache / nginx autoindex).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.addSource(name, url.trim()); showAdd = false }, enabled = url.startsWith("http")) {
+                    Text("Add server")
+                }
+            },
+            dismissButton = { TextButton(onClick = { showAdd = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+@Composable
+private fun SourceCard(
+    source: Source,
+    syncProgress: com.lanfetch.app.net.SyncProgress?,
+    onSync: () -> Unit,
+    onDelete: () -> Unit,
+    onEnabled: (Boolean) -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(source.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(source.rootUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = source.enabled, onCheckedChange = onEnabled)
+            }
+            Text(
+                when {
+                    source.itemCount > 0 && source.lastSynced > 0 ->
+                        "${source.itemCount} files • last synced ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(source.lastSynced))}"
+                    source.lastSynced > 0 -> "Synced, no video files found"
+                    else -> "Never synced"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!source.lastError.isNullOrBlank()) {
+                Text(source.lastError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (syncProgress != null) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(
+                    "Scanning… ${syncProgress.foldersScanned} folders, ${syncProgress.itemsFound} files",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onSync, enabled = syncProgress == null) {
+                    Icon(Icons.Filled.Sync, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp)); Text("Sync")
+                }
+                OutlinedButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp)); Text("Remove")
+                }
+            }
+        }
+    }
+}
