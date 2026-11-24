@@ -39,9 +39,10 @@ object AutoindexParser {
             // must be inside (or equal to a child of) the base directory
             if (!abs.startsWith(base) && abs != base.trimEnd('/')) continue
 
+            val trimmedAbs = abs.trimEnd('/')
             val decoded = try {
-                URLDecoder.decode(abs.substringAfterLast('/', abs), "UTF-8")
-            } catch (e: Exception) { abs.substringAfterLast('/') }
+                URLDecoder.decode(trimmedAbs.substringAfterLast('/', trimmedAbs), "UTF-8")
+            } catch (e: Exception) { trimmedAbs.substringAfterLast('/') }
             val isDir = href.endsWith("/") || abs.endsWith("/")
             val name = decoded.trimEnd('/')
             if (name.isBlank()) continue
