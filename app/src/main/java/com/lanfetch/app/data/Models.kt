@@ -19,6 +19,7 @@ data class CatalogItem(
     val kind: String = "movie",       // movie / episode
     val season: Int? = null,
     val episode: Int? = null,
+    val posterUrl: String? = null,
     val sizeBytes: Long = -1,
     val modified: String? = null,
     val favorite: Boolean = false,

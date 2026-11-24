@@ -29,6 +29,9 @@ with no resume. LanFetch fixes that.
 - **Wi-Fi only** mode, speed smoothing (EMA), per-segment progress map in the UI.
 
 **Catalog**
+- **Folder posters** — the photo inside each movie folder (poster.jpg /
+  folder.jpg / cover.jpg…) is detected during the crawl and shown on the
+  library cards (Coil, cached); shows inherit their title folder's poster.
 - Crawler for Apache / nginx / lighttpd directory listings (autoindex).
 - Release-name metadata parser: clean title, year, quality
   (2160p/1080p/720p/480p/CAM), release type (BluRay/WEB-DL/…), codec

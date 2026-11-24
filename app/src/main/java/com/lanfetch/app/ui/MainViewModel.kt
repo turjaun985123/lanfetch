@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -38,13 +39,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val filter = MutableStateFlow(CatalogFilter())
 
+    // Filtering / faceting / grouping run on a background dispatcher: with a
+    // 40k-item catalog, doing this on the main thread is what made the UI jank.
     val filtered: StateFlow<List<CatalogItem>> = combine(items, filter) { list, f ->
         FilterEngine.apply(list, f)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val facets: StateFlow<FilterEngine.Facets> = items
         .map { FilterEngine.facets(it) }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FilterEngine.facets(emptyList()))
+
+    /** One entry per title folder: representative (largest file, poster first) + all files. */
+    val groups: StateFlow<List<Pair<CatalogItem, List<CatalogItem>>>> = filtered
+        .map { list ->
+            list.groupBy { it.folderUrl }.values.map { group ->
+                val rep = group.maxWithOrNull(
+                    compareBy<CatalogItem> { it.posterUrl != null }.thenBy { it.sizeBytes }
+                )!!
+                rep to group
+            }.sortedBy { it.first.title.lowercase() }
+        }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val downloads: StateFlow<List<DownloadUi>> = lanApp.downloadManager.observeUi()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -81,12 +99,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .mapNotNull { row -> row.modified?.let { row.url to it } }.toMap()
             val freshUrls = java.util.Collections.synchronizedSet(HashSet<String>())
 
+            var lastProgressUi = 0L
             val result = try {
                 scraper.syncSource(
                     source = source,
                     selectedCategories = source.selectedCategories,
                     knownMtimes = knownMtimes,
-                    onProgress = { p -> syncing.value = syncing.value + (source.id to p) },
+                    onProgress = { p ->
+                        val t = System.currentTimeMillis()
+                        if (t - lastProgressUi >= 400) {
+                            lastProgressUi = t
+                            syncing.value = syncing.value + (source.id to p)
+                        }
+                    },
                     onBatch = { batch ->
                         freshUrls += batch.map { it.fileUrl }
                         db.items().insertAll(batch.map { ItemEntity.from(it) })

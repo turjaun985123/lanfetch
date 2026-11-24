@@ -58,6 +58,31 @@ class Scraper(
         const val WORKERS = 12
         const val BATCH_SIZE = 100
 
+        private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+
+        /**
+         * Best poster candidate in a folder listing. Servers put a photo in
+         * almost every movie folder (poster.jpg / folder.jpg / cover.jpg…);
+         * prefer those names, else the first image in the folder.
+         */
+        fun pickPoster(entries: List<DirEntry>): String? {
+            fun score(name: String): Int {
+                val n = name.lowercase()
+                return when {
+                    "poster" in n -> 5
+                    "folder" in n -> 4
+                    "cover" in n -> 4
+                    "fanart" in n -> 3
+                    "backdrop" in n -> 2
+                    else -> 1
+                }
+            }
+            return entries
+                .filter { !it.isDir && it.name.substringAfterLast('.', "").lowercase() in imageExtensions }
+                .maxByOrNull { score(it.name) }
+                ?.url
+        }
+
         fun defaultClient(): OkHttpClient {
             val dispatcher = Dispatcher().apply {
                 maxRequests = 64
@@ -92,6 +117,7 @@ class Scraper(
         val folderName: String,
         val depth: Int,
         val modified: String?,
+        val inheritedPoster: String? = null,
     )
 
     suspend fun syncSource(
@@ -149,6 +175,7 @@ class Scraper(
             if (scanned >= MAX_FOLDERS) return
 
             val hasVideos = entries.any { !it.isDir && MetaParser.isVideoFile(it.name) }
+            val folderPoster = pickPoster(entries) ?: node.inheritedPoster
 
             for (entry in entries) {
                 if (entry.isDir) {
@@ -161,6 +188,7 @@ class Scraper(
                             folderName = entry.name,
                             depth = node.depth + 1,
                             modified = entry.modified,
+                            inheritedPoster = folderPoster,
                         )
                     )
                 } else if (MetaParser.isVideoFile(entry.name)) {
@@ -176,6 +204,7 @@ class Scraper(
                         sizeBytes = entry.sizeBytes,
                         modified = entry.modified,
                         addedAt = now,
+                        posterUrl = folderPoster,
                     )
                     itemsFound.incrementAndGet()
                     bufferLock.withLock { buffer += item }

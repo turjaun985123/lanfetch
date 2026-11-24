@@ -58,6 +58,7 @@ data class ItemEntity(
     val kind: String,
     val season: Int?,
     val episode: Int?,
+    val posterUrl: String? = null,
     val sizeBytes: Long,
     val modified: String?,
     val favorite: Boolean = false,
@@ -65,14 +66,14 @@ data class ItemEntity(
 ) {
     fun toModel() = CatalogItem(
         id, sourceId, sourceName, category, folderUrl, fileUrl, fileName, title, year,
-        quality, sourceTag, codec, audio, language, kind, season, episode, sizeBytes,
-        modified, favorite, addedAt,
+        quality, sourceTag, codec, audio, language, kind, season, episode, posterUrl,
+        sizeBytes, modified, favorite, addedAt,
     )
     companion object {
         fun from(m: CatalogItem) = ItemEntity(
             m.id, m.sourceId, m.sourceName, m.category, m.folderUrl, m.fileUrl, m.fileName,
             m.title, m.year, m.quality, m.sourceTag, m.codec, m.audio, m.language, m.kind,
-            m.season, m.episode, m.sizeBytes, m.modified, m.favorite, m.addedAt,
+            m.season, m.episode, m.posterUrl, m.sizeBytes, m.modified, m.favorite, m.addedAt,
         )
     }
 }
@@ -197,7 +198,7 @@ interface DownloadDao {
 
 @Database(
     entities = [SourceEntity::class, ItemEntity::class, DownloadEntity::class, FolderIndexEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDb : RoomDatabase() {

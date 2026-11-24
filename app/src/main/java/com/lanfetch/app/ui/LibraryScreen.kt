@@ -74,6 +74,7 @@ import com.lanfetch.app.filter.SortBy
 @Composable
 fun LibraryScreen(vm: MainViewModel) {
     val filtered by vm.filtered.collectAsState()
+    val groups by vm.groups.collectAsState()
     val filter by vm.filter.collectAsState()
     val facets by vm.facets.collectAsState()
     val allItems by vm.items.collectAsState()
@@ -81,13 +82,6 @@ fun LibraryScreen(vm: MainViewModel) {
 
     var showFilterSheet by remember { mutableStateOf(false) }
     var selectedGroup by remember { mutableStateOf<List<CatalogItem>?>(null) }
-
-    // One card per title folder; the biggest file represents the group.
-    val groups = remember(filtered) {
-        filtered.groupBy { it.folderUrl }.values.map { group ->
-            group.maxByOrNull { it.sizeBytes }!! to group
-        }.sortedBy { it.first.title.lowercase() }
-    }
 
     Column(Modifier.fillMaxSize()) {
         // Search
@@ -240,6 +234,14 @@ private fun TitleCard(
                     fontWeight = FontWeight.Bold,
                     color = Color.White.copy(alpha = 0.9f),
                 )
+                if (rep.posterUrl != null) {
+                    coil.compose.AsyncImage(
+                        model = rep.posterUrl,
+                        contentDescription = rep.title,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 if (rep.quality != null) {
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(8.dp)
@@ -462,6 +464,15 @@ private fun GroupDetailSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (rep.posterUrl != null) {
+                    coil.compose.AsyncImage(
+                        model = rep.posterUrl,
+                        contentDescription = rep.title,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
                 Column(Modifier.weight(1f)) {
                     Text(rep.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(

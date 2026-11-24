@@ -220,6 +220,7 @@ class DownloadManager(
             }
 
             var lastSave = 0L
+            var lastLive = 0L
             var lastBytes = SegmentPlanner.totalDownloaded(segments)
             var lastTime = System.currentTimeMillis()
             var speed = 0.0
@@ -231,7 +232,10 @@ class DownloadManager(
                     speed = if (speed == 0.0) inst else speed * 0.7 + inst * 0.3
                     lastBytes = downloaded; lastTime = now
                 }
-                live.value = live.value + (id to LiveProgress(downloaded, speed, segments.map { it.copy() }))
+                if (now - lastLive >= 300) {
+                    lastLive = now
+                    live.value = live.value + (id to LiveProgress(downloaded, speed, segments.map { it.copy() }))
+                }
                 if (now - lastSave >= 1000) {
                     lastSave = now
                     scope.launch {

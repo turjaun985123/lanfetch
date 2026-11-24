@@ -128,6 +128,7 @@ object MetaParser {
         sizeBytes: Long,
         modified: String?,
         addedAt: Long,
+        posterUrl: String? = null,
     ): CatalogItem {
         val haystack = "$folderName $fileName"
         val se = seRe.find(fileName) ?: seRe.find(folderName)
@@ -149,6 +150,7 @@ object MetaParser {
             kind = if (se != null || seasonDir != null) "episode" else "movie",
             season = se?.groupValues?.get(1)?.toIntOrNull() ?: seasonDir?.groupValues?.get(1)?.toIntOrNull(),
             episode = se?.groupValues?.get(2)?.toIntOrNull(),
+            posterUrl = posterUrl,
             sizeBytes = sizeBytes,
             modified = modified,
             addedAt = addedAt,
