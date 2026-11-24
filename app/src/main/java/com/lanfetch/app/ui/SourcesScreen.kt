@@ -1,5 +1,6 @@
 package com.lanfetch.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -94,9 +95,75 @@ fun SourcesScreen(vm: MainViewModel) {
                     onSync = { vm.syncSource(source) },
                     onDelete = { vm.deleteSource(source) },
                     onEnabled = { vm.setSourceEnabled(source, it) },
+                    onCategories = { vm.openCategoryPicker(source) },
                 )
             }
         }
+    }
+
+    val picker by vm.categoryPicker.collectAsState()
+    val pickerLoading by vm.categoryPickerLoading.collectAsState()
+    if (pickerLoading) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Loading categories…") },
+            text = { LinearProgressIndicator(Modifier.fillMaxWidth()) },
+            confirmButton = { },
+        )
+    }
+    val pickerData = picker
+    if (pickerData != null) {
+        val (pickerSource, allCategories) = pickerData
+        var selected by remember(pickerSource.id) {
+            mutableStateOf(
+                if (pickerSource.selectedCategories.isEmpty()) allCategories.toSet()
+                else pickerSource.selectedCategories
+            )
+        }
+        AlertDialog(
+            onDismissRequest = { vm.closeCategoryPicker() },
+            title = { Text("Categories — ${pickerSource.name}") },
+            text = {
+                Column {
+                    Text(
+                        "Only selected categories are crawled. Untick the ones you never watch — this is the biggest sync speedup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { selected = allCategories.toSet() }) { Text("All") }
+                        OutlinedButton(onClick = { selected = emptySet() }) { Text("None") }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(Modifier.fillMaxWidth().height(320.dp)) {
+                        items(allCategories) { cat ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    selected = if (cat in selected) selected - cat else selected + cat
+                                }.padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = cat in selected,
+                                    onCheckedChange = { checked ->
+                                        selected = if (checked) selected + cat else selected - cat
+                                    },
+                                )
+                                Text(cat, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    // "All ticked" is stored as empty selection = crawl everything.
+                    vm.saveCategories(pickerSource, if (selected.size == allCategories.size) emptySet() else selected)
+                }) { Text("Save (${selected.size})") }
+            },
+            dismissButton = { TextButton(onClick = { vm.closeCategoryPicker() }) { Text("Cancel") } },
+        )
     }
 
     if (showAdd) {
@@ -133,6 +200,7 @@ private fun SourceCard(
     onSync: () -> Unit,
     onDelete: () -> Unit,
     onEnabled: (Boolean) -> Unit,
+    onCategories: () -> Unit,
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -156,6 +224,15 @@ private fun SourceCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (source.selectedCategories.isNotEmpty()) {
+                Text(
+                    "Syncing ${source.selectedCategories.size} selected categories: " +
+                        source.selectedCategories.take(3).joinToString(", ") +
+                        if (source.selectedCategories.size > 3) "…" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             if (!source.lastError.isNullOrBlank()) {
                 Text(source.lastError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
@@ -171,6 +248,9 @@ private fun SourceCard(
                 Button(onClick = onSync, enabled = syncProgress == null) {
                     Icon(Icons.Filled.Sync, contentDescription = null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp)); Text("Sync")
+                }
+                OutlinedButton(onClick = onCategories) {
+                    Text("Categories")
                 }
                 OutlinedButton(onClick = onDelete) {
                     Icon(Icons.Filled.Delete, contentDescription = null, Modifier.size(18.dp))

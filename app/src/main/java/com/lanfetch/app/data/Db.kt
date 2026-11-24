@@ -24,10 +24,18 @@ data class SourceEntity(
     val lastSynced: Long = 0,
     val lastError: String? = null,
     val itemCount: Int = 0,
+    val selectedCategories: String = "",
 ) {
-    fun toModel() = Source(id, name, rootUrl, enabled, lastSynced, lastError, itemCount)
+    fun toModel() = Source(
+        id, name, rootUrl, enabled, lastSynced, lastError, itemCount,
+        selectedCategories = if (selectedCategories.isBlank()) emptySet()
+        else selectedCategories.split("\n").filter { it.isNotBlank() }.toSet(),
+    )
     companion object {
-        fun from(s: Source) = SourceEntity(s.id, s.name, s.rootUrl, s.enabled, s.lastSynced, s.lastError, s.itemCount)
+        fun from(s: Source) = SourceEntity(
+            s.id, s.name, s.rootUrl, s.enabled, s.lastSynced, s.lastError, s.itemCount,
+            selectedCategories = s.selectedCategories.joinToString("\n"),
+        )
     }
 }
 
@@ -86,6 +94,31 @@ data class DownloadEntity(
     val updatedAt: Long = 0,
 )
 
+@Entity(tableName = "folder_index", primaryKeys = ["sourceId", "url"])
+data class FolderIndexEntity(
+    val sourceId: Long,
+    val url: String,
+    val modified: String?,
+)
+
+@Dao
+interface FolderIndexDao {
+    @Query("SELECT * FROM folder_index WHERE sourceId = :sourceId")
+    suspend fun forSource(sourceId: Long): List<FolderIndexEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(rows: List<FolderIndexEntity>)
+
+    @Query("DELETE FROM folder_index WHERE sourceId = :sourceId")
+    suspend fun deleteForSource(sourceId: Long)
+
+    @Transaction
+    suspend fun replaceForSource(sourceId: Long, rows: List<FolderIndexEntity>) {
+        deleteForSource(sourceId)
+        insertAll(rows)
+    }
+}
+
 @Dao
 interface SourceDao {
     @Query("SELECT * FROM sources ORDER BY name")
@@ -124,6 +157,9 @@ interface ItemDao {
     @Query("UPDATE items SET favorite = :fav WHERE id = :id")
     suspend fun setFavorite(id: Long, fav: Boolean)
 
+    @Query("DELETE FROM items WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Transaction
     suspend fun replaceForSource(sourceId: Long, items: List<ItemEntity>, favoritesByUrl: Map<String, Boolean>) {
         val merged = items.map { e ->
@@ -161,11 +197,12 @@ interface DownloadDao {
 
 @Database(
     entities = [SourceEntity::class, ItemEntity::class, DownloadEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDb : RoomDatabase() {
     abstract fun sources(): SourceDao
+    abstract fun folders(): FolderIndexDao
     abstract fun items(): ItemDao
     abstract fun downloads(): DownloadDao
 

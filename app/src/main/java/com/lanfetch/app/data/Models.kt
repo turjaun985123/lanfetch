@@ -34,4 +34,5 @@ data class Source(
     val lastSynced: Long = 0,
     val lastError: String? = null,
     val itemCount: Int = 0,
+    val selectedCategories: Set<String> = emptySet(),
 )

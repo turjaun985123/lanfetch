@@ -50,7 +50,7 @@ class DownloadEngine(
         // HEAD first
         try {
             val head = Request.Builder().url(url).head()
-                .header("User-Agent", "LanFetch/1.0").build()
+                .header("User-Agent", "LanFetch/1.1").build()
             client.newCall(head).execute().use { res ->
                 if (res.isSuccessful) {
                     val len = res.header("Content-Length")?.toLongOrNull() ?: -1
@@ -62,7 +62,7 @@ class DownloadEngine(
         // Range probe: bytes=0-0 -> Content-Range: bytes 0-0/TOTAL
         val req = Request.Builder().url(url)
             .header("Range", "bytes=0-0")
-            .header("User-Agent", "LanFetch/1.0").build()
+            .header("User-Agent", "LanFetch/1.1").build()
         client.newCall(req).execute().use { res ->
             val cr = res.header("Content-Range")
             val total = cr?.substringAfterLast('/')?.toLongOrNull() ?: -1
@@ -121,7 +121,7 @@ class DownloadEngine(
                 val from = seg.start + seg.downloaded
                 val req = Request.Builder().url(url)
                     .header("Range", "bytes=$from-${seg.end}")
-                    .header("User-Agent", "LanFetch/1.0")
+                    .header("User-Agent", "LanFetch/1.1")
                     .build()
                 client.newCall(req).execute().use { res ->
                     if (res.code == 200) {
@@ -181,7 +181,7 @@ class DownloadEngine(
         while (totalBytes <= 0 || existing < totalBytes) {
             coroutineContext.ensureActive()
             try {
-                val builder = Request.Builder().url(url).header("User-Agent", "LanFetch/1.0")
+                val builder = Request.Builder().url(url).header("User-Agent", "LanFetch/1.1")
                 if (existing > 0) builder.header("Range", "bytes=$existing-")
                 client.newCall(builder.build()).execute().use { res ->
                     if (res.code == 200 && existing > 0) {

@@ -74,27 +74,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun syncSource(source: Source) {
         if (syncing.value.containsKey(source.id)) return
         viewModelScope.launch {
-            syncing.value = syncing.value + (source.id to SyncProgress(0, 0, source.rootUrl))
+            syncing.value = syncing.value + (source.id to SyncProgress(0, 0, 0, source.rootUrl))
             val entity = SourceEntity.from(source)
-            when (val result = scraper.syncSource(source) { p ->
-                syncing.value = syncing.value + (source.id to p)
-            }) {
+            val existing = db.items().forSource(source.id)
+            val knownMtimes = db.folders().forSource(source.id)
+                .mapNotNull { row -> row.modified?.let { row.url to it } }.toMap()
+            val freshUrls = java.util.Collections.synchronizedSet(HashSet<String>())
+
+            val result = try {
+                scraper.syncSource(
+                    source = source,
+                    selectedCategories = source.selectedCategories,
+                    knownMtimes = knownMtimes,
+                    onProgress = { p -> syncing.value = syncing.value + (source.id to p) },
+                    onBatch = { batch ->
+                        freshUrls += batch.map { it.fileUrl }
+                        db.items().insertAll(batch.map { ItemEntity.from(it) })
+                    },
+                )
+            } catch (e: Exception) {
+                com.lanfetch.app.net.SyncResult.Failed(e.message ?: "Sync failed")
+            }
+
+            when (result) {
                 is SyncResult.Ok -> {
-                    val favorites = db.items().forSource(source.id)
-                        .filter { it.favorite }.associate { it.fileUrl to true }
-                    db.items().replaceForSource(
+                    // Keep rows under pruned (unchanged) folders; drop rows the
+                    // server no longer has.
+                    val kept = existing.filter { item ->
+                        result.prunedFolders.any { item.folderUrl.startsWith(it) }
+                    }
+                    val keepUrls = freshUrls + kept.map { it.fileUrl }
+                    val staleIds = existing.filter { it.fileUrl !in keepUrls }.map { it.id }
+                    staleIds.chunked(500).forEach { db.items().deleteByIds(it) }
+
+                    // Folder index: fresh scans + pruned folders keep old stamps.
+                    val merged = HashMap<String, String?>()
+                    result.prunedFolders.forEach { merged[it] = knownMtimes[it] }
+                    merged.putAll(result.folderMtimes)
+                    db.folders().replaceForSource(
                         source.id,
-                        result.items.map { ItemEntity.from(it) },
-                        favorites,
+                        merged.map { (url, mod) -> com.lanfetch.app.data.FolderIndexEntity(source.id, url, mod) },
                     )
+
+                    val total = keepUrls.size
                     db.sources().update(
                         entity.copy(
                             lastSynced = System.currentTimeMillis(),
                             lastError = null,
-                            itemCount = result.items.size,
+                            itemCount = total,
                         )
                     )
-                    syncMessage.value = "${source.name}: ${result.items.size} files found"
+                    syncMessage.value =
+                        "${source.name}: $total files (${result.prunedFolders.size} folders skipped as unchanged)"
                 }
                 is SyncResult.Failed -> {
                     db.sources().update(entity.copy(lastError = result.message))
@@ -102,6 +133,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             syncing.value = syncing.value - source.id
+        }
+    }
+
+    /** Category picker state: source id -> (all categories, loading flag data) */
+    val categoryPicker = MutableStateFlow<Pair<Source, List<String>>?>(null)
+    val categoryPickerLoading = MutableStateFlow(false)
+
+    fun openCategoryPicker(source: Source) {
+        viewModelScope.launch {
+            categoryPickerLoading.value = true
+            try {
+                val cats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    scraper.fetchCategories(source)
+                }
+                categoryPicker.value = source to cats
+            } catch (e: Exception) {
+                syncMessage.value = "${source.name}: could not list categories (${e.message})"
+            } finally {
+                categoryPickerLoading.value = false
+            }
+        }
+    }
+
+    fun closeCategoryPicker() { categoryPicker.value = null }
+
+    fun saveCategories(source: Source, selected: Set<String>) {
+        viewModelScope.launch {
+            db.sources().update(SourceEntity.from(source.copy(selectedCategories = selected)))
+            categoryPicker.value = null
+            syncMessage.value = if (selected.isEmpty()) {
+                "${source.name}: syncing all categories"
+            } else {
+                "${source.name}: syncing ${selected.size} categories"
+            }
         }
     }
 
