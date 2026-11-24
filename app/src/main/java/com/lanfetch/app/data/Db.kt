@@ -196,7 +196,7 @@ interface DownloadDao {
 }
 
 @Database(
-    entities = [SourceEntity::class, ItemEntity::class, DownloadEntity::class],
+    entities = [SourceEntity::class, ItemEntity::class, DownloadEntity::class, FolderIndexEntity::class],
     version = 2,
     exportSchema = false,
 )
