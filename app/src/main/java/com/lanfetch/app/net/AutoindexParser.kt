@@ -48,8 +48,9 @@ object AutoindexParser {
             if (name.isBlank()) continue
             if (name.equals("Parent Directory", true)) continue
 
-            // size / date usually live in the same table row or the same <pre> line
-            val rowText = a.parent()?.text().orEmpty()
+            // size / date live in the same table row (Apache) or the same
+            // <pre> line (nginx) — climb to the row when there is one
+            val rowText = (a.closest("tr") ?: a.parent())?.text().orEmpty()
             val size = if (isDir) -1 else (MetaParser.parseSize(rowText).takeIf { it >= 0 }
                 ?: sizeNearRe.find(rowText)?.let { MetaParser.parseSize(it.value) } ?: -1)
             val modified = dateRe.find(rowText)?.value
