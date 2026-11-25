@@ -184,7 +184,17 @@ impl Manager {
     }
 
     /// Queue a new download (probes on a worker thread, then starts).
+    /// A URL that is already queued, running or paused is not duplicated
+    /// (the Android download coordinator dedups the same way).
     pub fn enqueue(self: &Arc<Self>, url: String, name: String) {
+        {
+            let tasks = self.tasks.lock().unwrap();
+            if tasks.iter().any(|t| {
+                t.url == url && matches!(t.state, DlState::Queued | DlState::Running | DlState::Paused)
+            }) {
+                return;
+            }
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let progress = Arc::new(Progress::new(0));
         {

@@ -23,11 +23,27 @@ pub struct Settings {
     /// "system" | "light" | "dark" (Android also has AMOLED; the desktop
     /// dark palette already sits on near-black surfaces).
     pub theme: String,
+    /// "system" | "en" | "bn" — UI language (Android: per-app locales).
+    #[serde(default = "default_language")]
+    pub language: String,
+    /// First-run network check completed (Android: onboarding_done).
+    #[serde(default)]
+    pub onboarding_done: bool,
+}
+
+fn default_language() -> String {
+    "system".to_string()
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { connections: 8, max_concurrent: 3, theme: "system".to_string() }
+        Self {
+            connections: 8,
+            max_concurrent: 3,
+            theme: "system".to_string(),
+            language: "system".to_string(),
+            onboarding_done: false,
+        }
     }
 }
 
@@ -83,5 +99,23 @@ pub fn save_sources(items: &[SourceItem]) {
     let _ = std::fs::create_dir_all(dir());
     if let Ok(json) = serde_json::to_string_pretty(items) {
         let _ = std::fs::write(dir().join("sources.json"), json);
+    }
+}
+
+// --------------------------------------------------------------- favorites
+
+/// Favorite title folder URLs (Android: favorites table in Room).
+pub fn load_favorites() -> Vec<String> {
+    let path = dir().join("favorites.json");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_favorites(urls: &[String]) {
+    let _ = std::fs::create_dir_all(dir());
+    if let Ok(json) = serde_json::to_string_pretty(urls) {
+        let _ = std::fs::write(dir().join("favorites.json"), json);
     }
 }
