@@ -41,6 +41,22 @@ class AppContainer(context: Context) {
     val sourceRepository = SourceRepository(db)
     private val cleartextHostPolicy = CleartextHostPolicy()
     val httpClient = defaultHttpClient(cleartextHostPolicy)
+
+    /**
+     * Transfers get their own OkHttp dispatcher (audit B3): the browse client
+     * caps at 14 requests/host, but settings allow up to 16 lanes x 5
+     * downloads. A separate dispatcher (32/host, 64 total) means segment
+     * traffic can neither starve nor be starved by browsing and posters.
+     * Connection pool and interceptors are shared via newBuilder.
+     */
+    val transferClient = httpClient.newBuilder()
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 32
+            },
+        )
+        .build()
     val catalogRepository = CatalogRepository(db)
     val liveClient = LiveServerClient(httpClient)
 
@@ -55,7 +71,7 @@ class AppContainer(context: Context) {
         db = db,
         settingsStore = settingsStore,
         scope = appScope,
-        client = httpClient,
+        client = transferClient,
     )
 
     init {

@@ -266,7 +266,14 @@ class DownloadCoordinator(
     }
 
     private fun startLocked(rec: DownloadEntity) {
-        DownloadService.start(context)
+        if (!DownloadService.start(context)) {
+            // Audit B4: Android refused the foreground-service start
+            // (background auto-resume on Android 12+). Leave the download
+            // queued — running it without the service would get it killed —
+            // and tell the user to open the app.
+            DownloadService.notifyStartRefused(context)
+            return
+        }
         val job = scope.launch { runDownload(rec.id) }
         jobs[rec.id] = job
         job.invokeOnCompletion {

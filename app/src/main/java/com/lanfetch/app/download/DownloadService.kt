@@ -217,9 +217,50 @@ class DownloadService : Service() {
         private const val NOTIFICATION_ID = 42
         private const val ACTION_PAUSE_ALL = "com.lanfetch.app.action.PAUSE_ALL"
 
-        fun start(context: Context) {
+        /**
+         * Starts the foreground service. Returns false when Android refuses
+         * the start (audit B4): on Android 12+ a background start — e.g.
+         * auto-resume firing when Wi-Fi returns while the app is closed —
+         * throws ForegroundServiceStartNotAllowedException. Callers must not
+         * run transfers unprotected in that case.
+         */
+        fun start(context: Context): Boolean {
             val intent = Intent(context, DownloadService::class.java)
-            runCatching { ContextCompat.startForegroundService(context, intent) }
+            return runCatching {
+                ContextCompat.startForegroundService(context, intent)
+                true
+            }.getOrDefault(false)
         }
+
+        @Volatile private var lastRefusalNotifiedAt = 0L
+
+        /** Tells the user downloads are waiting on them opening the app (B4). Throttled to once per 5 min. */
+        fun notifyStartRefused(context: Context) {
+            val now = System.currentTimeMillis()
+            if (now - lastRefusalNotifiedAt < 5 * 60 * 1000L) return
+            lastRefusalNotifiedAt = now
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_DEFAULT),
+                )
+            }
+            val open = PendingIntent.getActivity(
+                context,
+                0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(context, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle("Downloads are waiting")
+                .setContentText("Android needs LanFetch open to restart downloads. Tap to open.")
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            runCatching { manager.notify(REFUSAL_NOTIFICATION_ID, notification) }
+        }
+
+        private const val REFUSAL_NOTIFICATION_ID = 43
     }
 }
