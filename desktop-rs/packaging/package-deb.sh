@@ -4,7 +4,7 @@
 set -eu
 BIN="${1:?usage: package-deb.sh <binary> <output.deb>}"
 OUT="${2:?usage: package-deb.sh <binary> <output.deb>}"
-VERSION="1.0.0"
+VERSION="1.1.0"
 ROOT="$(dirname "$0")"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT

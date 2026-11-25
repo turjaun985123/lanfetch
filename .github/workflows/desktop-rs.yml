@@ -36,13 +36,27 @@ jobs:
       - name: Build release (LTO, stripped)
         run: cargo build --release --locked
 
+      - name: Render UI snapshot (headless)
+        # Every Rune app can render its first frame to a PNG with --snap;
+        # this is the desktop UI's visual check, uploaded as an artifact.
+        continue-on-error: true
+        run: ./target/release/lanfetch-rs --snap "$GITHUB_WORKSPACE/lanfetch-ui.png"
+
+      - name: Upload UI snapshot
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lanfetch-rs-ui
+          path: lanfetch-ui.png
+          if-no-files-found: ignore
+
       - name: Package .deb
         run: |
-          ./packaging/package-deb.sh target/release/lanfetch-rs "$GITHUB_WORKSPACE/lanfetch-rs_1.0.0_amd64.deb"
-          dpkg-deb -I "$GITHUB_WORKSPACE/lanfetch-rs_1.0.0_amd64.deb"
+          ./packaging/package-deb.sh target/release/lanfetch-rs "$GITHUB_WORKSPACE/lanfetch-rs_1.1.0_amd64.deb"
+          dpkg-deb -I "$GITHUB_WORKSPACE/lanfetch-rs_1.1.0_amd64.deb"
 
       - name: Upload .deb
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lanfetch-rs-deb
-          path: lanfetch-rs_1.0.0_amd64.deb
+          path: lanfetch-rs_1.1.0_amd64.deb

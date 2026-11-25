@@ -342,6 +342,10 @@ pub struct Progress {
     pub failed: AtomicBool,
     pub finished: AtomicBool,
     pub message: Mutex<Option<String>>,
+    /// Live per-segment snapshot, refreshed by `run_download` workers after
+    /// every chunk so the UI can draw the Android app's segmented ring and
+    /// per-lane bars while a transfer is running (not just at the end).
+    pub live_segments: Mutex<Vec<Segment>>,
 }
 
 impl Progress {
@@ -352,6 +356,7 @@ impl Progress {
             failed: AtomicBool::new(false),
             finished: AtomicBool::new(false),
             message: Mutex::new(None),
+            live_segments: Mutex::new(Vec::new()),
         }
     }
 }
@@ -388,9 +393,11 @@ pub fn run_download(
         segments.drain(..).map(|s| Arc::new(Mutex::new(s))).collect();
     let already: u64 = seg_state.iter().map(|s| s.lock().unwrap().done).sum();
     progress.downloaded.store(already, Ordering::SeqCst);
+    *progress.live_segments.lock().unwrap() =
+        seg_state.iter().map(|s| *s.lock().unwrap()).collect();
 
     let mut handles = Vec::new();
-    for seg in &seg_state {
+    for (seg_idx, seg) in seg_state.iter().enumerate() {
         if seg.lock().unwrap().remaining() == 0 {
             continue;
         }
@@ -465,6 +472,11 @@ pub fn run_download(
                             {
                                 let mut s = seg.lock().unwrap();
                                 s.done += n as u64;
+                                if let Some(live) =
+                                    progress.live_segments.lock().unwrap().get_mut(seg_idx)
+                                {
+                                    live.done = s.done;
+                                }
                             }
                             progress.downloaded.fetch_add(n as u64, Ordering::SeqCst);
                         }

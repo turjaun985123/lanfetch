@@ -3,6 +3,7 @@
 //! (via the stored Waker) while downloads progress.
 
 use crate::core::*;
+use crate::store::{load_settings, save_settings, Settings};
 use rune::Waker;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -42,12 +43,24 @@ pub struct Task {
     // runtime only
     pub pause_flag: Arc<AtomicBool>,
     pub progress: Arc<Progress>,
+    /// Probed and planned; waiting only for a free concurrency slot.
+    pub ready: bool,
     pub speed_bps: f64,
     last_tick_bytes: u64,
     last_tick_at: std::time::Instant,
 }
 
 impl Task {
+    /// Segments with live progress while running; the persisted plan
+    /// otherwise (identical shape, so the ring renders the same either way).
+    pub fn live_segments(&self) -> Vec<Segment> {
+        let live = self.progress.live_segments.lock().unwrap();
+        if live.is_empty() {
+            self.segments.clone()
+        } else {
+            live.clone()
+        }
+    }
     pub fn downloaded(&self) -> u64 {
         self.progress.downloaded.load(Ordering::SeqCst)
     }
@@ -64,6 +77,7 @@ pub struct Manager {
     pub tasks: Mutex<Vec<Task>>,
     next_id: AtomicU64,
     waker: Mutex<Option<Waker>>,
+    settings: Mutex<Settings>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -86,6 +100,7 @@ impl Manager {
             tasks: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
             waker: Mutex::new(None),
+            settings: Mutex::new(load_settings()),
         });
         if let Ok(raw) = std::fs::read_to_string(state_file()) {
             if let Ok(saved) = serde_json::from_str::<Vec<PersistedTask>>(&raw) {
@@ -109,6 +124,8 @@ impl Manager {
                         },
                         error: p.error,
                         pause_flag: Arc::new(AtomicBool::new(true)),
+                        // A restored task with a plan can resume immediately.
+                        ready: !p.segments.is_empty(),
                         progress,
                         speed_bps: 0.0,
                         last_tick_bytes: downloaded,
@@ -122,6 +139,19 @@ impl Manager {
 
     pub fn set_waker(&self, waker: Waker) {
         *self.waker.lock().unwrap() = Some(waker);
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().unwrap().clone()
+    }
+
+    /// Persist new settings and re-run the scheduler (a raised concurrency
+    /// limit starts waiting downloads immediately).
+    pub fn apply_settings(self: &Arc<Self>, s: Settings) {
+        save_settings(&s);
+        *self.settings.lock().unwrap() = s;
+        self.pump();
+        self.wake();
     }
 
     pub fn wake(&self) {
@@ -168,6 +198,7 @@ impl Manager {
                 state: DlState::Queued,
                 error: None,
                 pause_flag: Arc::new(AtomicBool::new(false)),
+                ready: false,
                 progress,
                 speed_bps: 0.0,
                 last_tick_bytes: 0,
@@ -180,8 +211,9 @@ impl Manager {
         std::thread::spawn(move || match probe_url(&url) {
             Ok(probe) => {
                 let total = probe.total.unwrap_or(0);
+                let lanes = mgr.settings().connections.max(1) as usize;
                 let segments = if probe.accept_ranges {
-                    plan_segments(total, 8)
+                    plan_segments(total, lanes)
                 } else if total > 0 {
                     vec![Segment { start: 0, end: total - 1, done: 0 }]
                 } else {
@@ -193,11 +225,13 @@ impl Manager {
                         t.total = total;
                         t.validator = probe.validator.clone();
                         t.segments = segments;
+                        t.ready = true;
                         t.progress.total.store(total, Ordering::SeqCst);
                     }
                 }
                 mgr.save();
-                mgr.start(id);
+                mgr.pump();
+                mgr.wake();
             }
             Err(e) => {
                 let mut tasks = mgr.tasks.lock().unwrap();
@@ -212,17 +246,53 @@ impl Manager {
         });
     }
 
-    /// Start (or resume) a task's engine thread.
+    /// Resume a paused/failed task: it re-enters the queue and the
+    /// scheduler starts it as soon as a concurrency slot is free.
     pub fn start(self: &Arc<Self>, id: u64) {
-        let (url, name, segments, validator, pause_flag, progress) = {
+        {
             let mut tasks = self.tasks.lock().unwrap();
             let Some(t) = tasks.iter_mut().find(|t| t.id == id) else { return };
-            if t.state == DlState::Running || t.state == DlState::Completed {
+            if t.state == DlState::Running || t.state == DlState::Completed || !t.ready {
                 return;
             }
-            t.state = DlState::Running;
+            t.state = DlState::Queued;
             t.error = None;
-            t.pause_flag.store(false, Ordering::SeqCst);
+        }
+        self.pump();
+        self.wake();
+    }
+
+    /// Scheduler: start ready, queued tasks (in queue order) until the
+    /// configured number of simultaneous downloads is running.
+    pub fn pump(self: &Arc<Self>) {
+        let max = self.settings().max_concurrent.max(1);
+        let mut to_launch: Vec<u64> = Vec::new();
+        {
+            let mut tasks = self.tasks.lock().unwrap();
+            let mut running = tasks.iter().filter(|t| t.state == DlState::Running).count() as u32;
+            for t in tasks.iter_mut() {
+                if running >= max {
+                    break;
+                }
+                if t.state == DlState::Queued && t.ready {
+                    t.state = DlState::Running;
+                    t.error = None;
+                    t.pause_flag.store(false, Ordering::SeqCst);
+                    running += 1;
+                    to_launch.push(t.id);
+                }
+            }
+        }
+        for id in to_launch {
+            self.launch(id);
+        }
+    }
+
+    /// Spawn the engine thread for a task already marked Running by pump().
+    fn launch(self: &Arc<Self>, id: u64) {
+        let (url, name, segments, validator, pause_flag, progress) = {
+            let tasks = self.tasks.lock().unwrap();
+            let Some(t) = tasks.iter().find(|t| t.id == id) else { return };
             (
                 t.url.clone(),
                 t.name.clone(),
@@ -274,6 +344,7 @@ impl Manager {
                 }
             }
             mgr.save();
+            mgr.pump();
             mgr.wake();
         });
     }
@@ -285,7 +356,17 @@ impl Manager {
         }
     }
 
-    pub fn remove(&self, id: u64, delete_part: bool) {
+    /// Drop all completed tasks (the Transfers header's Clear action).
+    pub fn clear_completed(self: &Arc<Self>) {
+        {
+            let mut tasks = self.tasks.lock().unwrap();
+            tasks.retain(|t| t.state != DlState::Completed);
+        }
+        self.save();
+        self.wake();
+    }
+
+    pub fn remove(self: &Arc<Self>, id: u64, delete_part: bool) {
         let removed = {
             let mut tasks = self.tasks.lock().unwrap();
             if let Some(pos) = tasks.iter().position(|t| t.id == id) {
