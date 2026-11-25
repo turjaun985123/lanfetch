@@ -2,7 +2,9 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         mavenCentral()
-        maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
+        // NOT the JetBrains Space compose-dev repo: its DNS failure on GitHub
+        // runners fatally breaks dependency resolution. Release artifacts are
+        // on the Portal / Maven Central.
     }
 }
 dependencyResolutionManagement {
