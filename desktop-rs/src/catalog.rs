@@ -59,6 +59,17 @@ pub struct Category {
 static LISTING_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<DirEntry>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 const LISTING_TTL: Duration = Duration::from_secs(600);
+/// Cap on cached listings: a deep browsing/search session must not pin
+/// thousands of listings in memory for 10 minutes (Engine audit #5).
+const LISTING_CACHE_MAX: usize = 256;
+
+/// Failed listings are remembered briefly: without this, one dead
+/// server re-pays its full connect timeout for every feed node, search
+/// folder and detail open until the user gives up (Engine audit #2 —
+/// the Android client keeps a 45 s unreachable cooldown).
+static LISTING_FAILURES: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const FAILURE_TTL: Duration = Duration::from_secs(45);
 
 pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
     {
@@ -69,11 +80,36 @@ pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
             }
         }
     }
-    let entries = fetch_listing(url)?;
-    LISTING_CACHE
-        .lock()
-        .unwrap()
-        .insert(url.to_string(), (Instant::now(), entries.clone()));
+    {
+        let failures = LISTING_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = failures.get(url) {
+            if at.elapsed() < FAILURE_TTL {
+                return Err("server unreachable (cooldown)".to_string());
+            }
+        }
+    }
+    let entries = match fetch_listing(url) {
+        Ok(entries) => entries,
+        Err(e) => {
+            LISTING_FAILURES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(url.to_string(), Instant::now());
+            return Err(e);
+        }
+    };
+    LISTING_FAILURES.lock().unwrap_or_else(|e| e.into_inner()).remove(url);
+    let mut cache = LISTING_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.len() >= LISTING_CACHE_MAX {
+        // Crude eviction: drop the oldest half (fine for a TTL cache).
+        let mut by_age: Vec<(Instant, String)> =
+            cache.iter().map(|(k, (at, _))| (*at, k.clone())).collect();
+        by_age.sort();
+        for (_, k) in by_age.iter().take(LISTING_CACHE_MAX / 2) {
+            cache.remove(k);
+        }
+    }
+    cache.insert(url.to_string(), (Instant::now(), entries.clone()));
     Ok(entries)
 }
 
@@ -81,6 +117,7 @@ pub fn clear_listing_cache() -> usize {
     let mut cache = LISTING_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let n = cache.len();
     cache.clear();
+    LISTING_FAILURES.lock().unwrap_or_else(|e| e.into_inner()).clear();
     n
 }
 
@@ -373,57 +410,84 @@ impl FeedSession {
 
     pub fn next_page(&mut self, page_size: usize) -> Vec<Title> {
         const MAX_DEPTH: usize = 4;
+        /// Listings fetched concurrently per batch — the Android
+        /// session batches 8-wide; the old port fetched strictly one
+        /// folder at a time, so a page cost 18–108 serial round trips
+        /// (Engine audit #1).
+        const BATCH: usize = 8;
         let mut collected: Vec<Title> = Vec::new();
         let mut requests = 0usize;
         let max_requests = page_size * 6;
         let mut turn = 0usize;
         while collected.len() < page_size && requests < max_requests {
-            // Round-robin: take the front node of the next non-empty stream.
-            let mut node: Option<FeedNode> = None;
-            for _ in 0..self.streams.len().max(1) {
-                if self.streams.is_empty() {
-                    break;
-                }
-                let idx = turn % self.streams.len();
-                turn += 1;
-                if !self.streams[idx].is_empty() {
-                    node = self.streams[idx].pop_front();
-                    break;
-                }
-            }
-            let Some(node) = node else { break };
-            requests += 1;
-            let Ok(entries) = fetch_cached(&node.url) else { continue };
-
-            if node.depth > 0 && !is_container_folder(&node.name) {
-                if let Some(title) = build_title(&node.source_name, &node.category, &node.url, &node.name, &entries) {
-                    if self.emitted.insert(title.folder_url.clone()) {
-                        collected.push(title);
+            // Round-robin: pop a batch of nodes from the streams.
+            let mut batch: Vec<FeedNode> = Vec::new();
+            while batch.len() < BATCH && requests + batch.len() < max_requests {
+                let mut node: Option<FeedNode> = None;
+                for _ in 0..self.streams.len().max(1) {
+                    if self.streams.is_empty() {
+                        break;
                     }
+                    let idx = turn % self.streams.len();
+                    turn += 1;
+                    if !self.streams[idx].is_empty() {
+                        node = self.streams[idx].pop_front();
+                        break;
+                    }
+                }
+                let Some(node) = node else { break };
+                batch.push(node);
+            }
+            if batch.is_empty() {
+                break;
+            }
+            requests += batch.len();
+            // Fetch the whole batch concurrently, then process in
+            // order. Every fetched node is processed (never dropped),
+            // so a page may overshoot page_size by a few titles.
+            let results: Vec<Result<Vec<DirEntry>, String>> = std::thread::scope(|scope| {
+                let handles: Vec<_> =
+                    batch.iter().map(|n| scope.spawn(|| fetch_cached(&n.url))).collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().unwrap_or_else(|_| Err("fetch panicked".to_string())))
+                    .collect()
+            });
+            for (node, res) in batch.into_iter().zip(results) {
+                let Ok(entries) = res else { continue };
+
+                if node.depth > 0 && !is_container_folder(&node.name) {
+                    if let Some(title) =
+                        build_title(&node.source_name, &node.category, &node.url, &node.name, &entries)
+                    {
+                        if self.emitted.insert(title.folder_url.clone()) {
+                            collected.push(title);
+                        }
+                        continue;
+                    }
+                }
+                if node.depth >= MAX_DEPTH {
                     continue;
                 }
-            }
-            if node.depth >= MAX_DEPTH {
-                continue;
-            }
-            let child_dirs: Vec<&DirEntry> = entries
-                .iter()
-                .filter(|e| e.is_dir && !is_junk_folder(&e.name) && !is_season_like(&e.name))
-                .collect();
-            // Push reversed so the newest pops first (stack front = next).
-            // Children stay in their origin stream, carried on the node.
-            for child in sort_newest_first(child_dirs).into_iter().rev() {
-                if !self.emitted.contains(&child.url) && self.seen.insert(child.url.clone()) {
-                    let target = node.stream.min(self.streams.len().saturating_sub(1));
-                    if target < self.streams.len() {
-                        self.streams[target].push_front(FeedNode {
-                            source_name: node.source_name.clone(),
-                            category: node.category.clone(),
-                            url: child.url.clone(),
-                            name: child.name.clone(),
-                            depth: node.depth + 1,
-                            stream: node.stream,
-                        });
+                let child_dirs: Vec<&DirEntry> = entries
+                    .iter()
+                    .filter(|e| e.is_dir && !is_junk_folder(&e.name) && !is_season_like(&e.name))
+                    .collect();
+                // Push reversed so the newest pops first (stack front = next).
+                // Children stay in their origin stream, carried on the node.
+                for child in sort_newest_first(child_dirs).into_iter().rev() {
+                    if !self.emitted.contains(&child.url) && self.seen.insert(child.url.clone()) {
+                        let target = node.stream.min(self.streams.len().saturating_sub(1));
+                        if target < self.streams.len() {
+                            self.streams[target].push_front(FeedNode {
+                                source_name: node.source_name.clone(),
+                                category: node.category.clone(),
+                                url: child.url.clone(),
+                                name: child.name.clone(),
+                                depth: node.depth + 1,
+                                stream: node.stream,
+                            });
+                        }
                     }
                 }
             }
@@ -837,6 +901,42 @@ pub fn fetch_poster_bytes(url: &str) -> Result<Vec<u8>, String> {
         return Err("poster too large".into());
     }
     Ok(buf)
+}
+
+fn poster_cache_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".cache/lanfetch/posters")
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Poster bytes through an on-disk cache (~/.cache/lanfetch/posters):
+/// without it every launch re-fetches every poster over the LAN (CEO
+/// audit #1). Raw encoded bytes under the same 2 MB bound as the
+/// network read; writes are tmp+rename so a crash never leaves a torn
+/// cache file behind.
+pub fn fetch_poster_cached(url: &str) -> Result<Vec<u8>, String> {
+    let dir = poster_cache_dir();
+    let path = dir.join(format!("{:016x}.img", fnv1a(url.as_bytes())));
+    if let Ok(bytes) = std::fs::read(&path) {
+        if !bytes.is_empty() && bytes.len() <= 2_000_000 {
+            return Ok(bytes);
+        }
+    }
+    let bytes = fetch_poster_bytes(url)?;
+    let _ = std::fs::create_dir_all(&dir);
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, &bytes).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+    Ok(bytes)
 }
 
 // ------------------------------------------------------------------ tests

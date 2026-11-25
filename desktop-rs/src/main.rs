@@ -176,8 +176,15 @@ struct State {
     // Posters
     posters: HashMap<String, PosterState>,
     poster_queue: VecDeque<String>,
-    poster_active: bool,
-    poster_latest: Latest<(String, Result<Vec<u8>, String>)>,
+    /// Four parallel poster workers — the old single-flight queue
+    /// needed 18 serial round trips to paint one page of cards.
+    poster_latest: [Latest<(String, Result<Vec<u8>, String>)>; 4],
+    poster_busy: [bool; 4],
+    /// Bumped whenever the title pools change; keys the visible-titles
+    /// memo below so renders stop re-filtering/re-sorting the whole
+    /// pool (with per-comparison string allocations) on every wake.
+    lib_gen: u64,
+    visible_memo: std::cell::RefCell<Option<(VisibleKey, Vec<Title>)>>,
     image_cache: Option<ImageCache>,
     // Servers / settings
     add_name: TextEdit,
@@ -261,6 +268,7 @@ fn select_category(s: &mut State, name: Option<String>) {
     }
     s.selected_category = name;
     s.feed_titles.clear();
+    s.lib_gen += 1;
     s.feed_session = None;
     drive_feed(s);
 }
@@ -269,6 +277,7 @@ fn refresh_library(s: &mut State) {
     catalog::clear_listing_cache();
     s.categories.clear();
     s.feed_titles.clear();
+    s.lib_gen += 1;
     s.feed_session = None;
     s.cats_loading = false;
     start_library(s);
@@ -282,12 +291,14 @@ fn submit_search(s: &mut State) {
     s.search_mode = true;
     s.search_loading = true;
     s.search_results.clear();
+    s.lib_gen += 1;
     s.search_latest.request((enabled_sources(s), q), |(srcs, query)| catalog::search(&srcs, &query));
 }
 
 fn clear_search(s: &mut State) {
     s.search_mode = false;
     s.search_results.clear();
+    s.lib_gen += 1;
     s.lib_search = TextEdit::new("");
 }
 
@@ -380,7 +391,32 @@ fn pick_file(files: &[CatalogFile], pick: u8) -> Option<CatalogFile> {
     }
 }
 
+/// Memo key for `visible_titles`: pool generation + every filter/sort
+/// input. Favorites toggles change the set's length, so its size is a
+/// sufficient fingerprint alongside the generation.
+type VisibleKey = (u64, bool, Option<String>, Option<String>, bool, u8, usize);
+
 fn visible_titles(s: &State) -> Vec<Title> {
+    let key: VisibleKey = (
+        s.lib_gen,
+        s.search_mode,
+        s.kind_filter.clone(),
+        s.quality_filter.clone(),
+        s.fav_only,
+        s.sort_mode,
+        s.favorites.len(),
+    );
+    if let Some((k, v)) = &*s.visible_memo.borrow() {
+        if *k == key {
+            return v.clone();
+        }
+    }
+    let out = compute_visible_titles(s);
+    *s.visible_memo.borrow_mut() = Some((key, out.clone()));
+    out
+}
+
+fn compute_visible_titles(s: &State) -> Vec<Title> {
     let pool: &[Title] = if s.search_mode { &s.search_results } else { &s.feed_titles };
     let mut out: Vec<Title> = pool
         .iter()
@@ -438,6 +474,7 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         s.cats_loading = false;
         s.feed_session = None;
         s.feed_titles.clear();
+        s.lib_gen += 1;
         drive_feed(s);
         changed = true;
     }
@@ -446,12 +483,14 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         s.feed_loading = false;
         enqueue_posters(s, &page);
         s.feed_titles.extend(page);
+        s.lib_gen += 1;
         changed = true;
     }
     if let Some(results) = s.search_latest.take() {
         s.search_loading = false;
         enqueue_posters(s, &results);
         s.search_results = results;
+        s.lib_gen += 1;
         changed = true;
     }
     if let Some(title) = s.detail_latest.take() {
@@ -465,30 +504,45 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         }
         changed = true;
     }
-    if let Some((url, res)) = s.poster_latest.take() {
-        s.poster_active = false;
-        match res {
-            Ok(bytes) => {
-                if let Some(cache) = &s.image_cache {
-                    let img = cache.load(bytes);
-                    s.posters.insert(url, PosterState::Ready(img));
-                } else {
-                    s.posters.insert(url, PosterState::Failed);
+    for slot in 0..s.poster_latest.len() {
+        if s.poster_busy[slot] {
+            if let Some((url, res)) = s.poster_latest[slot].take() {
+                s.poster_busy[slot] = false;
+                match res {
+                    Ok(bytes) => {
+                        if let Some(cache) = &s.image_cache {
+                            // Decode at display size, not full
+                            // resolution: a 1000×1500 poster decoded
+                            // full-size costs ~6 MB of RAM; at card
+                            // size roughly 25× less (Perf audit #4).
+                            let img = cache.load_scaled(bytes, 240.0, 2.0);
+                            s.posters.insert(url, PosterState::Ready(img));
+                        } else {
+                            s.posters.insert(url, PosterState::Failed);
+                        }
+                    }
+                    Err(_) => {
+                        s.posters.insert(url, PosterState::Failed);
+                    }
                 }
-            }
-            Err(_) => {
-                s.posters.insert(url, PosterState::Failed);
+                changed = true;
             }
         }
-        changed = true;
     }
-    if !s.poster_active {
-        if let Some(url) = s.poster_queue.pop_front() {
-            s.poster_active = true;
-            s.poster_latest.request(url, |u| {
-                let res = catalog::fetch_poster_bytes(&u);
+    for slot in 0..s.poster_latest.len() {
+        if s.poster_busy[slot] {
+            continue;
+        }
+        while let Some(url) = s.poster_queue.pop_front() {
+            if s.posters.contains_key(&url) {
+                continue; // already resolved via another path
+            }
+            s.poster_busy[slot] = true;
+            s.poster_latest[slot].request(url, |u| {
+                let res = catalog::fetch_poster_cached(&u);
                 (u, res)
             });
+            break;
         }
     }
     if let Some(res) = s.update_latest.take() {
@@ -1619,7 +1673,9 @@ fn main() {
         s.feed_latest.set_waker(waker.clone());
         s.search_latest.set_waker(waker.clone());
         s.detail_latest.set_waker(waker.clone());
-        s.poster_latest.set_waker(waker.clone());
+        for slot in s.poster_latest.iter_mut() {
+            slot.set_waker(waker.clone());
+        }
         s.update_latest.set_waker(waker.clone());
         s.image_cache = Some(ImageCache::new(waker));
     });
@@ -1660,8 +1716,10 @@ fn main() {
             sort_mode: 0,
             posters: HashMap::new(),
             poster_queue: VecDeque::new(),
-            poster_active: false,
-            poster_latest: Latest::default(),
+            poster_latest: std::array::from_fn(|_| Latest::default()),
+            poster_busy: [false; 4],
+            lib_gen: 0,
+            visible_memo: std::cell::RefCell::new(None),
             image_cache: None,
             add_name: TextEdit::new(""),
             add_url: TextEdit::new(""),
