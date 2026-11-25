@@ -10,6 +10,11 @@ rune = { git = "https://github.com/anomalyco/rune", rev = "f4ec14ed32256ae0c36e7
 ureq = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Version pin only (no features): Rune's vendored wgpu-hal/naga patches are
+# 30.0.1 and apply only at exactly that version; an unpinned resolve drifts
+# to 30.0.2, the patches go unused, and cargo warns. This also keeps the
+# graphics stack on the exact version Rune itself is tested against.
+wgpu = { version = "=30.0.1", default-features = false }
 
 [profile.release]
 opt-level = 3

@@ -105,6 +105,9 @@ impl FontMetrics {
             });
             return metrics;
         }
+        // Only reachable without the std memo above (with std, the block
+        // always returns); cfg-gated so neither configuration warns.
+        #[cfg(not(feature = "std"))]
         Self::compute_from_font_instance(font, font_size, variations)
     }
 
