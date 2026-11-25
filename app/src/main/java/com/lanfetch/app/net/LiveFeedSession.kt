@@ -45,7 +45,16 @@ class LiveFeedSession(
     private val emittedTitles = HashSet<String>()
     private val streams: ArrayDeque<CategoryStream>
 
-    val hasMore: Boolean get() = streams.any { it.stack.isNotEmpty() }
+    // Audit B14: the getter used to walk the deques from whatever thread
+    // asked, while page loads mutate them under the mutex. The flag is only
+    // written under the mutex (and in init) and read atomically.
+    private val hasMoreFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    val hasMore: Boolean get() = hasMoreFlag.get()
+
+    private fun refreshHasMore() {
+        hasMoreFlag.set(streams.any { it.stack.isNotEmpty() })
+    }
 
     init {
         emittedTitles.addAll(initialEmittedUrls)
@@ -74,6 +83,7 @@ class LiveFeedSession(
             }
             if (stack.isNotEmpty()) streams.addLast(CategoryStream(cat.name, stack))
         }
+        refreshHasMore()
     }
 
     suspend fun loadNextPage(pageSize: Int = 18): List<LiveTitle> = mutex.withLock {
@@ -160,6 +170,7 @@ class LiveFeedSession(
             }
             streams.addAll(remaining)
         }
+        refreshHasMore()
         return collected
     }
 

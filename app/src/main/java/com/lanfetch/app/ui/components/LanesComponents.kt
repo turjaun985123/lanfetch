@@ -101,6 +101,7 @@ fun SegmentedRing(
         DownloadState.PAUSED -> "Paused. Tap to resume."
         DownloadState.FAILED -> "Failed. Tap to retry."
         DownloadState.COMPLETED -> "Finished. Tap to open."
+        DownloadState.MISSING -> "File missing. Tap to download again."
     }
     val color = when (state) {
         DownloadState.PAUSED -> LanesPalette.Amber
@@ -160,6 +161,7 @@ fun SegmentedRing(
                 DownloadState.PAUSED -> "▶"
                 DownloadState.FAILED -> "↻"
                 DownloadState.COMPLETED -> "✓"
+                DownloadState.MISSING -> "↓"
             },
             color = color,
             style = MaterialTheme.typography.labelMedium,

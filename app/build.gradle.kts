@@ -13,8 +13,8 @@ android {
         applicationId = "com.lanfetch.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.3.1"
+        versionCode = 6
+        versionName = "1.3.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -50,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true // audit B17: single version source via BuildConfig
     }
     packaging {
         resources {

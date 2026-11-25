@@ -696,6 +696,8 @@ class LiveServerClient(
 
     private fun rankSearchResults(items: List<LiveTitle>, query: String): List<LiveTitle> {
         val q = query.lowercase()
+        // Audit B15: compile once per query, not once per comparison.
+        val wordRegex = Regex("""\b${Regex.escape(q)}\b""")
         return items.sortedWith(
             compareBy<LiveTitle>(
                 {
@@ -703,7 +705,7 @@ class LiveServerClient(
                     when {
                         t == q -> 0
                         t.startsWith(q) -> 1
-                        Regex("""\b${Regex.escape(q)}\b""").containsMatchIn(t) -> 2
+                        wordRegex.containsMatchIn(t) -> 2
                         t.contains(q) -> 3
                         else -> 4
                     }
@@ -754,7 +756,7 @@ class LiveServerClient(
     }
 
     companion object {
-        private const val USER_AGENT = "LanFetch/1.3"
+        private val USER_AGENT: String = "LanFetch/" + com.lanfetch.app.BuildConfig.VERSION_NAME
         private const val UNREACHABLE_COOLDOWN_MS = 45_000L
         private const val LISTING_TTL_MS = 10 * 60_000L
         private const val SEARCH_TTL_MS = 5 * 60_000L

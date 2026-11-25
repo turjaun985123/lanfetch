@@ -328,14 +328,31 @@ class LegacySink(
     }
 }
 
+/**
+ * The one shared file-name sanitizer (audit S5). Strips control and
+ * bidirectional-override characters (a hostile server name could otherwise
+ * disguise the extension), replaces path-hostile characters, trims trailing
+ * dots/spaces, rejects a bare "..", and caps the result at 120 UTF-8 bytes
+ * while keeping the extension.
+ */
 internal fun sanitizeKeepExt(name: String): String {
-    val clean = name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim()
-    if (clean.length <= 120) return clean.ifEmpty { "download.bin" }
-    val dot = clean.lastIndexOf('.')
-    if (dot in (clean.length - 12)..(clean.length - 2)) {
-        val ext = clean.substring(dot)
-        val stem = clean.substring(0, dot).take((120 - ext.length).coerceAtLeast(1))
-        return stem + ext
+    val stripped = name.filterNot { ch ->
+        ch.code < 0x20 || ch.code == 0x7F ||
+            ch in '\u202A'..'\u202E' || ch in '\u2066'..'\u2069'
     }
-    return clean.take(120)
+    val clean = stripped.replace(Regex("""[\\/:*?"<>|]"""), "_").trim().trimEnd('.', ' ')
+    if (clean.isEmpty() || clean == "..") return "download.bin"
+    if (clean.toByteArray(Charsets.UTF_8).size <= 120) return clean
+    val dot = clean.lastIndexOf('.')
+    val ext = if (dot in (clean.length - 12)..(clean.length - 2)) clean.substring(dot) else ""
+    val stem = clean.substring(0, clean.length - ext.length)
+    var bytes = 120 - ext.toByteArray(Charsets.UTF_8).size
+    val sb = StringBuilder()
+    for (ch in stem) {
+        val n = ch.toString().toByteArray(Charsets.UTF_8).size
+        if (bytes - n < 0) break
+        bytes -= n
+        sb.append(ch)
+    }
+    return sb.toString().trimEnd('.', ' ') + ext
 }

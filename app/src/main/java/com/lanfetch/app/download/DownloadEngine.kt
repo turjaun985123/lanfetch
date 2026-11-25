@@ -42,7 +42,7 @@ class DownloadEngine(
     companion object {
         const val MAX_RETRIES = 6
         const val BUFFER = 256 * 1024
-        const val USER_AGENT = "LanFetch/1.3"
+        val USER_AGENT: String = "LanFetch/" + com.lanfetch.app.BuildConfig.VERSION_NAME
     }
 
     suspend fun probe(url: String): ProbeResult = withContext(Dispatchers.IO) {

@@ -31,5 +31,10 @@ class DownloadsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pauseAll() = coordinator.pauseAll()
 
+    /** Audit B6: flip COMPLETED rows whose file was deleted to MISSING. */
+    fun checkMissing() = coordinator.refreshMissingStates()
+
+    fun redownload(id: Long) = coordinator.redownload(id)
+
     fun notifyMessage(text: String) = container.message(text)
 }

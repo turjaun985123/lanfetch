@@ -124,11 +124,17 @@ class DownloadCoordinator(
     suspend fun enqueue(file: CatalogFile, title: String): Long {
         val existing = downloadDao.byUrl(file.fileUrl)
         if (existing != null) {
-            if (existing.state == DownloadState.FAILED || existing.state == DownloadState.PAUSED) {
+            if (existing.state == DownloadState.FAILED || existing.state == DownloadState.PAUSED ||
+                existing.state == DownloadState.MISSING
+            ) {
+                // MISSING means the file is gone: stale segment maps must not survive.
+                val reset = existing.state == DownloadState.MISSING
                 downloadDao.update(
                     existing.copy(
                         state = DownloadState.QUEUED,
                         error = null,
+                        segments = if (reset) "" else existing.segments,
+                        downloadedBytes = if (reset) 0 else existing.downloadedBytes,
                         updatedAt = System.currentTimeMillis(),
                     )
                 )
@@ -242,6 +248,67 @@ class DownloadCoordinator(
         scope.launch {
             downloadDao.delete(id)
             live.update { it - id }
+        }
+    }
+
+    /**
+     * Audit B6: a COMPLETED row whose file was deleted outside the app (file
+     * manager, gallery cleanup) becomes MISSING instead of pretending the
+     * file is still there. Called when the Transfers screen opens.
+     */
+    fun refreshMissingStates() {
+        scope.launch(Dispatchers.IO) {
+            val completed = downloadDao.observeAll().first()
+                .filter { it.state == DownloadState.COMPLETED }
+            for (rec in completed) {
+                if (!completedFileExists(rec)) {
+                    downloadDao.update(
+                        rec.copy(
+                            state = DownloadState.MISSING,
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun completedFileExists(rec: DownloadEntity): Boolean {
+        val uri = rec.mediaUri
+        if (!uri.isNullOrBlank()) {
+            return runCatching {
+                context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.use { true } ?: false
+            }.getOrDefault(false)
+        }
+        val path = rec.savedPath
+        if (!path.isNullOrBlank() && path.startsWith("/")) return java.io.File(path).exists()
+        return true // display-only path: cannot verify, assume present
+    }
+
+    /** Audit B6: download a MISSING row again from scratch. */
+    fun redownload(id: Long) {
+        scope.launch {
+            val rec = downloadDao.byId(id) ?: return@launch
+            downloadDao.delete(id)
+            live.update { it - id }
+            enqueue(
+                CatalogFile(
+                    id = 0,
+                    titleId = 0,
+                    fileName = rec.fileName,
+                    fileUrl = rec.url,
+                    sizeBytes = rec.totalBytes,
+                    modified = null,
+                    quality = null,
+                    sourceTag = null,
+                    codec = null,
+                    audio = null,
+                    season = null,
+                    episode = null,
+                    addedAt = System.currentTimeMillis(),
+                ),
+                rec.title,
+            )
         }
     }
 
@@ -373,13 +440,19 @@ class DownloadCoordinator(
                 }
             }
             if (total > 0) sink.preallocate(total)
+            // Audit B9: the plan was reset because the server file changed
+            // size; drop trailing bytes from a larger previous file.
+            if (sizeChanged && total > 0) sink.truncate(total)
 
             val outcome = engine.run(
                 url = rec.url,
                 sink = sink,
                 plan = segments,
                 totalBytes = total,
-                validator = rec.etag ?: rec.lastModified,
+                // Audit B5: a weak ETag (W/"...") never matches in If-Range,
+                // so servers answer 200 and the partial file looks stale.
+                // Fall back to Last-Modified instead.
+                validator = rec.etag?.takeUnless { it.startsWith("W/") } ?: rec.lastModified,
             ) { snapshot ->
                 latest = snapshot
                 live.update {
@@ -628,8 +701,8 @@ class DownloadCoordinator(
     }
 
     companion object {
-        fun sanitize(name: String): String =
-            name.replace(Regex("""[\\/:*?"<>|]"""), "_").take(120)
+        /** Audit S5: one shared sanitizer — see [sanitizeKeepExt]. */
+        fun sanitize(name: String): String = sanitizeKeepExt(name)
 
         fun mimeFor(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
             "mp4" -> "video/mp4"

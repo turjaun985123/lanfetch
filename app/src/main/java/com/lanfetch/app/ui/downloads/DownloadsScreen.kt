@@ -40,6 +40,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -184,6 +185,9 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
             }
         }
 
+        // Audit B6: verify completed files still exist when Transfers opens.
+        LaunchedEffect(Unit) { vm.checkMissing() }
+
         if (downloads.isEmpty()) {
             LanesEmptyState(
                 painter = painterResource(R.drawable.ic_download),
@@ -202,6 +206,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
                         onPause = { vm.pause(download.id) },
                         onResume = { vm.resume(download.id) },
                         onRetry = { vm.retry(download.id) },
+                        onRedownload = { vm.redownload(download.id) },
                         onCancel = { vm.cancel(download.id) },
                         onRemove = { vm.remove(download.id) },
                     )
@@ -219,6 +224,7 @@ private fun DownloadItemRow(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
+    onRedownload: () -> Unit,
     onCancel: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -319,6 +325,15 @@ private fun DownloadItemRow(
             )
         }
 
+        if (download.state == DownloadState.MISSING) {
+            Text(
+                text = "File not found on this phone. It may have been deleted.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LanesPalette.Error,
+                maxLines = 2,
+            )
+        }
+
         if (download.state == DownloadState.COMPLETED && !download.savedPath.isNullOrBlank()) {
             Text(
                 text = "Saved in ${download.savedPath}",
@@ -386,6 +401,23 @@ private fun DownloadItemRow(
                         Text("Cancel")
                     }
                 }
+                DownloadState.MISSING -> {
+                    Button(
+                        onClick = onRedownload,
+                        shape = RoundedCornerShape(LanesRadii.Control),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = LanesPalette.Accent,
+                            contentColor = LanesPalette.OnAccent,
+                        ),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_download), contentDescription = null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Download again")
+                    }
+                    OutlinedButton(onClick = onRemove, shape = RoundedCornerShape(LanesRadii.Control)) {
+                        Text("Clear")
+                    }
+                }
                 DownloadState.COMPLETED -> {
                     Button(
                         onClick = onOpen,
@@ -418,6 +450,7 @@ private fun StateBadge(state: DownloadState) {
         DownloadState.FAILED -> Triple("Failed", LanesPalette.ErrorContainer, LanesPalette.Error)
         DownloadState.QUEUED -> Triple("Queued", LanesPalette.SurfaceElevated, LanesPalette.InkSecondary)
         DownloadState.PAUSED -> Triple("Paused", LanesPalette.AmberContainer, LanesPalette.Amber)
+        DownloadState.MISSING -> Triple("Missing", LanesPalette.ErrorContainer, LanesPalette.Error)
     }
     LanesBadge(text = label, containerColor = bg, contentColor = fg)
 }

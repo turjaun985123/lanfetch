@@ -38,7 +38,9 @@ object MetaParser {
     fun parseQuality(text: String): String? {
         val t = text.lowercase()
         return when {
-            "2160p" in t || "4k" in t || "uhd" in t -> "2160p"
+            // Audit B13: token boundaries, so names merely containing the
+            // letters (e.g. "Sh4ke", "uhd" inside a word) are not misread.
+            "2160p" in t || Regex("""(?<![a-z0-9])(4k|uhd)(?![a-z0-9])""").containsMatchIn(t) -> "2160p"
             "1080p" in t -> "1080p"
             "720p" in t -> "720p"
             "480p" in t -> "480p"
@@ -66,8 +68,9 @@ object MetaParser {
         val t = text.lowercase()
         return when {
             "x265" in t || "h265" in t || "h.265" in t || "hevc" in t -> "x265"
-            "x264" in t || "h264" in t || "h.264" in t || "avc" in t -> "x264"
-            "av1" in t -> "AV1"
+            "x264" in t || "h264" in t || "h.264" in t ||
+                Regex("""(?<![a-z0-9])avc(?![a-z0-9])""").containsMatchIn(t) -> "x264"
+            Regex("""(?<![a-z0-9])av1(?![a-z0-9])""").containsMatchIn(t) -> "AV1"
             else -> null
         }
     }

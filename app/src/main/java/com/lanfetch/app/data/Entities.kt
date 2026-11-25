@@ -4,7 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class DownloadState { QUEUED, RUNNING, PAUSED, COMPLETED, FAILED }
+enum class DownloadState { QUEUED, RUNNING, PAUSED, COMPLETED, FAILED, MISSING }
 
 @Entity(
     tableName = "sources",
