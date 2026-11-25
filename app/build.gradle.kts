@@ -13,8 +13,8 @@ android {
         applicationId = "com.lanfetch.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.3.7"
+        versionCode = 12
+        versionName = "1.3.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -32,8 +32,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // v1.3.8 hotfix: R8 + shrinkResources shipped in the first signed
+            // release (v1.3.7) crash on launch — the thin proguard rules do not
+            // cover Room's generated AppDb_Impl lookup. Debug builds (minify
+            // off) are the only phone-verified configuration, so release now
+            // matches them. Re-enable only with complete keep rules + a
+            // device test.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             val releaseConfig = signingConfigs.getByName("release")
             if (releaseConfig.storeFile != null) {
