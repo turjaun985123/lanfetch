@@ -463,6 +463,7 @@ private fun DownloadItemRow(
  * Download focus view (redesign spec): the segmented ring at 96 dp, one bar
  * per lane with its own fill, and the facts — server, file, saved location.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun DownloadFocusSheet(
     download: DownloadUi,

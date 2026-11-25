@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.lanfetch.app.AppContainer
 import com.lanfetch.app.net.ServerProbeResult
 import com.lanfetch.app.ui.theme.LanesPalette
+import kotlinx.coroutines.launch
 
 /**
  * First run (redesign spec): explain the app in one line, then check the

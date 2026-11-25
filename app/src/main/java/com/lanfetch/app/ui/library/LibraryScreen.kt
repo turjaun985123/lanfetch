@@ -271,7 +271,7 @@ fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
                 when {
                     isLoadingInitial -> {
                         Box(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center,
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
