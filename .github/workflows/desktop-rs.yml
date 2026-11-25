@@ -33,6 +33,12 @@ jobs:
         with:
           workspaces: desktop-rs
 
+      - name: Unit tests
+        # First test suite for the desktop port (Wave 2 of the
+        # improvement program): meta/catalog/core/store logic ported
+        # from the Android JVM cases. Network-free by construction.
+        run: cargo test --locked
+
       - name: Build release (LTO, stripped)
         run: cargo build --release --locked
 

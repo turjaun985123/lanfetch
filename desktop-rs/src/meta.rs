@@ -66,16 +66,21 @@ pub fn is_video_file(name: &str) -> bool {
     name.contains('.') && VIDEO_EXTENSIONS.contains(&ext.as_str())
 }
 
-/// True when `token` occurs in `hay` (already lowercase) not glued to other
-/// alphanumerics — the B13 boundary rule without lookaround.
+/// True when `token` occurs in `hay` (already lowercase) not glued to
+/// other word characters — the B13 boundary rule without lookaround.
+/// `_` counts as a word character, exactly like Kotlin's `\b`: in
+/// "HD_CAM" the CAM is glued, not a token (audit D7).
 fn contains_token(hay: &str, token: &str) -> bool {
+    fn word_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
+    }
     let bytes = hay.as_bytes();
     let mut from = 0;
     while let Some(pos) = hay[from..].find(token) {
         let start = from + pos;
         let end = start + token.len();
-        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        let before_ok = start == 0 || !word_byte(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !word_byte(bytes[end]);
         if before_ok && after_ok {
             return true;
         }
@@ -235,4 +240,76 @@ pub fn pick_poster(entries: &[crate::core::DirEntry]) -> Option<String> {
         })
         .max_by_key(|e| score(&e.name))
         .map(|e| e.url.clone())
+}
+
+// ------------------------------------------------------------------ tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_title_strips_release_noise() {
+        assert_eq!(
+            clean_title("Movie.Name.2023.1080p.WEB-DL.x265.Dual.Audio.mkv"),
+            "Movie Name"
+        );
+    }
+
+    #[test]
+    fn full_release_name_fields() {
+        let n = "Movie.Name.2023.1080p.WEB-DL.x265.Dual.Audio.mkv";
+        assert_eq!(parse_quality(n).as_deref(), Some("1080p"));
+        assert_eq!(parse_source_tag(n).as_deref(), Some("WEB-DL"));
+        assert_eq!(parse_codec(n).as_deref(), Some("x265"));
+        assert_eq!(parse_year(n), Some(2023));
+    }
+
+    #[test]
+    fn bracket_year_wins() {
+        assert_eq!(parse_year("Wonder Woman 1984 (2020)"), Some(2020));
+    }
+
+    #[test]
+    fn quality_token_boundaries_b13() {
+        // "uhd" glued inside "uhdrip" is not a token (audit B13).
+        assert_eq!(parse_quality("Sh4ke.uhdrip.x264"), None);
+        assert_eq!(parse_codec("Sh4ke.uhdrip.x264").as_deref(), Some("x264"));
+        assert_eq!(parse_quality("Film.4K.Remux").as_deref(), Some("2160p"));
+    }
+
+    #[test]
+    fn underscore_is_a_word_character() {
+        // Kotlin \b semantics (audit D7): CAM glued by '_' is no token.
+        assert_eq!(parse_quality("Movie.HD_CAM.2020.mkv"), None);
+        assert_eq!(parse_quality("Movie.CAM.2020.mkv").as_deref(), Some("CAM"));
+    }
+
+    #[test]
+    fn season_like_shapes() {
+        for yes in ["Season 1 (Hindi Language)", "Season ALL", "Season 1 (Part-1)", "S01-S02"] {
+            assert!(is_season_like(yes), "{yes}");
+        }
+        assert!(!is_season_like("Seasonal Greetings"));
+    }
+
+    #[test]
+    fn junk_and_non_media() {
+        assert!(is_junk_folder("Sample"));
+        assert!(is_junk_folder(".trash"));
+        assert!(!is_junk_folder("Movies"));
+        assert!(is_non_media_category("PC Games"));
+    }
+
+    #[test]
+    fn season_episode_parsing() {
+        assert_eq!(season_episode("Show", "Show.S02E03.720p.mkv"), (Some(2), Some(3)));
+        assert_eq!(episode_only("Ep 12 - Title.mkv"), Some(12));
+    }
+
+    #[test]
+    fn audio_variants() {
+        assert_eq!(parse_audio("Movie Dual Audio.mkv").as_deref(), Some("Dual Audio"));
+        assert_eq!(parse_audio("Movie Hindi Dubbed.mkv").as_deref(), Some("Dubbed"));
+    }
 }

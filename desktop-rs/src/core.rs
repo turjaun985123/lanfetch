@@ -635,3 +635,65 @@ pub fn run_download(
     }
     out
 }
+
+// ------------------------------------------------------------------ tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plan_zero_total_is_open_segment() {
+        let segs = plan_segments(0, 8);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].end, u64::MAX);
+    }
+
+    #[test]
+    fn plan_respects_min_segment() {
+        // 5 MiB over 8 lanes would make sub-1MiB segments: lanes shrink.
+        let segs = plan_segments(5 * 1024 * 1024, 8);
+        assert_eq!(segs.len(), 5);
+    }
+
+    #[test]
+    fn plan_is_contiguous_and_complete() {
+        let total = 10_737_418_240u64; // 10 GiB
+        let segs = plan_segments(total, 8);
+        assert_eq!(segs.len(), 8);
+        assert_eq!(segs.first().unwrap().start, 0);
+        assert_eq!(segs.last().unwrap().end, total - 1);
+        for w in segs.windows(2) {
+            assert_eq!(w[1].start, w[0].end + 1);
+        }
+        assert_eq!(segs.iter().map(|s| s.len()).sum::<u64>(), total);
+        assert!(segs.iter().all(|s| s.len() >= (1 << 20)));
+    }
+
+    #[test]
+    fn sanitize_strips_separators() {
+        let out = sanitize_keep_ext("a/b\\c.mkv");
+        assert!(!out.contains('/') && !out.contains('\\'));
+        assert!(out.ends_with(".mkv"));
+    }
+
+    #[test]
+    fn sanitize_long_bangla_name_keeps_extension() {
+        // >180 bytes of multi-byte text: the old code panicked slicing
+        // mid-character (Reliability #4).
+        let name = format!("{}.mkv", "বাংলা সিনেমা ".repeat(30));
+        let out = sanitize_keep_ext(&name);
+        assert!(out.ends_with(".mkv"));
+        assert!(out.len() <= 180);
+    }
+
+    #[test]
+    fn parse_listing_apache_rows() {
+        let html = "<a href=\"Movies/\">Movies/</a> - -\n<a href=\"clip.mp4\">clip.mp4</a> 2024-01-01 10:00 1234567";
+        let entries = parse_listing(html, "http://h/root/");
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[1].name, "clip.mp4");
+        assert_eq!(entries[1].size, Some(1234567));
+    }
+}

@@ -151,3 +151,37 @@ pub fn save_favorites(urls: &[String]) {
         write_atomic(&dir().join("favorites.json"), &json);
     }
 }
+
+// ------------------------------------------------------------------ tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("lanfetch-test-{}-{tag}.json", std::process::id()))
+    }
+
+    #[test]
+    fn atomic_write_round_trip() {
+        let path = temp_path("roundtrip");
+        write_atomic(&path, "[\"a\",\"b\"]");
+        assert_eq!(
+            read_json::<Vec<String>>(&path).unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(bak_path(&path));
+    }
+
+    #[test]
+    fn corrupt_main_falls_back_to_bak() {
+        let path = temp_path("fallback");
+        write_atomic(&path, "[\"good\"]");
+        write_atomic(&path, "[\"newer\"]"); // snapshots "good" into .bak
+        std::fs::write(&path, "{torn").unwrap(); // simulate a torn write
+        assert_eq!(read_json::<Vec<String>>(&path).unwrap(), vec!["good".to_string()]);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(bak_path(&path));
+    }
+}

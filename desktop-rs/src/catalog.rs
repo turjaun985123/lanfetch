@@ -88,15 +88,14 @@ pub fn clear_listing_cache() -> usize {
 
 pub fn to_catalog_file(title_name: &str, entry: &DirEntry, folder_season: Option<i32>) -> CatalogFile {
     let haystack = format!("{title_name} {}", entry.name);
-    let (mut season, mut episode) = season_episode(title_name, &entry.name);
-    if season.is_none() {
-        season = folder_season;
-    }
-    if episode.is_none() && (folder_season.is_some() || season.is_some()) {
+    let (se, ep) = season_episode(title_name, &entry.name);
+    // Kotlin precedence (MetaParser.kt, audit D2): the folder's season
+    // wins over the filename's SxxExx — files are routinely mislabeled,
+    // the folder is the curated truth — then the title name itself.
+    let season = folder_season.or(se).or_else(|| parse_season(title_name));
+    let mut episode = ep;
+    if episode.is_none() && season.is_some() {
         episode = episode_only(&entry.name);
-    }
-    if season.is_none() && folder_season.is_some() {
-        season = folder_season;
     }
     CatalogFile {
         file_name: entry.name.clone(),
@@ -278,15 +277,25 @@ struct FeedNode {
     url: String,
     name: String,
     depth: usize,
+    /// Index of the stream (category × source round-robin lane) this
+    /// node belongs to; children inherit it. Carried explicitly because
+    /// re-deriving it by scanning streams misroutes children whenever
+    /// the origin stream is momentarily empty (audit D5).
+    stream: usize,
 }
 
 fn extract_folder_year(name: &str) -> Option<i32> {
-    let n = name.trim();
-    let inner = n.strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(n);
-    if inner.len() == 4 && inner.chars().all(|c| c.is_ascii_digit()) {
-        let y: i32 = inner.parse().ok()?;
-        if (1900..=2099).contains(&y) {
-            return Some(y);
+    // Year containers on DhakaFlix are prefixes: "2023", "(2020)",
+    // "(2025) 1080p", "(1995) & Before" — the Kotlin LiveFeedSession
+    // matches the same shapes (audit D1). Only a leading year counts;
+    // a year inside a title name is metadata, not a container.
+    let n = name.trim().trim_start_matches('(');
+    let digits: String = n.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 4 {
+        if let Ok(y) = digits.parse::<i32>() {
+            if (1900..=2099).contains(&y) {
+                return Some(y);
+            }
         }
     }
     None
@@ -297,12 +306,18 @@ fn is_container_folder(name: &str) -> bool {
         return true;
     }
     let n = name.trim();
-    n == "0-9"
-        || (n.len() == 1 && n.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false))
-        || (n.len() == 5
-            && n.chars().nth(1) == Some('-')
-            && n.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
-            && n.chars().nth(2).map(|c| c.is_ascii_alphabetic()).unwrap_or(false))
+    if n == "0-9" || (n.len() == 1 && n.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)) {
+        return true;
+    }
+    // Alpha ranges in every shape the servers use: "A-Z", "A - Z",
+    // "A–Z" (en dash), "A—Z" — Kotlin's ALPHA_CONTAINER_RE accepts all
+    // of them (audit D3); the old check only accepted "A - Z".
+    let compact: String = n.chars().filter(|c| !c.is_whitespace()).collect();
+    let chars: Vec<char> = compact.chars().collect();
+    chars.len() == 3
+        && chars[0].is_ascii_alphabetic()
+        && chars[2].is_ascii_alphabetic()
+        && matches!(chars[1], '-' | '–' | '—')
 }
 
 fn sort_newest_first(mut dirs: Vec<&DirEntry>) -> Vec<&DirEntry> {
@@ -335,6 +350,7 @@ impl FeedSession {
                 continue;
             }
             let mut stack = VecDeque::new();
+            let stream_idx = streams.len();
             for (source_name, url) in &cat.locations {
                 if seen.insert(url.clone()) {
                     stack.push_back(FeedNode {
@@ -343,6 +359,7 @@ impl FeedSession {
                         url: url.clone(),
                         name: cat.name.clone(),
                         depth: 0,
+                        stream: stream_idx,
                     });
                 }
             }
@@ -394,14 +411,10 @@ impl FeedSession {
                 .filter(|e| e.is_dir && !is_junk_folder(&e.name) && !is_season_like(&e.name))
                 .collect();
             // Push reversed so the newest pops first (stack front = next).
-            let stream_idx = self
-                .streams
-                .iter()
-                .position(|s| s.iter().any(|n| n.category == node.category && n.source_name == node.source_name))
-                .unwrap_or(0);
+            // Children stay in their origin stream, carried on the node.
             for child in sort_newest_first(child_dirs).into_iter().rev() {
                 if !self.emitted.contains(&child.url) && self.seen.insert(child.url.clone()) {
-                    let target = if stream_idx < self.streams.len() { stream_idx } else { 0 };
+                    let target = node.stream.min(self.streams.len().saturating_sub(1));
                     if target < self.streams.len() {
                         self.streams[target].push_front(FeedNode {
                             source_name: node.source_name.clone(),
@@ -409,6 +422,7 @@ impl FeedSession {
                             url: child.url.clone(),
                             name: child.name.clone(),
                             depth: node.depth + 1,
+                            stream: node.stream,
                         });
                     }
                 }
@@ -682,12 +696,31 @@ fn breadth_search(source_name: &str, root_url: &str, query: &str) -> Vec<Title> 
 
 fn rank_results(mut items: Vec<Title>, query: &str) -> Vec<Title> {
     let q = query.to_lowercase();
+    /// Whole-phrase match on word boundaries (Kotlin's `\b<query>\b`):
+    /// tier 2 must work for multi-word queries too — comparing single
+    /// split-words to the whole query made it unreachable for them
+    /// (audit D6).
+    fn phrase_match(t: &str, q: &str) -> bool {
+        let tb = t.as_bytes();
+        let mut from = 0;
+        while let Some(pos) = t[from..].find(q) {
+            let start = from + pos;
+            let end = start + q.len();
+            let before_ok = start == 0 || !tb[start - 1].is_ascii_alphanumeric();
+            let after_ok = end >= tb.len() || !tb[end].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + 1;
+        }
+        false
+    }
     fn tier(t: &str, q: &str) -> usize {
         if t == q {
             0
         } else if t.starts_with(q) {
             1
-        } else if t.split(|c: char| !c.is_alphanumeric()).any(|w| w == q) {
+        } else if phrase_match(t, q) {
             2
         } else if t.contains(q) {
             3
@@ -804,4 +837,162 @@ pub fn fetch_poster_bytes(url: &str) -> Result<Vec<u8>, String> {
         return Err("poster too large".into());
     }
     Ok(buf)
+}
+
+// ------------------------------------------------------------------ tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, is_dir: bool) -> DirEntry {
+        DirEntry {
+            name: name.to_string(),
+            url: format!("http://h/{}", name.replace(' ', "%20")),
+            is_dir,
+            size: None,
+        }
+    }
+
+    fn mk_title(title: &str) -> Title {
+        Title {
+            folder_url: format!("http://h/{title}"),
+            source_name: "S".into(),
+            category: "C".into(),
+            title: title.into(),
+            raw_name: title.into(),
+            year: None,
+            kind: "movie".into(),
+            poster_url: None,
+            language: None,
+            files: vec![],
+            files_loaded: false,
+            season_count: 0,
+            max_size: -1,
+            best_quality: None,
+            best_source_tag: None,
+            best_codec: None,
+            dual_audio: false,
+        }
+    }
+
+    #[test]
+    fn folder_season_wins_over_filename() {
+        // D2: S01E05 inside a "Season 2" folder is season 2 (Kotlin).
+        let f = to_catalog_file("Show", &entry("Show.S01E05.mkv", false), Some(2));
+        assert_eq!(f.season, Some(2));
+        assert_eq!(f.episode, Some(5));
+    }
+
+    #[test]
+    fn filename_season_used_without_folder() {
+        let f = to_catalog_file("Show", &entry("Show.S03E07.mkv", false), None);
+        assert_eq!(f.season, Some(3));
+        assert_eq!(f.episode, Some(7));
+    }
+
+    #[test]
+    fn title_name_season_fallback() {
+        let f = to_catalog_file("Show Season 4", &entry("Show.E02.mkv", false), None);
+        assert_eq!(f.season, Some(4));
+        assert_eq!(f.episode, Some(2));
+    }
+
+    #[test]
+    fn folder_year_prefix_shapes() {
+        // D1: DhakaFlix year containers are prefixes, not exact names.
+        assert_eq!(extract_folder_year("(2025) 1080p"), Some(2025));
+        assert_eq!(extract_folder_year("(1995) & Before"), Some(1995));
+        assert_eq!(extract_folder_year("2023"), Some(2023));
+        assert_eq!(extract_folder_year("(2020)"), Some(2020));
+        assert_eq!(extract_folder_year("Movies"), None);
+        assert_eq!(extract_folder_year("1080p"), None);
+    }
+
+    #[test]
+    fn alpha_containers_all_shapes() {
+        // D3: every dash/space shape the servers use.
+        for yes in ["A-Z", "A - Z", "A–Z", "0-9", "B", "2023"] {
+            assert!(is_container_folder(yes), "{yes}");
+        }
+        assert!(!is_container_folder("Movies"));
+    }
+
+    #[test]
+    fn build_title_movie_with_poster() {
+        let entries = vec![
+            entry("Movie.2023.1080p.mkv", false),
+            entry("poster.jpg", false),
+            entry("cover.png", false),
+        ];
+        let t = build_title("S", "Hindi Movies", "http://h/M/", "Movie.2023", &entries).unwrap();
+        assert_eq!(t.kind, "movie");
+        assert_eq!(t.poster_url.as_deref(), Some("http://h/poster.jpg"));
+        assert_eq!(t.year, Some(2023));
+    }
+
+    #[test]
+    fn build_title_series_from_season_dir() {
+        let entries = vec![entry("Season 1", true)];
+        let t = build_title("S", "Series", "http://h/Show/", "Show", &entries).unwrap();
+        assert_eq!(t.kind, "series");
+        assert!(!t.files_loaded);
+        assert_eq!(t.season_count, 1);
+    }
+
+    #[test]
+    fn build_title_rejects_subtitle_only_folder() {
+        let entries = vec![entry("subs.srt", false)];
+        assert!(build_title("S", "C", "http://h/X/", "X", &entries).is_none());
+    }
+
+    #[test]
+    fn poster_priority_fanart_over_backdrop() {
+        let entries = vec![entry("backdrop.jpg", false), entry("fanart.jpg", false)];
+        assert_eq!(pick_poster(&entries).as_deref(), Some("http://h/fanart.jpg"));
+    }
+
+    #[test]
+    fn rank_exact_prefix_phrase_contains() {
+        let out = rank_results(
+            vec![
+                mk_title("Shadowdark"),
+                mk_title("The Dark Knight"),
+                mk_title("Darkness"),
+                mk_title("Dark"),
+            ],
+            "dark",
+        );
+        let order: Vec<&str> = out.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(order, ["Dark", "Darkness", "The Dark Knight", "Shadowdark"]);
+    }
+
+    #[test]
+    fn rank_multiword_phrase_tier() {
+        // D6: a multi-word query must reach the phrase tier.
+        let out = rank_results(
+            vec![mk_title("Dark"), mk_title("The Dark Knight"), mk_title("Dark Knight Rises")],
+            "dark knight",
+        );
+        let order: Vec<&str> = out.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(order, ["Dark Knight Rises", "The Dark Knight", "Dark"]);
+    }
+
+    #[test]
+    fn decode_and_category() {
+        // URL decoding keeps '+' literal (it is a path segment, not a
+        // form field) — the opposite convention of core::percent_decode.
+        assert_eq!(percent_decode("A%20B+C"), "A B+C");
+        assert_eq!(
+            extract_category("http://h/DHAKA-FLIX-7/", "http://h/DHAKA-FLIX-7/Hindi%20Movies/X/"),
+            "Hindi Movies"
+        );
+    }
+
+    #[test]
+    fn version_compare_is_numeric() {
+        assert!(version_gt("1.10.0", "1.9.0"));
+        assert!(!version_gt("1.9.0", "1.10.0"));
+        assert!(!version_gt("1.2.0", "1.2.0"));
+    }
 }
