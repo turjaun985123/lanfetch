@@ -868,7 +868,7 @@ fn version_gt(a: &str, b: &str) -> bool {
 /// release tagged `desktop-rs-v*`, if it is newer than this build.
 pub fn check_desktop_update() -> Result<Option<String>, String> {
     let resp = http_agent()
-        .get("https://api.github.com/repos/turjaun985123/lanfetch/releases?per_page=10")
+        .get("https://api.github.com/repos/turjaun985123/lanfetch/releases?per_page=100")
         .call()
         .map_err(|e| e.to_string())?;
     let text = resp.into_string().map_err(|e| e.to_string())?;
