@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import androidx.room.withTransaction
@@ -103,6 +104,8 @@ class DownloadCoordinator(
                     segments = lp?.segments ?: SegmentPlanner.decode(rec.segments),
                     error = rec.error,
                     savedPath = rec.savedPath,
+                    mediaUri = rec.mediaUri,
+                    mimeType = rec.mimeType,
                 )
             }
         }.distinctUntilChanged()
@@ -241,7 +244,10 @@ class DownloadCoordinator(
     private fun pump() {
         scope.launch {
             pumpMutex.withLock {
-                jobs.entries.removeIf { !it.value.isActive }
+                val it = jobs.entries.iterator()
+                while (it.hasNext()) {
+                    if (!it.next().value.isActive) it.remove()
+                }
                 val max = settings.maxConcurrent.coerceAtLeast(1)
                 var running = jobs.values.count { it.isActive }
                 if (running >= max) return@withLock
@@ -499,13 +505,16 @@ class DownloadCoordinator(
                 existingUri = rec.mediaUri,
             )
         } else {
-            LegacySink(context, rec.id, rec.fileName)
+            LegacySink(context, rec.id, rec.fileName, rec.mimeType ?: mimeFor(rec.fileName))
         }
 
     private suspend fun deleteArtifacts(rec: DownloadEntity) = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && rec.mediaUri != null) {
             runCatching { context.contentResolver.delete(Uri.parse(rec.mediaUri), null, null) }
         }
+        val partName = LegacySink.partFileName(rec.id, sanitizeKeepExt(rec.fileName))
+        File(LegacySink.publicDownloadsDir(), partName).delete()
+        File(LegacySink.appDownloadsDir(context), partName).delete()
         partFile(rec).delete()
     }
 
@@ -542,22 +551,30 @@ class DownloadCoordinator(
 
     private fun registerNetworkCallback() {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                handleNetworkChange(cm.getNetworkCapabilities(network))
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                handleNetworkChange(networkCapabilities)
+            }
+
+            override fun onLost(network: Network) {
+                if (settings.wifiOnly && !isOnWifi()) {
+                    pauseAll("Waiting for Wi-Fi (Wi-Fi only)")
+                }
+            }
+        }
         runCatching {
-            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    handleNetworkChange(cm.getNetworkCapabilities(network))
-                }
-
-                override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                    handleNetworkChange(networkCapabilities)
-                }
-
-                override fun onLost(network: Network) {
-                    if (settings.wifiOnly && !isOnWifi()) {
-                        pauseAll("Waiting for Wi-Fi (Wi-Fi only)")
-                    }
-                }
-            })
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                cm.registerDefaultNetworkCallback(callback)
+            } else {
+                val request = NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                cm.registerNetworkCallback(request, callback)
+            }
         }
     }
 

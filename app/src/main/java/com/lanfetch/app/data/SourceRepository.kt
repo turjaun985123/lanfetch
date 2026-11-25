@@ -35,28 +35,16 @@ class SourceRepository(private val db: AppDb) {
 
     suspend fun setEnabled(source: Source, enabled: Boolean) {
         update(source.copy(enabled = enabled))
-    }
-
-    suspend fun setCategories(source: Source, selected: Set<String>) {
-        update(source.copy(selectedCategories = selected))
-    }
-
-    suspend fun markSynced(sourceId: Long, itemCount: Int, error: String?) {
-        val entity = db.sources().byId(sourceId) ?: return
-        db.sources().update(
-            entity.copy(
-                lastSynced = if (error == null) System.currentTimeMillis() else entity.lastSynced,
-                lastError = error,
-                itemCount = itemCount,
-            )
-        )
+        db.liveCache().clearAllFeeds()
     }
 
     suspend fun delete(sourceId: Long) {
         db.withTransaction {
+            db.favorites().deleteForSource(sourceId)
+            db.liveCache().deleteCategoriesForSource(sourceId)
+            db.liveCache().deleteFeedForSource(sourceId)
             db.files().deleteForSource(sourceId)
             db.titles().deleteForSource(sourceId)
-            db.folders().deleteForSource(sourceId)
             db.sources().delete(sourceId)
         }
     }

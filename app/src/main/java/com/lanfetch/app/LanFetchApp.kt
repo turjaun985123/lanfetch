@@ -2,31 +2,31 @@ package com.lanfetch.app
 
 import android.app.Application
 import android.content.Context
-import android.content.pm.ServiceInfo
-import android.os.Build
-import androidx.work.ForegroundInfo
-import androidx.work.WorkManager
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.disk.DiskCache
 import com.lanfetch.app.data.AppDb
 import com.lanfetch.app.data.CatalogRepository
 import com.lanfetch.app.data.SettingsStore
 import com.lanfetch.app.data.SourceRepository
 import com.lanfetch.app.download.DownloadCoordinator
+import com.lanfetch.app.net.LiveServerClient
 import com.lanfetch.app.net.Scraper
-import com.lanfetch.app.sync.SyncManager
-import com.lanfetch.app.sync.SyncNotifications
-import com.lanfetch.app.sync.SyncRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
 /**
- * Application-scoped service locator. Everything long-lived (database,
- * repositories, HTTP client, sync and download owners) is created once here;
- * screens get per-screen ViewModels and never touch the database directly.
+ * Application-scoped service locator.
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -38,10 +38,14 @@ class AppContainer(context: Context) {
 
     val sourceRepository = SourceRepository(db)
     val catalogRepository = CatalogRepository(db)
+    val scraper = Scraper(httpClient)
+    val liveClient = LiveServerClient(httpClient)
 
-    private val scraper = Scraper(httpClient)
-    val syncRunner = SyncRunner(db, sourceRepository, catalogRepository, scraper)
-    val syncManager = SyncManager(WorkManager.getInstance(appContext))
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
+    private val _cacheClearedToken = MutableStateFlow(0)
+    val cacheClearedToken: StateFlow<Int> = _cacheClearedToken.asStateFlow()
 
     val downloadCoordinator = DownloadCoordinator(
         context = appContext,
@@ -58,20 +62,12 @@ class AppContainer(context: Context) {
         }
     }
 
-    fun scraper(): Scraper = scraper
+    fun message(text: String) {
+        _messages.tryEmit(text)
+    }
 
-    /** Notification + type wrapper for WorkManager foreground workers. */
-    fun foregroundInfo(notificationId: Int, title: String, text: String): ForegroundInfo {
-        val notification = SyncNotifications.build(appContext, title, text)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(
-                notificationId,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
-        } else {
-            ForegroundInfo(notificationId, notification)
-        }
+    fun notifyCacheCleared() {
+        _cacheClearedToken.update { it + 1 }
     }
 }
 
@@ -91,6 +87,13 @@ class LanFetchApp : Application(), ImageLoaderFactory {
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build()
             }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(128L * 1024 * 1024)
+                    .build()
+            }
+            .respectCacheHeaders(false)
             .crossfade(true)
             .build()
 }

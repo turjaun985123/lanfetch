@@ -13,6 +13,8 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.lanfetch.app.LanFetchApp
 import com.lanfetch.app.MainActivity
 import kotlinx.coroutines.CoroutineScope
@@ -119,7 +121,7 @@ class DownloadService : Service() {
     private fun stopIfIdle() {
         if (stopping) return
         stopping = true
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
@@ -178,6 +180,7 @@ class DownloadService : Service() {
     }
 
     private fun createChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
@@ -216,7 +219,7 @@ class DownloadService : Service() {
 
         fun start(context: Context) {
             val intent = Intent(context, DownloadService::class.java)
-            runCatching { context.startForegroundService(intent) }
+            runCatching { ContextCompat.startForegroundService(context, intent) }
         }
     }
 }

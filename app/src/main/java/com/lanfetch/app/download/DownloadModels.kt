@@ -14,6 +14,8 @@ data class DownloadUi(
     val segments: List<Segment> = emptyList(),
     val error: String? = null,
     val savedPath: String? = null,
+    val mediaUri: String? = null,
+    val mimeType: String? = null,
 ) {
     val fraction: Float
         get() = if (totalBytes > 0) {

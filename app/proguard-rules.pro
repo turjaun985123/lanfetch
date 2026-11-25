@@ -7,10 +7,6 @@
 -keep @androidx.room.Entity class * { *; }
 -keepclassmembers class com.lanfetch.app.data.Converters { *; }
 
-# WorkManager workers instantiated via reflection.
--keep class com.lanfetch.app.sync.SyncWorker { <init>(...); }
--keep class com.lanfetch.app.sync.SyncAllWorker { <init>(...); }
-
 # Optional platform/third-party references in OkHttp & Jsoup.
 -dontwarn okhttp3.**
 -dontwarn okio.**

@@ -23,6 +23,16 @@ data class Facets(
 
 data class CatalogCounts(val titles: Int = 0, val files: Long = 0)
 
+data class CachedCategoriesSnapshot(
+    val categories: List<LiveCategory>,
+    val cachedAt: Long,
+)
+
+data class CachedFeedSnapshot(
+    val items: List<LiveTitle>,
+    val cachedAt: Long,
+)
+
 class CatalogRepository(private val db: AppDb) {
 
     private val titleDao = db.titles()
@@ -78,6 +88,96 @@ class CatalogRepository(private val db: AppDb) {
 
     fun completedDownloadUrls(): Flow<Set<String>> =
         db.downloads().observeCompletedUrls().map { it.toSet() }
+
+    fun observeFavorites(): Flow<List<LiveTitle>> =
+        db.favorites().observeAll().map { rows -> rows.map { it.toLiveTitle() } }
+
+    fun observeFavoriteUrls(): Flow<Set<String>> =
+        db.favorites().observeUrls().map { it.toSet() }
+
+    suspend fun toggleFavorite(title: LiveTitle) {
+        val dao = db.favorites()
+        if (dao.byUrl(title.folderUrl) != null) {
+            dao.delete(title.folderUrl)
+        } else {
+            dao.upsert(FavoriteEntity.from(title, System.currentTimeMillis()))
+        }
+    }
+
+    suspend fun loadCachedCategories(enabledSources: List<Source>): CachedCategoriesSnapshot? {
+        val bySourceId = enabledSources.associateBy { it.id }
+        if (bySourceId.isEmpty()) return null
+        val rows = db.liveCache().allCategories().filter { it.sourceId in bySourceId }
+        if (rows.isEmpty()) return null
+
+        val grouped = LinkedHashMap<String, MutableList<CategoryLocation>>()
+        for (row in rows) {
+            val source = bySourceId[row.sourceId] ?: continue
+            grouped.getOrPut(row.categoryName) { mutableListOf() } +=
+                CategoryLocation(source = source, url = row.locationUrl)
+        }
+        if (grouped.isEmpty()) return null
+        val cats = grouped.entries.map { (name, locs) -> LiveCategory(name = name, locations = locs) }
+        return CachedCategoriesSnapshot(
+            categories = cats,
+            cachedAt = rows.minOf { it.cachedAt },
+        )
+    }
+
+    suspend fun saveCachedCategories(
+        categories: List<LiveCategory>,
+        cachedAt: Long = System.currentTimeMillis(),
+    ) {
+        val rows = ArrayList<CachedCategoryEntity>()
+        categories.forEachIndexed { idx, cat ->
+            for (loc in cat.locations) {
+                rows += CachedCategoryEntity(
+                    locationUrl = loc.url,
+                    categoryName = cat.name,
+                    sourceId = loc.source.id,
+                    sourceName = loc.source.name,
+                    sourceRootUrl = loc.source.rootUrl,
+                    categoryOrder = idx,
+                    cachedAt = cachedAt,
+                )
+            }
+        }
+        db.withTransaction {
+            db.liveCache().clearCategories()
+            if (rows.isNotEmpty()) db.liveCache().insertCategories(rows)
+        }
+    }
+
+    suspend fun loadCachedFeed(feedKey: String, enabledSourceIds: Set<Long>): CachedFeedSnapshot? {
+        if (enabledSourceIds.isEmpty()) return null
+        val rows = db.liveCache().feedItems(feedKey).filter { it.sourceId in enabledSourceIds }
+        if (rows.isEmpty()) return null
+        return CachedFeedSnapshot(
+            items = rows.map { it.toLiveTitle() },
+            cachedAt = rows.maxOf { it.cachedAt },
+        )
+    }
+
+    suspend fun saveCachedFeed(
+        feedKey: String,
+        items: List<LiveTitle>,
+        cachedAt: Long = System.currentTimeMillis(),
+    ) {
+        val rows = items.take(MAX_CACHED_FEED_ITEMS).mapIndexed { idx, title ->
+            CachedFeedItemEntity.from(feedKey, idx, title, cachedAt)
+        }
+        db.withTransaction {
+            db.liveCache().clearFeed(feedKey)
+            if (rows.isNotEmpty()) db.liveCache().insertFeedItems(rows)
+        }
+    }
+
+    suspend fun clearAllLiveCache() {
+        db.withTransaction {
+            db.liveCache().clearCategories()
+            db.liveCache().clearAllFeeds()
+        }
+    }
 
     suspend fun toggleFavorite(id: Long) {
         val current = titleDao.byId(id) ?: return
@@ -159,71 +259,10 @@ class CatalogRepository(private val db: AppDb) {
         }
     }
 
-    /**
-     * Removes files the server no longer has and refreshes aggregate cards.
-     * [keptPrefixes] covers pruned and failed folders; [skipDeletion] is set
-     * when the crawl hit a global cap so a partial scan never destroys data.
-     */
-    suspend fun finishSync(
-        sourceId: Long,
-        freshUrls: Set<String>,
-        keptPrefixes: Set<String>,
-        skipDeletion: Boolean,
-        now: Long = System.currentTimeMillis(),
-    ) {
-        db.withTransaction {
-            if (!skipDeletion) {
-                val handle = db.openHelper.writableDatabase
-                handle.execSQL("CREATE TEMP TABLE IF NOT EXISTS fresh_files (url TEXT PRIMARY KEY)")
-                handle.execSQL("DELETE FROM fresh_files")
-                handle.execSQL("CREATE TEMP TABLE IF NOT EXISTS kept_dirs (prefix TEXT PRIMARY KEY)")
-                handle.execSQL("DELETE FROM kept_dirs")
-
-                val fresh = handle.compileStatement("INSERT OR IGNORE INTO fresh_files(url) VALUES (?)")
-                try {
-                    for (url in freshUrls) {
-                        fresh.bindString(1, url)
-                        fresh.executeInsert()
-                    }
-                } finally {
-                    fresh.close()
-                }
-                val kept = handle.compileStatement("INSERT OR IGNORE INTO kept_dirs(prefix) VALUES (?)")
-                try {
-                    for (prefix in keptPrefixes) {
-                        kept.bindString(1, prefix)
-                        kept.executeInsert()
-                    }
-                } finally {
-                    kept.close()
-                }
-
-                handle.execSQL(
-                    """
-                    DELETE FROM files
-                    WHERE sourceId = ?
-                      AND fileUrl NOT IN (SELECT url FROM fresh_files)
-                      AND NOT EXISTS (
-                        SELECT 1 FROM kept_dirs k
-                        WHERE substr(files.dirUrl || '/', 1, length(k.prefix)) = k.prefix
-                      )
-                    """.trimIndent(),
-                    arrayOf(sourceId),
-                )
-                handle.execSQL(
-                    "DELETE FROM titles WHERE sourceId = ? AND id NOT IN (SELECT DISTINCT titleId FROM files)",
-                    arrayOf(sourceId),
-                )
-            }
-            titleDao.recomputeForSource(sourceId, now)
-        }
-    }
-
     suspend fun deleteSourceData(sourceId: Long) {
         db.withTransaction {
             fileDao.deleteForSource(sourceId)
             titleDao.deleteForSource(sourceId)
-            db.folders().deleteForSource(sourceId)
         }
     }
 
@@ -236,5 +275,9 @@ class CatalogRepository(private val db: AppDb) {
     private fun sortQualities(values: List<String>): List<String> {
         val order = listOf("2160p", "1080p", "720p", "480p", "360p", "CAM")
         return values.sortedBy { order.indexOf(it).let { i -> if (i < 0) order.size else i } }
+    }
+
+    companion object {
+        private const val MAX_CACHED_FEED_ITEMS = 54
     }
 }

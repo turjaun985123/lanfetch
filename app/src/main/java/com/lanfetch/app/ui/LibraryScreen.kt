@@ -1,5 +1,6 @@
 package com.lanfetch.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,29 +19,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.ui.res.painterResource
-import com.lanfetch.app.R
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -48,30 +52,37 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.paging.LoadState
-import androidx.paging.compose.collectAsLazyPagingItems
-import androidx.paging.compose.itemKey
+import coil.compose.AsyncImage
+import com.lanfetch.app.R
 import com.lanfetch.app.data.CatalogFile
-import com.lanfetch.app.data.CatalogTitle
 import com.lanfetch.app.data.Facets
+import com.lanfetch.app.data.LiveTitle
 import com.lanfetch.app.download.Format
 import com.lanfetch.app.filter.CatalogFilter
 import com.lanfetch.app.filter.SortBy
@@ -80,24 +91,115 @@ import com.lanfetch.app.filter.SortBy
 @Composable
 fun LibraryScreen(vm: LibraryViewModel) {
     val searchQuery by vm.searchQuery.collectAsState()
+    val activeSearchQuery by vm.activeSearchQuery.collectAsState()
+    val categories by vm.categories.collectAsState()
+    val discoveringCategories by vm.discoveringCategories.collectAsState()
+    val selectedCategory by vm.selectedCategory.collectAsState()
     val filter by vm.filter.collectAsState()
     val facets by vm.facets.collectAsState()
-    val counts by vm.counts.collectAsState()
+    val items by vm.items.collectAsState()
+    val isLoadingInitial by vm.isLoadingInitial.collectAsState()
+    val isRefreshing by vm.isRefreshing.collectAsState()
+    val isLoadingMore by vm.isLoadingMore.collectAsState()
+    val hasMore by vm.hasMore.collectAsState()
+    val errorMessage by vm.errorMessage.collectAsState()
+    val statusText by vm.statusText.collectAsState()
     val downloadedUrls by vm.downloadedUrls.collectAsState()
-    val syncing by vm.syncing.collectAsState()
-    val titles = vm.titles.collectAsLazyPagingItems()
 
     var showFilterSheet by remember { mutableStateOf(false) }
     var showGroup by remember { mutableStateOf(false) }
     val selectedTitle by vm.selectedTitle.collectAsState()
     val selectedFiles by vm.selectedFiles.collectAsState()
+    val selectedFilesLoading by vm.selectedFilesLoading.collectAsState()
+    val selectedFilesError by vm.selectedFilesError.collectAsState()
+
+    val keyboard = LocalSoftwareKeyboardController.current
+    val gridState = rememberLazyGridState()
+
+    val currentHasMore by rememberUpdatedState(hasMore)
+    val currentLoadingMore by rememberUpdatedState(isLoadingMore)
+    val currentLoadingInitial by rememberUpdatedState(isLoadingInitial)
+
+    LaunchedEffect(gridState) {
+        snapshotFlow {
+            val info = gridState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            lastVisible to info.totalItemsCount
+        }.collect { (lastVisible, total) ->
+            if (total > 0 && lastVisible >= total - 4 &&
+                currentHasMore && !currentLoadingMore && !currentLoadingInitial
+            ) {
+                vm.loadMore()
+            }
+        }
+    }
+
+    LaunchedEffect(items.size, hasMore, isLoadingMore, isLoadingInitial) {
+        val info = gridState.layoutInfo
+        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+        if (info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - 2 &&
+            hasMore && !isLoadingMore && !isLoadingInitial
+        ) {
+            vm.loadMore()
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = "Library",
+            subtitle = statusText,
+            action = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+                ) {
+                    Surface(
+                        onClick = { vm.refresh() },
+                        shape = RoundedCornerShape(Grid.RadiusBadge),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                    ) {
+                        Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = "Refresh live feed",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Surface(
+                        onClick = { showFilterSheet = true },
+                        shape = RoundedCornerShape(Grid.RadiusBadge),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                    ) {
+                        Text(
+                            text = sortLabel(filter.sort),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        )
+                    }
+                }
+            },
+        )
+
+        Spacer(Modifier.height(Grid.ItemGap))
+
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { vm.setQuery(it) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            placeholder = { Text("Search movies & shows…") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Grid.PageHorizontal),
+            placeholder = {
+                Text(
+                    "Search servers directly (Hindi, English, Series…)",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
@@ -107,107 +209,193 @@ fun LibraryScreen(vm: LibraryViewModel) {
                 }
             },
             singleLine = true,
-            shape = RoundedCornerShape(16.dp),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = {
+                    vm.submitSearch()
+                    keyboard?.hide()
+                },
+            ),
+            shape = RoundedCornerShape(Grid.RadiusControl),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+            ),
         )
 
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Spacer(Modifier.height(8.dp))
+
+        // YouTube-style live category chip bar discovered directly from enabled servers
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = Grid.PageHorizontal),
+            horizontalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            FilterChip(
-                selected = filter.kinds.isEmpty(),
-                onClick = { vm.setFilter(filter.copy(kinds = emptySet())) },
-                label = { Text("All") },
-            )
-            FilterChip(
-                selected = filter.kinds == setOf("movie"),
-                onClick = { vm.setFilter(filter.copy(kinds = setOf("movie"))) },
-                label = { Text("Movies") },
-            )
-            FilterChip(
-                selected = filter.kinds == setOf("series"),
-                onClick = { vm.setFilter(filter.copy(kinds = setOf("series"))) },
-                label = { Text("Shows") },
-            )
-            Spacer(Modifier.weight(1f))
-            BadgedBox(badge = {
-                if (filter.activeCount > 0) Badge { Text("${filter.activeCount}") }
-            }) {
-                IconButton(onClick = { showFilterSheet = true }) {
-                    Icon(painterResource(R.drawable.ic_filter_list), contentDescription = "Filters")
-                }
+            item(key = "__ALL__") {
+                CategoryPill(
+                    selected = activeSearchQuery.isEmpty() && selectedCategory == null,
+                    label = "All",
+                    onClick = { vm.selectCategory(null) },
+                )
             }
-            IconButton(onClick = { vm.syncAll() }, enabled = syncing.isEmpty()) {
-                Icon(painterResource(R.drawable.ic_sync), contentDescription = "Sync all sources")
+            item(key = LibraryViewModel.FAVORITES_CATEGORY) {
+                CategoryPill(
+                    selected = activeSearchQuery.isEmpty() &&
+                        selectedCategory == LibraryViewModel.FAVORITES_CATEGORY,
+                    label = "Favorites",
+                    onClick = { vm.selectCategory(LibraryViewModel.FAVORITES_CATEGORY) },
+                )
             }
-        }
-
-        Text(
-            when {
-                syncing.isNotEmpty() -> {
-                    val progress = syncing.values.first()
-                    "Syncing… ${progress.foldersScanned} folders, ${progress.itemsFound} files"
-                }
-                counts.titles == 0 -> "No catalog yet — sync a server to discover downloadable files."
-                else -> "${counts.titles} titles • ${counts.files} files"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
-
-        when {
-            titles.loadState.refresh is LoadState.Loading && titles.itemCount == 0 -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+            items(categories, key = { it.name }) { cat ->
+                CategoryPill(
+                    selected = activeSearchQuery.isEmpty() && selectedCategory == cat.name,
+                    label = cat.name,
+                    onClick = { vm.selectCategory(cat.name) },
+                )
             }
-
-            titles.loadState.refresh is LoadState.Error && titles.itemCount == 0 -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Could not load the catalog.", color = MaterialTheme.colorScheme.error)
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = { titles.retry() }) { Text("Retry") }
-                    }
-                }
-            }
-
-            titles.itemCount == 0 -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            painterResource(R.drawable.ic_movie), contentDescription = null,
-                            Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            if (counts.titles == 0) "Nothing here yet.\nSync a server from the Servers tab."
-                            else "No titles match your filters.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (filter.activeCount > 0 || searchQuery.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedButton(onClick = { vm.clearFilters() }) { Text("Clear filters") }
+            if (discoveringCategories && categories.isEmpty()) {
+                item(key = "__DISCOVERING__") {
+                    Surface(
+                        shape = RoundedCornerShape(Grid.RadiusControl),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                            Text(
+                                "Loading categories…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
             }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Grid.PageHorizontal, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+        ) {
+            KindChip(
+                selected = filter.kinds.isEmpty(),
+                label = "All",
+                onClick = { vm.setFilter(filter.copy(kinds = emptySet())) },
+            )
+            KindChip(
+                selected = filter.kinds == setOf("movie"),
+                label = "Movies",
+                onClick = { vm.setFilter(filter.copy(kinds = setOf("movie"))) },
+            )
+            KindChip(
+                selected = filter.kinds == setOf("series"),
+                label = "Shows",
+                onClick = { vm.setFilter(filter.copy(kinds = setOf("series"))) },
+            )
+            Spacer(Modifier.weight(1f))
+            BadgedBox(
+                badge = {
+                    if (filter.activeCount > 0) Badge { Text("${filter.activeCount}") }
+                },
+            ) {
+                Surface(
+                    onClick = { showFilterSheet = true },
+                    shape = RoundedCornerShape(Grid.RadiusControl),
+                    color = if (filter.activeCount > 0) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        1.dp,
+                        if (filter.activeCount > 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                    ),
+                ) {
+                    Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            painterResource(R.drawable.ic_filter_list),
+                            contentDescription = "Filters",
+                            modifier = Modifier.size(18.dp),
+                            tint = if (filter.activeCount > 0) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        GridRuleDivider()
+        if (isRefreshing) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+        }
+
+        when {
+            isLoadingInitial -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            if (activeSearchQuery.isNotEmpty()) "Searching LAN servers…"
+                            else "Fetching live catalog page…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            items.isEmpty() && !errorMessage.isNullOrBlank() -> {
+                EmptyState(
+                    painter = painterResource(R.drawable.ic_error),
+                    title = "Could not load from servers",
+                    subtitle = errorMessage ?: "Check Wi-Fi connection and enabled Sources.",
+                    action = { OutlinedButton(onClick = { vm.refresh() }) { Text("Retry") } },
+                )
+            }
+
+            items.isEmpty() -> {
+                val hasActiveQuery = filter.activeCount > 0 || searchQuery.isNotEmpty() || selectedCategory != null
+                EmptyState(
+                    painter = painterResource(R.drawable.ic_movie),
+                    title = when {
+                        activeSearchQuery.isNotEmpty() -> "No live matches"
+                        selectedCategory == LibraryViewModel.FAVORITES_CATEGORY -> "No favorites yet"
+                        else -> "Nothing found here"
+                    },
+                    subtitle = when {
+                        activeSearchQuery.isNotEmpty() -> "Try another spelling or clear filters."
+                        selectedCategory == LibraryViewModel.FAVORITES_CATEGORY ->
+                            "Tap the heart on any title card to save it here."
+                        else -> "Try choosing another category or refreshing."
+                    },
+                    action = if (hasActiveQuery && selectedCategory != LibraryViewModel.FAVORITES_CATEGORY) {
+                        { OutlinedButton(onClick = { vm.clearFilters() }) { Text("Reset view") } }
+                    } else null,
+                )
+            }
 
             else -> {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 158.dp),
-                    contentPadding = PaddingValues(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    state = gridState,
+                    columns = GridCells.Adaptive(minSize = 156.dp),
+                    contentPadding = PaddingValues(Grid.PageHorizontal),
+                    horizontalArrangement = Arrangement.spacedBy(Grid.ItemGap),
+                    verticalArrangement = Arrangement.spacedBy(Grid.ItemGap),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(
-                        count = titles.itemCount,
-                        key = titles.itemKey { it.id },
-                    ) { index ->
-                        val title = titles[index] ?: return@items
+                        items = items,
+                        key = { it.folderUrl },
+                    ) { title ->
                         TitleCard(
                             title = title,
                             onClick = {
@@ -219,10 +407,31 @@ fun LibraryScreen(vm: LibraryViewModel) {
                         )
                     }
 
-                    if (titles.loadState.append is LoadState.Loading) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    if (isLoadingMore) {
+                        item(key = "__LOADING_MORE__", span = { GridItemSpan(maxLineSpan) }) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(Grid.SectionGap),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "Loading next page…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    } else if (hasMore) {
+                        item(key = "__LOAD_MORE_BTN__", span = { GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                OutlinedButton(onClick = { vm.loadMore() }) {
+                                    Text("Load more")
+                                }
                             }
                         }
                     }
@@ -249,11 +458,14 @@ fun LibraryScreen(vm: LibraryViewModel) {
             GroupDetailSheet(
                 title = title,
                 files = selectedFiles,
+                filesLoading = selectedFilesLoading,
+                filesError = selectedFilesError,
                 downloadedUrls = downloadedUrls,
                 onDismiss = {
                     showGroup = false
                     vm.closeTitle()
                 },
+                onRetry = { vm.retrySelectedFiles() },
                 onDownload = { vm.download(it, title.title) },
                 onDownloadAll = {
                     vm.downloadAll(selectedFiles, title.title)
@@ -267,125 +479,197 @@ fun LibraryScreen(vm: LibraryViewModel) {
 }
 
 @Composable
+private fun CategoryPill(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(Grid.RadiusControl),
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+        ),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+        )
+    }
+}
+
+@Composable
+private fun KindChip(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        modifier = Modifier.height(34.dp),
+        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+        shape = RoundedCornerShape(Grid.RadiusControl),
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+            selectedLabelColor = MaterialTheme.colorScheme.primary,
+            containerColor = MaterialTheme.colorScheme.surface,
+            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = true,
+            selected = selected,
+            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+            selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
+        ),
+    )
+}
+
+@Composable
 private fun TitleCard(
-    title: CatalogTitle,
+    title: LiveTitle,
     onClick: () -> Unit,
     onDownload: () -> Unit,
     onFavorite: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
+    val initials = remember(title.title) {
+        title.title.split(' ')
+            .asSequence()
+            .filter { it.isNotBlank() }
+            .take(2)
+            .map { it.first().uppercaseChar() }
+            .joinToString("")
+            .ifEmpty { "?" }
+    }
+    val metaLine = remember(
+        title.year, title.kind, title.seasonCount, title.bestSourceTag, title.bestCodec, title.maxSizeBytes,
     ) {
-        Column {
-            Box(
-                Modifier.fillMaxWidth().aspectRatio(16f / 10f).background(titleColor(title.title)),
-                contentAlignment = Alignment.Center,
+        listOfNotNull(
+            title.year?.toString(),
+            if (title.kind == "series" && title.seasonCount > 0) {
+                if (title.seasonCount == 1) "1 season" else "${title.seasonCount} seasons"
+            } else null,
+            title.bestSourceTag,
+            title.bestCodec,
+            if (title.maxSizeBytes > 0) Format.bytes(title.maxSizeBytes) else null,
+        ).joinToString(" • ").ifEmpty { if (title.kind == "series") "Series" else "—" }
+    }
+    val countBadge = remember(title.seasonCount, title.fileCount) {
+        when {
+            title.seasonCount > 1 -> "${title.seasonCount} seasons"
+            title.seasonCount == 1 -> "1 season"
+            title.fileCount > 1 -> "${title.fileCount} files"
+            else -> null
+        }
+    }
+
+    SurfaceCard(onClick = onClick) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 10f)
+                .background(titleColor(title.title)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                initials,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White.copy(alpha = 0.9f),
+            )
+            if (title.posterUrl != null) {
+                AsyncImage(
+                    model = title.posterUrl,
+                    contentDescription = title.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (title.downloadedCount > 0) {
+                BadgePill(
+                    text = if (title.fileCount > 0 && title.downloadedCount >= title.fileCount) "Saved"
+                    else if (title.fileCount > 0) "${title.downloadedCount}/${title.fileCount}"
+                    else "${title.downloadedCount} saved",
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                )
+            }
+            if (title.bestQuality != null) {
+                BadgePill(
+                    text = title.bestQuality,
+                    containerColor = Color.Black.copy(alpha = 0.68f),
+                    contentColor = Color.White,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                )
+            }
+            if (countBadge != null) {
+                BadgePill(
+                    text = countBadge,
+                    containerColor = Color.Black.copy(alpha = 0.68f),
+                    contentColor = Color.White,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+                )
+            }
+        }
+
+        Column(Modifier.padding(Grid.CompactCardPadding)) {
+            Text(
+                text = title.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = metaLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                minLines = 1,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(8.dp))
+            GridRuleDivider()
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().height(32.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    title.title.split(" ").filter { it.isNotBlank() }.take(2)
-                        .map { it.first().uppercase() }.joinToString(""),
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.9f),
-                )
-                if (title.posterUrl != null) {
-                    coil.compose.AsyncImage(
-                        model = title.posterUrl,
-                        contentDescription = title.title,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                if (title.downloadedCount > 0) {
-                    Box(
-                        Modifier.align(Alignment.TopStart).padding(8.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.88f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            if (title.downloadedCount >= title.fileCount) "Saved"
-                            else "${title.downloadedCount}/${title.fileCount}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-                if (title.bestQuality != null) {
-                    Box(
-                        Modifier.align(Alignment.TopEnd).padding(8.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            title.bestQuality,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                        )
-                    }
-                }
-                if (title.fileCount > 1) {
-                    Box(
-                        Modifier.align(Alignment.BottomStart).padding(8.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            "${title.fileCount} files",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                        )
-                    }
-                }
-            }
-            Column(Modifier.padding(10.dp)) {
-                Text(
-                    title.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    listOfNotNull(
-                        title.year?.toString(),
-                        title.bestSourceTag,
-                        title.bestCodec,
-                        if (title.maxSizeBytes > 0) Format.bytes(title.maxSizeBytes) else null,
-                    ).joinToString(" • "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-                Text(
-                    title.category,
+                    text = title.category,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = onFavorite, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            if (title.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                            contentDescription = "Favorite",
-                            tint = if (title.favorite) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            painterResource(R.drawable.ic_download),
-                            contentDescription = "Download",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                IconButton(onClick = onFavorite, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        if (title.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = "Favorite",
+                        modifier = Modifier.size(18.dp),
+                        tint = if (title.favorite) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onDownload, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        painterResource(R.drawable.ic_download),
+                        contentDescription = "Download",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
         }
@@ -403,94 +687,60 @@ private fun FilterSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp).padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Grid.PageHorizontal)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(Grid.ItemGap),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Filters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Filters", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 OutlinedButton(onClick = onClear) { Text("Clear all") }
             }
+            GridRuleDivider()
 
             Text("Sort by", style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+                verticalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+            ) {
                 SortBy.entries.forEach { sort ->
                     FilterChip(
                         selected = filter.sort == sort,
                         onClick = { onChange(filter.copy(sort = sort)) },
-                        label = {
-                            Text(sort.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() })
-                        },
+                        label = { Text(sortLabel(sort)) },
                     )
                 }
             }
 
             if (facets.qualities.isNotEmpty()) {
-                Text("Quality", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    facets.qualities.forEach { quality ->
-                        FilterChip(
-                            selected = quality in filter.qualities,
-                            onClick = { onChange(filter.copy(qualities = filter.qualities.toggle(quality))) },
-                            label = { Text(quality) },
-                        )
-                    }
+                FacetChipSection("Quality", facets.qualities, filter.qualities) {
+                    onChange(filter.copy(qualities = filter.qualities.toggle(it)))
                 }
             }
-
-            if (facets.categories.isNotEmpty()) {
-                Text("Category", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    facets.categories.forEach { category ->
-                        FilterChip(
-                            selected = category in filter.categories,
-                            onClick = { onChange(filter.copy(categories = filter.categories.toggle(category))) },
-                            label = { Text(category) },
-                        )
-                    }
+            if (facets.categories.size > 1) {
+                FacetChipSection("Category", facets.categories, filter.categories) {
+                    onChange(filter.copy(categories = filter.categories.toggle(it)))
                 }
             }
-
             if (facets.sourceNames.size > 1) {
-                Text("Server", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    facets.sourceNames.forEach { source ->
-                        FilterChip(
-                            selected = source in filter.sourceNames,
-                            onClick = { onChange(filter.copy(sourceNames = filter.sourceNames.toggle(source))) },
-                            label = { Text(source) },
-                        )
-                    }
+                FacetChipSection("Server", facets.sourceNames, filter.sourceNames) {
+                    onChange(filter.copy(sourceNames = filter.sourceNames.toggle(it)))
                 }
             }
-
             if (facets.languages.isNotEmpty()) {
-                Text("Language", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    facets.languages.forEach { language ->
-                        FilterChip(
-                            selected = language in filter.languages,
-                            onClick = { onChange(filter.copy(languages = filter.languages.toggle(language))) },
-                            label = { Text(language) },
-                        )
-                    }
+                FacetChipSection("Language", facets.languages, filter.languages) {
+                    onChange(filter.copy(languages = filter.languages.toggle(it)))
                 }
             }
-
             if (facets.sourceTags.isNotEmpty()) {
-                Text("Release type", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    facets.sourceTags.forEach { tag ->
-                        FilterChip(
-                            selected = tag in filter.sourceTags,
-                            onClick = { onChange(filter.copy(sourceTags = filter.sourceTags.toggle(tag))) },
-                            label = { Text(tag) },
-                        )
-                    }
+                FacetChipSection("Release type", facets.sourceTags, filter.sourceTags) {
+                    onChange(filter.copy(sourceTags = filter.sourceTags.toggle(it)))
                 }
             }
 
@@ -522,7 +772,10 @@ private fun FilterSheet(
             }
 
             Text("Minimum size", style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+                verticalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+            ) {
                 val sizes = listOf(
                     null to "Any",
                     700_000_000L to "700 MB+",
@@ -538,22 +791,52 @@ private fun FilterSheet(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Favorites only", Modifier.weight(1f))
+            GridRuleDivider()
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Favorites only", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Switch(
                     checked = filter.favoritesOnly,
                     onCheckedChange = { onChange(filter.copy(favoritesOnly = it)) },
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Dual / multi audio only", Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Dual / multi audio only", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Switch(
                     checked = filter.dualAudioOnly,
                     onCheckedChange = { onChange(filter.copy(dualAudioOnly = it)) },
                 )
             }
 
-            Button(onClick = onDismiss, Modifier.fillMaxWidth()) { Text("Show results") }
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(Grid.RadiusControl),
+            ) { Text("Show results") }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FacetChipSection(
+    title: String,
+    options: List<String>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(Grid.ChipGap)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+            verticalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+        ) {
+            options.forEach { value ->
+                FilterChip(
+                    selected = value in selected,
+                    onClick = { onToggle(value) },
+                    label = { Text(value) },
+                )
+            }
         }
     }
 }
@@ -561,13 +844,24 @@ private fun FilterSheet(
 private fun Set<String>.toggle(value: String): Set<String> =
     if (value in this) this - value else this + value
 
+private fun sortLabel(sort: SortBy): String = when (sort) {
+    SortBy.NEWEST -> "Feed"
+    SortBy.TITLE -> "Title A–Z"
+    SortBy.YEAR_DESC -> "Year"
+    SortBy.SIZE_DESC -> "Largest"
+    SortBy.SIZE_ASC -> "Smallest"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GroupDetailSheet(
-    title: CatalogTitle,
+    title: LiveTitle,
     files: List<CatalogFile>,
+    filesLoading: Boolean,
+    filesError: String?,
     downloadedUrls: Set<String>,
     onDismiss: () -> Unit,
+    onRetry: () -> Unit,
     onDownload: (CatalogFile) -> Unit,
     onDownloadAll: () -> Unit,
     onFavorite: () -> Unit,
@@ -579,27 +873,43 @@ private fun GroupDetailSheet(
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Grid.PageHorizontal)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (title.posterUrl != null) {
-                    coil.compose.AsyncImage(
+                    AsyncImage(
                         model = title.posterUrl,
                         contentDescription = title.title,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(10.dp)),
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(Grid.ItemGap))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        title.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         listOfNotNull(
                             title.year?.toString(), title.category, title.language, title.sourceName,
                         ).joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 IconButton(onClick = onFavorite) {
@@ -611,69 +921,128 @@ private fun GroupDetailSheet(
                     )
                 }
             }
-            Spacer(Modifier.height(8.dp))
+
             if (title.downloadedCount > 0) {
-                Text(
-                    "${title.downloadedCount} of ${title.fileCount} files downloaded",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                Spacer(Modifier.height(8.dp))
+                BadgePill(
+                    text = if (files.isNotEmpty()) "${title.downloadedCount} of ${files.size} ${if (files.size == 1) "file" else "files"} downloaded"
+                    else "${title.downloadedCount} ${if (title.downloadedCount == 1) "file" else "files"} downloaded",
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.primary,
                 )
-                Spacer(Modifier.height(4.dp))
             }
-            Button(onClick = onDownloadAll, Modifier.fillMaxWidth(), enabled = files.isNotEmpty()) {
-                Icon(painterResource(R.drawable.ic_download), contentDescription = null)
+
+            Spacer(Modifier.height(Grid.ItemGap))
+            Button(
+                onClick = onDownloadAll,
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                enabled = files.isNotEmpty() && !filesLoading,
+                shape = RoundedCornerShape(Grid.RadiusControl),
+            ) {
+                Icon(painterResource(R.drawable.ic_download), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Download all (${files.size} files)")
+                Text(
+                    if (filesLoading && files.isEmpty()) "Loading files…"
+                    else "Download all (${files.size} ${if (files.size == 1) "file" else "files"})"
+                )
             }
-            Spacer(Modifier.height(12.dp))
-            if (files.isEmpty()) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            } else {
-                LazyColumn(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(sorted, key = { it.id }) { file ->
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+
+            Spacer(Modifier.height(Grid.ItemGap))
+            GridRuleDivider()
+            Spacer(Modifier.height(Grid.ItemGap))
+
+            when {
+                filesLoading && files.isEmpty() -> {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text(
+                            "Fetching episodes & files from ${title.sourceName}…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                !filesLoading && files.isEmpty() -> {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            filesError ?: "No video files found in this folder.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(onClick = onRetry) { Text("Retry") }
+                    }
+                }
+
+                else -> {
+                    if (filesLoading) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom = 8.dp))
+                    }
+                    LazyColumn(
+                        Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(Grid.ChipGap),
+                    ) {
+                        items(sorted, key = { it.fileUrl }) { file ->
+                            val isSaved = file.fileUrl in downloadedUrls
+                            Surface(
+                                shape = RoundedCornerShape(Grid.RadiusControl),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = cardBorder(),
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        if (file.episode != null) {
-                                            "S${file.season ?: "?"} E${file.episode} — ${file.fileName}"
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onDownload(file) }
+                                        .padding(horizontal = Grid.CompactCardPadding, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            if (file.episode != null) {
+                                                "S${file.season ?: "?"} E${file.episode} — ${file.fileName}"
+                                            } else if (file.season != null) {
+                                                "S${file.season} — ${file.fileName}"
+                                            } else {
+                                                file.fileName
+                                            },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            listOfNotNull(
+                                                file.quality, file.sourceTag, file.codec, file.audio,
+                                                if (file.sizeBytes > 0) Format.bytes(file.sizeBytes) else null,
+                                            ).joinToString(" • "),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    IconButton(onClick = { onDownload(file) }, modifier = Modifier.size(36.dp)) {
+                                        if (isSaved) {
+                                            Icon(
+                                                Icons.Filled.CheckCircle,
+                                                contentDescription = "Already downloaded",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
                                         } else {
-                                            file.fileName
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        listOfNotNull(
-                                            file.quality, file.sourceTag, file.codec, file.audio,
-                                            if (file.sizeBytes > 0) Format.bytes(file.sizeBytes) else null,
-                                        ).joinToString(" • "),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                val isSaved = file.fileUrl in downloadedUrls
-                                IconButton(onClick = { onDownload(file) }) {
-                                    if (isSaved) {
-                                        Icon(
-                                            Icons.Filled.CheckCircle,
-                                            contentDescription = "Already downloaded",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    } else {
-                                        Icon(
-                                            painterResource(R.drawable.ic_download),
-                                            contentDescription = "Download this file",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
+                                            Icon(
+                                                painterResource(R.drawable.ic_download),
+                                                contentDescription = "Download this file",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
                                     }
                                 }
                             }

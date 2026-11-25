@@ -13,10 +13,17 @@ class CrawlRulesTest {
         assertFalse(CrawlRules.isJunkFolder("English Movies"))
     }
 
-    @Test fun seasonLikeNames() {
+    @Test fun seasonLikeNamesMatchRealVariantsWithoutFalsePositives() {
         assertTrue(CrawlRules.isSeasonLike("Season 1"))
         assertTrue(CrawlRules.isSeasonLike("Season 02"))
         assertTrue(CrawlRules.isSeasonLike("S01"))
+        assertTrue(CrawlRules.isSeasonLike("Season 1 (Part-1)"))
+        assertTrue(CrawlRules.isSeasonLike("Season 1 (Hindi Language)"))
+        assertTrue(CrawlRules.isSeasonLike("Season ALL"))
+        assertTrue(CrawlRules.isSeasonLike("Season 1 & 2"))
+        assertTrue(CrawlRules.isSeasonLike("Season 1.5 (Signs of Holy War)"))
+        assertTrue(CrawlRules.isSeasonLike("Season 1 - Aegis of Uruk"))
+        assertFalse(CrawlRules.isSeasonLike("Season of the Witch (2011)"))
         assertFalse(CrawlRules.isSeasonLike("Sample"))
         assertFalse(CrawlRules.isSeasonLike("Extras"))
     }
@@ -28,23 +35,5 @@ class CrawlRulesTest {
         assertTrue(CrawlRules.shouldDescend(1, false, "A - F", 4))
         assertFalse(CrawlRules.shouldDescend(1, false, "Trailers", 4))
         assertFalse(CrawlRules.shouldDescend(4, false, "Season 1", 4))
-    }
-
-    @Test fun pruneOnlyKnownUnchangedLeaves() {
-        val leaf = FolderMeta(modified = "2024-01-01 10:00", isLeaf = true, hasVideos = true)
-        assertTrue(CrawlRules.shouldPrune(false, leaf, "2024-01-01 10:00"))
-        assertFalse(CrawlRules.shouldPrune(false, leaf, "2024-02-01 10:00"))
-        assertFalse(CrawlRules.shouldPrune(true, leaf, "2024-01-01 10:00"))
-        assertFalse(CrawlRules.shouldPrune(false, null, "2024-01-01 10:00"))
-        assertFalse(CrawlRules.shouldPrune(false, leaf, null))
-        // A folder that had subfolders last time must be rescanned: its own
-        // mtime does not change when a grandchild gains an episode.
-        assertFalse(
-            CrawlRules.shouldPrune(
-                false,
-                FolderMeta(modified = "2024-01-01 10:00", isLeaf = false, hasVideos = false),
-                "2024-01-01 10:00",
-            )
-        )
     }
 }

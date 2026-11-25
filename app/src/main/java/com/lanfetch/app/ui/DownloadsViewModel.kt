@@ -10,7 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 
 class DownloadsViewModel(app: Application) : AndroidViewModel(app) {
-    private val coordinator = (app as LanFetchApp).container.downloadCoordinator
+    private val container = (app as LanFetchApp).container
+    private val coordinator = container.downloadCoordinator
 
     val downloads: StateFlow<List<DownloadUi>> = coordinator.observeUi()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -29,4 +30,6 @@ class DownloadsViewModel(app: Application) : AndroidViewModel(app) {
     fun remove(id: Long) = coordinator.removeRecord(id)
 
     fun pauseAll() = coordinator.pauseAll()
+
+    fun notifyMessage(text: String) = container.message(text)
 }

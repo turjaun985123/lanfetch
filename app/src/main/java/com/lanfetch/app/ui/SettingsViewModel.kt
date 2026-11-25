@@ -3,15 +3,19 @@ package com.lanfetch.app.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import coil.annotation.ExperimentalCoilApi
+import coil.imageLoader
 import com.lanfetch.app.LanFetchApp
 import com.lanfetch.app.data.AppSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
-    private val store = (app as LanFetchApp).container.settingsStore
+    private val container = (app as LanFetchApp).container
+    private val store = container.settingsStore
 
     val settings: StateFlow<AppSettings> = store.flow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
@@ -26,5 +30,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setWifiOnly(value: Boolean) {
         viewModelScope.launch { store.setWifiOnly(value) }
+    }
+
+    @OptIn(ExperimentalCoilApi::class)
+    fun clearCaches() {
+        viewModelScope.launch(Dispatchers.IO) {
+            container.liveClient.clearAllCaches()
+            container.catalogRepository.clearAllLiveCache()
+            val loader = getApplication<Application>().imageLoader
+            loader.memoryCache?.clear()
+            loader.diskCache?.clear()
+            container.notifyCacheCleared()
+            container.message("Cleared live directory & poster cache")
+        }
     }
 }

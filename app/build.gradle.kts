@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.lanfetch.app"
-        minSdk = 26
+        minSdk = 23
         targetSdk = 35
         versionCode = 4
         versionName = "1.3.0"
@@ -81,7 +81,6 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
-    implementation(libs.androidx.work.runtime)
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.jsoup)

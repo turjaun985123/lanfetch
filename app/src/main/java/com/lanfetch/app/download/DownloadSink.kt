@@ -1,13 +1,17 @@
 package com.lanfetch.app.download
 
+import android.Manifest
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.os.StatFs
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +42,13 @@ interface DownloadSink {
 object DiskSpace {
     private const val MARGIN = 64L * 1024 * 1024
 
+    fun hasPublicStoragePermission(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) == PackageManager.PERMISSION_GRANTED
+
     suspend fun hasRoom(
         context: Context,
         totalBytes: Long,
@@ -45,7 +56,7 @@ object DiskSpace {
     ): Boolean = withContext(Dispatchers.IO) {
         if (totalBytes <= 0) return@withContext true
         val needed = (totalBytes - alreadyDownloadedBytes.coerceAtLeast(0L)).coerceAtLeast(0L)
-        val dir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val dir = if (hasPublicStoragePermission(context)) {
             Environment.getExternalStorageDirectory()
         } else {
             context.getExternalFilesDir(null) ?: context.filesDir
@@ -109,7 +120,7 @@ class FileSink(private val file: File) : DownloadSink {
     }
 }
 
-/** Writes straight into a pending Downloads/LanFetch entry — no second copy. */
+/** Android 10 (API 29) through latest Android: writes directly into public Downloads/LanFetch via MediaStore. */
 @RequiresApi(Build.VERSION_CODES.Q)
 class MediaStoreSink(
     private val context: Context,
@@ -130,7 +141,7 @@ class MediaStoreSink(
         val target = uri ?: throw IOException("Cannot create MediaStore entry")
         val descriptor = try {
             context.contentResolver.openFileDescriptor(target, "rw")
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         } ?: run {
             preserved = false
@@ -145,7 +156,7 @@ class MediaStoreSink(
 
     private fun insertPending(): Uri {
         val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.DISPLAY_NAME, sanitizeKeepExt(fileName))
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
             put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/LanFetch")
             put(MediaStore.Downloads.IS_PENDING, 1)
@@ -196,8 +207,21 @@ class MediaStoreSink(
         val target = uri ?: return@withContext displayPath
         val values = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
         context.contentResolver.update(target, values, null, null)
-        displayPath
+        val actualName = resolveDisplayName(target) ?: fileName
+        "Downloads/LanFetch/$actualName"
     }
+
+    private fun resolveDisplayName(target: Uri): String? = runCatching {
+        context.contentResolver.query(
+            target,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()
 
     override fun close() {
         runCatching { channel?.close() }
@@ -212,19 +236,24 @@ class MediaStoreSink(
     }
 }
 
-/** Android 8/9 fallback: write in app storage, then publish to Downloads when allowed. */
+/**
+ * Android 6 – 9 (API 23 – 28) sink: writes straight into public
+ * `Phone storage/Download/LanFetch/` (when WRITE_EXTERNAL_STORAGE is granted)
+ * as a hidden `.part`, atomically renames on completion, and triggers MediaScanner
+ * so file managers & video players see it immediately.
+ */
 class LegacySink(
     private val context: Context,
     private val id: Long,
     private val fileName: String,
+    private val mimeType: String,
 ) : DownloadSink {
-    private val part = File(
-        File(context.getExternalFilesDir(null) ?: context.filesDir, "inprogress"),
-        "${id}_${sanitize(fileName)}.part",
-    )
+    private val safeName = sanitizeKeepExt(fileName)
+    private val targetDir = resolveDirectory(context)
+    private val part = File(targetDir, partFileName(id, safeName))
     private val inner = FileSink(part)
 
-    override val displayPath: String get() = part.absolutePath
+    override val displayPath: String get() = File(targetDir, safeName).absolutePath
 
     override suspend fun open(): Boolean = inner.open()
 
@@ -240,27 +269,18 @@ class LegacySink(
     override suspend fun finish(): String = withContext(Dispatchers.IO) {
         inner.sync()
         inner.close()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            @Suppress("DEPRECATION")
-            val dir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "LanFetch",
-            )
-            if (dir.mkdirs() || dir.isDirectory) {
-                val dest = File(dir, fileName)
-                runCatching {
-                    part.copyTo(dest, overwrite = true)
-                    part.delete()
-                    return@withContext dest.absolutePath
-                }
-            }
+        val dest = uniqueDestination(targetDir, safeName)
+        if (!part.renameTo(dest)) {
+            part.copyTo(dest, overwrite = false)
+            part.delete()
         }
-        part.absolutePath
+        MediaScannerConnection.scanFile(
+            context.applicationContext,
+            arrayOf(dest.absolutePath),
+            arrayOf(mimeType),
+            null,
+        )
+        dest.absolutePath
     }
 
     override fun close() = inner.close()
@@ -269,6 +289,53 @@ class LegacySink(
         inner.delete()
     }
 
-    private fun sanitize(name: String): String =
-        name.replace(Regex("""[\\/:*?"<>|]"""), "_").take(120)
+    companion object {
+        fun partFileName(id: Long, safeName: String): String = ".lanfetch_${id}_${safeName}.part"
+
+        fun publicDownloadsDir(): File {
+            @Suppress("DEPRECATION")
+            return File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "LanFetch",
+            )
+        }
+
+        fun appDownloadsDir(context: Context): File =
+            File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir, "LanFetch")
+
+        fun resolveDirectory(context: Context): File {
+            if (DiskSpace.hasPublicStoragePermission(context)) {
+                val dir = publicDownloadsDir()
+                if (dir.isDirectory || dir.mkdirs()) return dir
+            }
+            val fallback = appDownloadsDir(context)
+            fallback.mkdirs()
+            return fallback
+        }
+
+        private fun uniqueDestination(dir: File, name: String): File {
+            val direct = File(dir, name)
+            if (!direct.exists()) return direct
+            val dot = name.lastIndexOf('.')
+            val stem = if (dot > 0) name.substring(0, dot) else name
+            val ext = if (dot > 0) name.substring(dot) else ""
+            for (i in 1..999) {
+                val candidate = File(dir, "$stem ($i)$ext")
+                if (!candidate.exists()) return candidate
+            }
+            return File(dir, "${System.currentTimeMillis()}_$name")
+        }
+    }
+}
+
+internal fun sanitizeKeepExt(name: String): String {
+    val clean = name.replace(Regex("""[\\/:*?"<>|]"""), "_").trim()
+    if (clean.length <= 120) return clean.ifEmpty { "download.bin" }
+    val dot = clean.lastIndexOf('.')
+    if (dot in (clean.length - 12)..(clean.length - 2)) {
+        val ext = clean.substring(dot)
+        val stem = clean.substring(0, dot).take((120 - ext.length).coerceAtLeast(1))
+        return stem + ext
+    }
+    return clean.take(120)
 }
