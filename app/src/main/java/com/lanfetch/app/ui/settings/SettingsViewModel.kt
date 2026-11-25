@@ -7,9 +7,12 @@ import coil.annotation.ExperimentalCoilApi
 import coil.imageLoader
 import com.lanfetch.app.LanFetchApp
 import com.lanfetch.app.data.AppSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -19,6 +22,31 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings: StateFlow<AppSettings> = store.flow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+
+    private val _updateCheck = MutableStateFlow(UpdateCheckState())
+    val updateCheck: StateFlow<UpdateCheckState> = _updateCheck.asStateFlow()
+    private val updateChecker = UpdateChecker(container.httpClient)
+    private var lastUpdateCheckAt = 0L
+
+    fun checkForUpdates(force: Boolean = false) {
+        if (_updateCheck.value.status == UpdateStatus.CHECKING) return
+        val now = System.currentTimeMillis()
+        if (!force && _updateCheck.value.status != UpdateStatus.NOT_CHECKED &&
+            now - lastUpdateCheckAt < UPDATE_CHECK_COOLDOWN_MS
+        ) return
+
+        lastUpdateCheckAt = now
+        _updateCheck.value = UpdateCheckState(status = UpdateStatus.CHECKING)
+        viewModelScope.launch {
+            _updateCheck.value = try {
+                updateChecker.check()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                UpdateCheckState(status = UpdateStatus.FAILED)
+            }
+        }
+    }
 
     fun setSegments(value: Int) {
         viewModelScope.launch { store.setSegments(value) }
@@ -51,5 +79,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             container.notifyCacheCleared()
             container.message("Cleared live feed & poster cache")
         }
+    }
+
+    private companion object {
+        const val UPDATE_CHECK_COOLDOWN_MS = 30 * 60 * 1000L
     }
 }

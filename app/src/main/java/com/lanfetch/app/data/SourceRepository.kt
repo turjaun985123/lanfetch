@@ -15,6 +15,14 @@ class SourceRepository(private val db: AppDb) {
 
     suspend fun seedDefaults() {
         db.withTransaction {
+            // Remove the retired bundled server from existing installations.
+            val retired = db.sources().byRootUrl("http://172.16.50.9/DHAKA-FLIX-9/")
+            if (retired?.name == "DHAKA-FLIX-9") {
+                db.favorites().deleteForSource(retired.id)
+                db.liveCache().deleteCategoriesForSource(retired.id)
+                db.liveCache().deleteFeedForSource(retired.id)
+                db.sources().delete(retired.id)
+            }
             if (db.sources().count() > 0) return@withTransaction
             SeedSources.defaults.forEach { db.sources().insert(SourceEntity.from(it)) }
         }

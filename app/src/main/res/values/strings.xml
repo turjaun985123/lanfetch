@@ -14,4 +14,12 @@
     <string name="finished">Finished</string>
     <string name="undo">Undo</string>
     <string name="empty_transfers">No downloads yet. Choose something from Browse and it will appear here.</string>
+    <string name="made_by_turjaun">Made by TURJAUN</string>
+    <string name="update_check_title">App updates</string>
+    <string name="checking_updates">Checking for updates…</string>
+    <string name="update_available">Update available: %1$s</string>
+    <string name="app_up_to_date">You’re up to date (%1$s)</string>
+    <string name="update_check_failed">Couldn’t check for updates. Check your connection and try again.</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="open_release">Open release</string>
 </resources>

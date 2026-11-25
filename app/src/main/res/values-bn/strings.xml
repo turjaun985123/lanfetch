@@ -14,4 +14,12 @@
     <string name="finished">সম্পন্ন</string>
     <string name="undo">ফিরিয়ে আনুন</string>
     <string name="empty_transfers">এখনো কোনো ডাউনলোড নেই। ব্রাউজ থেকে কিছু বেছে নিন, এখানে দেখা যাবে।</string>
+    <string name="made_by_turjaun">TURJAUN-এর তৈরি</string>
+    <string name="update_check_title">অ্যাপ আপডেট</string>
+    <string name="checking_updates">আপডেট খোঁজা হচ্ছে…</string>
+    <string name="update_available">আপডেট আছে: %1$s</string>
+    <string name="app_up_to_date">আপনি সর্বশেষ সংস্করণ ব্যবহার করছেন (%1$s)</string>
+    <string name="update_check_failed">আপডেট দেখা যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।</string>
+    <string name="check_for_updates">আপডেট দেখুন</string>
+    <string name="open_release">রিলিজ দেখুন</string>
 </resources>

@@ -20,6 +20,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -27,7 +28,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.lanfetch.app.BuildConfig
+import com.lanfetch.app.R
 import com.lanfetch.app.data.AppSettings
 import com.lanfetch.app.ui.components.LanesBadge
 import com.lanfetch.app.ui.components.LanesDivider
@@ -42,8 +47,13 @@ import com.lanfetch.app.ui.theme.ThemeMode
 @Composable
 fun SettingsScreen(vm: SettingsViewModel) {
     val settings: AppSettings by vm.settings.collectAsState()
+    val updateCheck by vm.updateCheck.collectAsState()
+    val releaseUrl = updateCheck.releaseUrl
+    val uriHandler = LocalUriHandler.current
     var segmentsDraft by remember(settings.segmentsPerDownload) { mutableFloatStateOf(settings.segmentsPerDownload.toFloat()) }
     var concurrencyDraft by remember(settings.maxConcurrent) { mutableFloatStateOf(settings.maxConcurrent.toFloat()) }
+
+    LaunchedEffect(vm) { vm.checkForUpdates() }
 
     Column(Modifier.fillMaxSize().background(LanesPalette.Canvas)) {
         LanesScreenHeader(
@@ -223,6 +233,59 @@ fun SettingsScreen(vm: SettingsViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                     color = LanesPalette.InkSecondary,
                 )
+
+                Text(
+                    stringResource(R.string.made_by_turjaun),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LanesPalette.InkPrimary,
+                )
+
+                LanesDivider(subtle = true)
+
+                Text(
+                    stringResource(R.string.update_check_title),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LanesPalette.InkPrimary,
+                )
+                val updateMessage = when (updateCheck.status) {
+                    UpdateStatus.NOT_CHECKED -> stringResource(R.string.check_for_updates)
+                    UpdateStatus.CHECKING -> stringResource(R.string.checking_updates)
+                    UpdateStatus.UP_TO_DATE -> stringResource(
+                        R.string.app_up_to_date,
+                        updateCheck.latestVersion ?: "v${BuildConfig.VERSION_NAME}",
+                    )
+                    UpdateStatus.AVAILABLE -> stringResource(
+                        R.string.update_available,
+                        updateCheck.latestVersion ?: "",
+                    )
+                    UpdateStatus.FAILED -> stringResource(R.string.update_check_failed)
+                }
+                Text(
+                    updateMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (updateCheck.status == UpdateStatus.AVAILABLE) {
+                        LanesPalette.Accent
+                    } else {
+                        LanesPalette.InkSecondary
+                    },
+                )
+                OutlinedButton(
+                    onClick = { vm.checkForUpdates(force = true) },
+                    enabled = updateCheck.status != UpdateStatus.CHECKING,
+                    shape = RoundedCornerShape(LanesRadii.Control),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.check_for_updates))
+                }
+                if (updateCheck.status == UpdateStatus.AVAILABLE && releaseUrl != null) {
+                    OutlinedButton(
+                        onClick = { uriHandler.openUri(releaseUrl) },
+                        shape = RoundedCornerShape(LanesRadii.Control),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.open_release))
+                    }
+                }
             }
         }
     }

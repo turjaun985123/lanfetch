@@ -12,7 +12,6 @@ object SeedSources {
     val defaults: List<Source> = listOf(
         "DHAKA-FLIX-7" to "http://172.16.50.7/DHAKA-FLIX-7/",
         "DHAKA-FLIX-8" to "http://172.16.50.8/DHAKA-FLIX-8/",
-        "DHAKA-FLIX-9" to "http://172.16.50.9/DHAKA-FLIX-9/",
         "DHAKA-FLIX-10" to "http://172.16.50.10/DHAKA-FLIX-10/",
         "DHAKA-FLIX-12" to "http://172.16.50.12/DHAKA-FLIX-12/",
         "DHAKA-FLIX-14" to "http://172.16.50.14/DHAKA-FLIX-14/",

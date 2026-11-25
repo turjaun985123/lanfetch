@@ -3,6 +3,7 @@ name: Android CI
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -45,15 +46,16 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lanfetch-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
 
   release:
-    # Audit S6: a release that cannot be signed must FAIL loudly — never
-    # upload an unsigned APK as if it were installable. Until the signing
-    # secrets exist, this job is red on purpose; the build job stays green.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Release builds run for version tags. Manual runs build and upload signed
+    # ABI APKs as workflow artifacts without publishing a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -103,13 +105,31 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Verify release APK is signed
+      - name: Verify and stage ARM APKs
         run: |
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -1)
-          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk
+          OUT=app/build/outputs/apk/release
+          mkdir -p release-assets
+          for ABI in arm64-v8a armeabi-v7a; do
+            APK="$OUT/app-$ABI-release.apk"
+            test -f "$APK"
+            "$APKSIGNER" verify --print-certs "$APK"
+            cp "$APK" "release-assets/lanfetch-${GITHUB_REF_NAME}-${ABI}.apk"
+          done
+          sha256sum release-assets/*.apk > release-assets/SHA256SUMS.txt
 
-      - name: Upload release APK
+      - name: Upload signed ABI APKs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: lanfetch-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          name: lanfetch-${{ github.ref_name }}-arm-apks
+          path: release-assets/*
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release-assets/*.apk release-assets/SHA256SUMS.txt \
+            --title "LanFetch $GITHUB_REF_NAME" \
+            --generate-notes
