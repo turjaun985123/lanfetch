@@ -16,35 +16,42 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.lanfetch.app.data.AppSettings
-import com.lanfetch.app.ui.components.TurjaunBadge
-import com.lanfetch.app.ui.components.TurjaunDivider
-import com.lanfetch.app.ui.components.TurjaunScreenHeader
-import com.lanfetch.app.ui.components.TurjaunSectionLabel
+import com.lanfetch.app.ui.components.LanesBadge
+import com.lanfetch.app.ui.components.LanesDivider
+import com.lanfetch.app.ui.components.LanesScreenHeader
+import com.lanfetch.app.ui.components.LanesSectionLabel
 import com.lanfetch.app.ui.theme.TabularLabelSmall
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSpacing
+import com.lanfetch.app.ui.theme.ThemeMode
 
 @Composable
 fun SettingsScreen(vm: SettingsViewModel) {
     val settings: AppSettings by vm.settings.collectAsState()
+    var segmentsDraft by remember(settings.segmentsPerDownload) { mutableFloatStateOf(settings.segmentsPerDownload.toFloat()) }
+    var concurrencyDraft by remember(settings.maxConcurrent) { mutableFloatStateOf(settings.maxConcurrent.toFloat()) }
 
-    Column(Modifier.fillMaxSize().background(TurjaunPalette.Canvas)) {
-        TurjaunScreenHeader(
+    Column(Modifier.fillMaxSize().background(LanesPalette.Canvas)) {
+        LanesScreenHeader(
             title = {
                 Text(
                     "Settings",
                     style = MaterialTheme.typography.titleLarge,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                 )
             },
             subtitle = "Transfers, storage & cache configuration",
@@ -54,145 +61,191 @@ fun SettingsScreen(vm: SettingsViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = TurjaunSpacing.BottomListBreath),
+                .padding(bottom = LanesSpacing.BottomListBreath),
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = TurjaunSpacing.Base),
-                verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Md),
+                modifier = Modifier.padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = LanesSpacing.Base),
+                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Md),
             ) {
-                TurjaunSectionLabel("Transfer engine")
+                LanesSectionLabel("Transfer engine")
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Connections per download",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TurjaunPalette.InkPrimary,
+                            color = LanesPalette.InkPrimary,
                             modifier = Modifier.weight(1f),
                         )
-                        TurjaunBadge(
+                        LanesBadge(
                             text = "${settings.segmentsPerDownload}",
-                            containerColor = TurjaunPalette.AccentContainer,
-                            contentColor = TurjaunPalette.Accent,
+                            containerColor = LanesPalette.AccentContainer,
+                            contentColor = LanesPalette.Accent,
                         )
                     }
                     Slider(
-                        value = settings.segmentsPerDownload.toFloat(),
-                        onValueChange = { vm.setSegments(it.toInt()) },
+                        value = segmentsDraft,
+                        onValueChange = { segmentsDraft = it },
+                        onValueChangeFinished = { vm.setSegments(segmentsDraft.toInt()) },
                         valueRange = 1f..16f,
                         steps = 14,
                     )
                     Text(
                         "Splits supported files into parallel HTTP byte ranges to maximize LAN Wi-Fi speed.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TurjaunPalette.InkSecondary,
+                        color = LanesPalette.InkSecondary,
                     )
                 }
 
-                TurjaunDivider(subtle = true)
+                LanesDivider(subtle = true)
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Simultaneous downloads",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TurjaunPalette.InkPrimary,
+                            color = LanesPalette.InkPrimary,
                             modifier = Modifier.weight(1f),
                         )
-                        TurjaunBadge(
+                        LanesBadge(
                             text = "${settings.maxConcurrent}",
-                            containerColor = TurjaunPalette.AccentContainer,
-                            contentColor = TurjaunPalette.Accent,
+                            containerColor = LanesPalette.AccentContainer,
+                            contentColor = LanesPalette.Accent,
                         )
                     }
                     Slider(
-                        value = settings.maxConcurrent.toFloat(),
-                        onValueChange = { vm.setConcurrency(it.toInt()) },
+                        value = concurrencyDraft,
+                        onValueChange = { concurrencyDraft = it },
+                        onValueChangeFinished = { vm.setConcurrency(concurrencyDraft.toInt()) },
                         valueRange = 1f..5f,
                         steps = 3,
                     )
                 }
 
-                TurjaunDivider(subtle = true)
+                LanesDivider(subtle = true)
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             "Wi-Fi / LAN only",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TurjaunPalette.InkPrimary,
+                            color = LanesPalette.InkPrimary,
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             "Automatically pause transfers on cellular data and resume when Wi-Fi returns.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TurjaunPalette.InkSecondary,
+                            color = LanesPalette.InkSecondary,
                         )
                     }
-                    Spacer(Modifier.width(TurjaunSpacing.Md))
+                    Spacer(Modifier.width(LanesSpacing.Md))
                     Switch(checked = settings.wifiOnly, onCheckedChange = vm::setWifiOnly)
                 }
             }
 
-            TurjaunDivider()
+            LanesDivider()
 
             Column(
-                modifier = Modifier.padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = TurjaunSpacing.Base),
-                verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Md),
+                modifier = Modifier.padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = LanesSpacing.Base),
+                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Md),
             ) {
-                TurjaunSectionLabel("Storage & cache")
+                LanesSectionLabel("Appearance")
+                ChoiceStrip(
+                    options = ThemeMode.entries.map { it.name to it.name.lowercase().replaceFirstChar(Char::uppercase) },
+                    selected = settings.themeMode,
+                    onSelect = vm::setThemeMode,
+                )
+                LanesSectionLabel("Language")
+                ChoiceStrip(
+                    options = listOf("system" to "System", "en" to "English", "bn" to "বাংলা"),
+                    selected = settings.language,
+                    onSelect = vm::setLanguage,
+                )
+            }
+
+            LanesDivider()
+
+            Column(
+                modifier = Modifier.padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = LanesSpacing.Base),
+                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Md),
+            ) {
+                LanesSectionLabel("Storage & cache")
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "Save destination",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TurjaunPalette.InkPrimary,
+                        color = LanesPalette.InkPrimary,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
                         "Downloads/LanFetch",
                         style = TabularLabelSmall,
-                        color = TurjaunPalette.Accent,
+                        color = LanesPalette.Accent,
                     )
                 }
 
                 Text(
                     "Directory listings, feed snapshots, and poster thumbnails are cached locally so startup and tab switching stay fast.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TurjaunPalette.InkSecondary,
+                    color = LanesPalette.InkSecondary,
                 )
 
                 OutlinedButton(
                     onClick = vm::clearCaches,
-                    shape = RoundedCornerShape(TurjaunRadii.Control),
+                    shape = RoundedCornerShape(LanesRadii.Control),
                     modifier = Modifier.fillMaxWidth().height(44.dp),
                 ) {
                     Text("Clear cached feeds & posters")
                 }
             }
 
-            TurjaunDivider()
+            LanesDivider()
 
             Column(
-                modifier = Modifier.padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = TurjaunSpacing.Base),
-                verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
+                modifier = Modifier.padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = LanesSpacing.Base),
+                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
             ) {
-                TurjaunSectionLabel("About")
+                LanesSectionLabel("About")
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "LanFetch",
                         style = MaterialTheme.typography.titleMedium,
-                        color = TurjaunPalette.InkPrimary,
+                        color = LanesPalette.InkPrimary,
                         modifier = Modifier.weight(1f),
                     )
-                    TurjaunBadge(text = "v1.3.0")
+                    LanesBadge(text = "v1.3.0")
                 }
 
                 Text(
                     "High-speed HTTP LAN media browser and resumable multi-segment downloader supporting Android 6 through Android 15+.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TurjaunPalette.InkSecondary,
+                    color = LanesPalette.InkSecondary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceStrip(
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (value, label) ->
+            Surface(
+                onClick = { onSelect(value) },
+                shape = RoundedCornerShape(999.dp),
+                color = if (selected == value) LanesPalette.AccentContainer else LanesPalette.SurfaceElevated,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected == value) LanesPalette.Accent else LanesPalette.InkSecondary,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                 )
             }
         }

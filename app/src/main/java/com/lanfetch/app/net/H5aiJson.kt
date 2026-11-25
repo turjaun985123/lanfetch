@@ -14,6 +14,8 @@ data class H5aiItem(
  * Kept pure Kotlin so it works identically in Android runtime and JVM unit tests.
  */
 object H5aiJson {
+    private const val MAX_JSON_CHARS = 2_000_000
+    private const val MAX_DEPTH = 16
 
     fun buildSearchRequest(href: String, pattern: String): String =
         """{"action":"get","search":{"href":"${escape(href)}","pattern":"${escape(pattern)}","ignorecase":true}}"""
@@ -33,37 +35,42 @@ object H5aiJson {
                 '\n' -> append("\\n")
                 '\r' -> append("\\r")
                 '\t' -> append("\\t")
+                in '\u0000'..'\u001F' -> append("\\u00").append(ch.code.toString(16).padStart(2, '0'))
                 else -> append(ch)
             }
         }
     }
 
     private fun parseArrayField(json: String, field: String): List<H5aiItem>? {
+        if (json.length > MAX_JSON_CHARS) return null
         val trimmed = json.trim()
         if (!trimmed.startsWith("{")) return null
-        val parser = Parser(trimmed)
-        val root = parser.readValue() as? Map<*, *> ?: return null
-        val rawList = root[field] as? List<*> ?: return null
-        val out = ArrayList<H5aiItem>(rawList.size)
-        for (entry in rawList) {
-            val obj = entry as? Map<*, *> ?: continue
-            val href = obj["href"] as? String ?: continue
-            val time = (obj["time"] as? Number)?.toLong() ?: 0L
-            val size = (obj["size"] as? Number)?.toLong() ?: -1L
-            out += H5aiItem(href = href, timeMillis = time, sizeBytes = size)
-        }
-        return out
+        return runCatching {
+            val parser = Parser(trimmed)
+            val root = parser.readValue() as? Map<*, *> ?: return null
+            val rawList = root[field] as? List<*> ?: return null
+            val out = ArrayList<H5aiItem>(rawList.size)
+            for (entry in rawList) {
+                val obj = entry as? Map<*, *> ?: continue
+                val href = obj["href"] as? String ?: continue
+                val time = (obj["time"] as? Number)?.toLong() ?: 0L
+                val size = (obj["size"] as? Number)?.toLong() ?: -1L
+                out += H5aiItem(href = href, timeMillis = time, sizeBytes = size)
+            }
+            out
+        }.getOrNull()
     }
 
     private class Parser(private val s: String) {
         private var pos = 0
 
-        fun readValue(): Any? {
+        fun readValue(depth: Int = 0): Any? {
+            require(depth <= MAX_DEPTH) { "JSON nesting exceeds $MAX_DEPTH levels" }
             skipWs()
             if (pos >= s.length) return null
             return when (s[pos]) {
-                '{' -> readObject()
-                '[' -> readArray()
+                '{' -> readObject(depth + 1)
+                '[' -> readArray(depth + 1)
                 '"' -> readString()
                 't', 'f' -> readBoolean()
                 'n' -> readNull()
@@ -72,7 +79,7 @@ object H5aiJson {
             }
         }
 
-        private fun readObject(): Map<String, Any?> {
+        private fun readObject(depth: Int): Map<String, Any?> {
             pos++ // '{'
             val map = LinkedHashMap<String, Any?>()
             skipWs()
@@ -86,7 +93,7 @@ object H5aiJson {
                 val key = readString()
                 skipWs()
                 if (pos < s.length && s[pos] == ':') pos++
-                val value = readValue()
+                val value = readValue(depth)
                 map[key] = value
                 skipWs()
                 if (pos < s.length && s[pos] == ',') {
@@ -102,7 +109,7 @@ object H5aiJson {
             return map
         }
 
-        private fun readArray(): List<Any?> {
+        private fun readArray(depth: Int): List<Any?> {
             pos++ // '['
             val list = ArrayList<Any?>()
             skipWs()
@@ -111,7 +118,7 @@ object H5aiJson {
                 return list
             }
             while (pos < s.length) {
-                list += readValue()
+                list += readValue(depth)
                 skipWs()
                 if (pos < s.length && s[pos] == ',') {
                     pos++

@@ -10,11 +10,18 @@ data class Segment(
     val end: Long,
     val downloaded: Long = 0,
 ) {
-    val length: Long get() = end - start + 1
+    val openEnded: Boolean get() = end == OPEN_END
+    val length: Long get() = if (openEnded) Long.MAX_VALUE else end - start + 1
     val remaining: Long get() = length - downloaded
     val done: Boolean get() = downloaded >= length
 
-    fun withDownloaded(bytes: Long): Segment = copy(downloaded = bytes.coerceIn(0, length))
+    fun withDownloaded(bytes: Long): Segment = copy(
+        downloaded = if (openEnded) bytes.coerceAtLeast(0) else bytes.coerceIn(0, length),
+    )
+
+    companion object {
+        const val OPEN_END = -1L
+    }
 }
 
 /**
@@ -47,11 +54,20 @@ object SegmentPlanner {
 
     fun decode(text: String): List<Segment> {
         if (text.isBlank()) return emptyList()
-        return text.split(";").mapIndexedNotNull { i, part ->
-            val nums = part.split("-").mapNotNull { it.toLongOrNull() }
-            if (nums.size != 3) null
-            else Segment(i, nums[0], nums[1], nums[2].coerceIn(0, nums[1] - nums[0] + 1))
+        val parts = text.split(";")
+        val decoded = parts.mapIndexed { i, part ->
+            val match = Regex("^(\\d+)-(-?\\d+)-(\\d+)$").matchEntire(part) ?: return emptyList()
+            val start = match.groupValues[1].toLongOrNull() ?: return emptyList()
+            val end = match.groupValues[2].toLongOrNull() ?: return emptyList()
+            val downloaded = match.groupValues[3].toLongOrNull() ?: return emptyList()
+            if (start < 0 || (end != Segment.OPEN_END && end < start) || (end == Segment.OPEN_END && i != 0)) {
+                return emptyList()
+            }
+            val segment = Segment(i, start, end)
+            segment.withDownloaded(downloaded)
         }
+        if (decoded.zipWithNext().any { (a, b) -> a.openEnded || b.start != a.end + 1 }) return emptyList()
+        return decoded
     }
 
     fun totalDownloaded(segments: List<Segment>): Long = segments.sumOf { it.downloaded }

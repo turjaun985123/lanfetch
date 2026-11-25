@@ -23,6 +23,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
@@ -38,6 +39,20 @@ data class ServerProbeResult(
     val latencyMs: Long = 0L,
     val detail: String = "",
 )
+
+private const val MAX_SERVER_BODY_BYTES = 4_000_000L
+
+private fun Response.readBoundedBody(): String {
+    val declaredLength = header("Content-Length")?.toLongOrNull()
+    require(declaredLength == null || declaredLength <= MAX_SERVER_BODY_BYTES) {
+        "Server response is too large"
+    }
+    val body = peekBody(MAX_SERVER_BODY_BYTES + 1).string()
+    require(body.toByteArray(Charsets.UTF_8).size <= MAX_SERVER_BODY_BYTES) {
+        "Server response is too large"
+    }
+    return body
+}
 
 /**
  * Live directory browser and direct server search client.
@@ -154,7 +169,7 @@ class LiveServerClient(
             try {
                 val entries = client.withCall(req) { res ->
                     if (!res.isSuccessful) throw IllegalStateException("HTTP ${res.code}")
-                    val body = res.body?.string() ?: throw IllegalStateException("Empty response")
+                    val body = res.readBoundedBody().ifBlank { throw IllegalStateException("Empty response") }
                     AutoindexParser.parse(body, url)
                 }
                 if (sourceId != null) markReachable(sourceId)
@@ -378,7 +393,7 @@ class LiveServerClient(
             client.withCall(req) { res ->
                 if (!res.isSuccessful) throw IllegalStateException("HTTP ${res.code}")
                 val contentType = res.header("Content-Type").orEmpty()
-                val body = res.body?.string().orEmpty()
+                val body = res.readBoundedBody()
                 markReachable(source.id)
                 if (contentType.contains("json", ignoreCase = true) || body.trimStart().startsWith("{")) {
                     H5aiJson.parseSearch(body)

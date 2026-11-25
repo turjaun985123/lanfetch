@@ -66,6 +66,25 @@ class DownloadEngineTest {
         }
     }
 
+    @Test fun unknownLengthChunkedDownloadCompletesAtEof() = runBlocking {
+        val payload = ByteArray(128_321) { (it * 7 % 251).toByte() }
+        val tmp = Files.createTempFile("lanfetch-unknown-", ".bin").toFile()
+        tmp.deleteOnExit()
+        RangeServer(payload, supportRange = false, sendContentLength = false).use { server ->
+            val engine = DownloadEngine(OkHttpClient())
+            val probe = engine.probe(server.url("/file.bin"))
+            assertEquals(-1L, probe.totalBytes)
+            val sink = FileSink(tmp)
+            sink.open()
+            val plan = listOf(Segment(0, 0, Segment.OPEN_END))
+            val outcome = engine.run(server.url("/file.bin"), sink, plan, -1, null) {}
+            sink.finish()
+            sink.close()
+            assertEquals(DownloadOutcome.Completed, outcome)
+            assertArrayEquals(payload, tmp.readBytes())
+        }
+    }
+
     @Test fun resumeSendsIfRangeAndCompletesRemainingBytes() = runBlocking {
         val payload = ByteArray(1_200_000) { (it * 17 % 251).toByte() }
         val tmp = Files.createTempFile("lanfetch-resume-", ".bin").toFile()
@@ -142,6 +161,7 @@ class DownloadEngineTest {
         private val data: ByteArray,
         private val supportRange: Boolean = true,
         private val sendAcceptRanges: Boolean = true,
+        private val sendContentLength: Boolean = true,
         private val etag: String = "\"v1\"",
         private val stallAfterBytes: Int = -1,
         private val onFirstChunkSent: (() -> Unit)? = null,
@@ -182,7 +202,7 @@ class DownloadEngineTest {
                     val len = (end - start + 1).toInt()
                     val header = buildString {
                         append("HTTP/1.1 206 Partial Content\r\n")
-                        append("Content-Length: $len\r\n")
+                        if (sendContentLength) append("Content-Length: $len\r\n")
                         append("Content-Range: bytes $start-$end/${data.size}\r\n")
                         if (sendAcceptRanges) append("Accept-Ranges: bytes\r\n")
                         append("ETag: $etag\r\n")
@@ -193,7 +213,7 @@ class DownloadEngineTest {
                 } else {
                     val header = buildString {
                         append("HTTP/1.1 200 OK\r\n")
-                        append("Content-Length: ${data.size}\r\n")
+                        if (sendContentLength) append("Content-Length: ${data.size}\r\n")
                         append("ETag: $etag\r\n")
                         append("Connection: close\r\n\r\n")
                     }

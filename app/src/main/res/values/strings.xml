@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LanFetch</string>
+    <string name="browse">Browse</string>
+    <string name="transfers">Transfers</string>
+    <string name="servers">Servers</string>
+    <string name="settings">Settings</string>
+    <string name="search_movies_series">Search movies and series</string>
+    <string name="download">Download</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="try_again">Try again</string>
+    <string name="waiting_wifi">Waiting for Wi-Fi</string>
+    <string name="finished">Finished</string>
+    <string name="undo">Undo</string>
+    <string name="empty_transfers">No downloads yet. Choose something from Browse and it will appear here.</string>
 </resources>

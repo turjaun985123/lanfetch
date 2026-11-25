@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,22 +75,22 @@ import androidx.compose.ui.unit.dp
 import com.lanfetch.app.R
 import com.lanfetch.app.data.LiveTitle
 import com.lanfetch.app.download.Format
-import com.lanfetch.app.ui.brand.TurjaunHeaderBrand
-import com.lanfetch.app.ui.components.TurjaunBadge
-import com.lanfetch.app.ui.components.TurjaunDivider
-import com.lanfetch.app.ui.components.TurjaunEmptyState
-import com.lanfetch.app.ui.components.TurjaunPoster
-import com.lanfetch.app.ui.components.TurjaunScreenHeader
+import com.lanfetch.app.ui.brand.LanFetchHeaderBrand
+import com.lanfetch.app.ui.components.LanesBadge
+import com.lanfetch.app.ui.components.LanesDivider
+import com.lanfetch.app.ui.components.LanesEmptyState
+import com.lanfetch.app.ui.components.LanesPoster
+import com.lanfetch.app.ui.components.LanesScreenHeader
 import com.lanfetch.app.ui.theme.TabularBodySmall
 import com.lanfetch.app.ui.theme.TabularLabelSmall
-import com.lanfetch.app.ui.theme.TurjaunMotion
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSizes
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.theme.LanesMotion
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSizes
+import com.lanfetch.app.ui.theme.LanesSpacing
 
 @Composable
-fun LibraryScreen(vm: LibraryViewModel) {
+fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
     val searchQuery by vm.searchQuery.collectAsState()
     val activeSearchQuery by vm.activeSearchQuery.collectAsState()
     val categories by vm.categories.collectAsState()
@@ -143,32 +144,19 @@ fun LibraryScreen(vm: LibraryViewModel) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(TurjaunPalette.Canvas)) {
-                TurjaunScreenHeader(
-                    title = { TurjaunHeaderBrand() },
+    Column(Modifier.fillMaxSize().background(LanesPalette.Canvas)) {
+                LanesScreenHeader(
+                    title = { LanFetchHeaderBrand() },
                     subtitle = statusText,
                     actions = {
-                        Surface(
-                            onClick = { showFilterSheet = true },
-                            shape = RoundedCornerShape(TurjaunRadii.Control),
-                            color = TurjaunPalette.SurfaceElevated,
-                            border = BorderStroke(0.5.dp, TurjaunPalette.Rule),
-                        ) {
-                            Text(
-                                text = sortLabel(filter.sort),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TurjaunPalette.InkSecondary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            )
-                        }
                         IconButton(
-                            onClick = { vm.refresh() },
-                            modifier = Modifier.size(TurjaunSizes.MinTouchTarget),
+                            onClick = onSettings,
+                            modifier = Modifier.size(LanesSizes.MinTouchTarget),
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = "Refresh live catalog",
-                                tint = TurjaunPalette.InkSecondary,
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Settings",
+                                tint = LanesPalette.InkSecondary,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -179,7 +167,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = 8.dp),
+                        .padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -196,7 +184,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
                     BadgedBox(
                         badge = {
                             if (filter.activeCount > 0) {
-                                Badge(containerColor = TurjaunPalette.Accent, contentColor = TurjaunPalette.OnAccent) {
+                                Badge(containerColor = LanesPalette.Accent, contentColor = LanesPalette.OnAccent) {
                                     Text("${filter.activeCount}")
                                 }
                             }
@@ -205,13 +193,13 @@ fun LibraryScreen(vm: LibraryViewModel) {
                         Surface(
                             onClick = { showFilterSheet = true },
                             modifier = Modifier.size(44.dp),
-                            shape = RoundedCornerShape(TurjaunRadii.Control),
-                            color = if (filter.activeCount > 0) TurjaunPalette.AccentContainer
-                            else TurjaunPalette.SurfaceElevated,
+                            shape = RoundedCornerShape(LanesRadii.Control),
+                            color = if (filter.activeCount > 0) LanesPalette.AccentContainer
+                            else LanesPalette.SurfaceElevated,
                             border = BorderStroke(
                                 1.dp,
-                                if (filter.activeCount > 0) TurjaunPalette.Accent
-                                else TurjaunPalette.Rule,
+                                if (filter.activeCount > 0) LanesPalette.Accent
+                                else LanesPalette.Rule,
                             ),
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -219,8 +207,8 @@ fun LibraryScreen(vm: LibraryViewModel) {
                                     painter = painterResource(R.drawable.ic_filter_list),
                                     contentDescription = "Filters and sorting",
                                     modifier = Modifier.size(18.dp),
-                                    tint = if (filter.activeCount > 0) TurjaunPalette.Accent
-                                    else TurjaunPalette.InkSecondary,
+                                    tint = if (filter.activeCount > 0) LanesPalette.Accent
+                                    else LanesPalette.InkSecondary,
                                 )
                             }
                         }
@@ -229,7 +217,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
 
                 // Editorial category navigation strip with subtle underline indicator
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = TurjaunSpacing.ScreenHorizontal),
+                    contentPadding = PaddingValues(horizontal = LanesSpacing.ScreenHorizontal),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -257,17 +245,17 @@ fun LibraryScreen(vm: LibraryViewModel) {
                     }
                 }
 
-                TurjaunDivider()
+                LanesDivider()
 
                 AnimatedVisibility(
                     visible = isRefreshing,
-                    enter = fadeIn(tween(TurjaunMotion.FastMs)),
-                    exit = fadeOut(tween(TurjaunMotion.FastMs)),
+                    enter = fadeIn(tween(LanesMotion.FastMs)),
+                    exit = fadeOut(tween(LanesMotion.FastMs)),
                 ) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth().height(2.dp),
-                        color = TurjaunPalette.Accent,
-                        trackColor = TurjaunPalette.RuleSubtle,
+                        color = LanesPalette.Accent,
+                        trackColor = LanesPalette.RuleSubtle,
                     )
                 }
 
@@ -279,7 +267,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 CircularProgressIndicator(
-                                    color = TurjaunPalette.Accent,
+                                    color = LanesPalette.Accent,
                                     strokeWidth = 2.dp,
                                     modifier = Modifier.size(28.dp),
                                 )
@@ -287,21 +275,21 @@ fun LibraryScreen(vm: LibraryViewModel) {
                                 Text(
                                     text = statusText,
                                     style = TabularBodySmall,
-                                    color = TurjaunPalette.InkSecondary,
+                                    color = LanesPalette.InkSecondary,
                                 )
                             }
                         }
                     }
 
                     items.isEmpty() && !errorMessage.isNullOrBlank() -> {
-                        TurjaunEmptyState(
+                        LanesEmptyState(
                             painter = painterResource(R.drawable.ic_error),
                             title = "Servers unreachable",
                             subtitle = errorMessage ?: "Check LAN Wi-Fi connection and enabled servers.",
                             action = {
                                 OutlinedButton(
                                     onClick = { vm.refresh() },
-                                    shape = RoundedCornerShape(TurjaunRadii.Control),
+                                    shape = RoundedCornerShape(LanesRadii.Control),
                                 ) {
                                     Text("Retry")
                                 }
@@ -311,7 +299,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
 
                     items.isEmpty() -> {
                         val hasActiveQuery = filter.activeCount > 0 || searchQuery.isNotEmpty() || selectedCategory != null
-                        TurjaunEmptyState(
+                        LanesEmptyState(
                             painter = painterResource(R.drawable.ic_movie),
                             title = when {
                                 activeSearchQuery.isNotEmpty() -> "No matches found"
@@ -328,7 +316,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
                                 {
                                     OutlinedButton(
                                         onClick = { vm.clearFilters() },
-                                        shape = RoundedCornerShape(TurjaunRadii.Control),
+                                        shape = RoundedCornerShape(LanesRadii.Control),
                                     ) {
                                         Text("Reset filters")
                                     }
@@ -343,13 +331,13 @@ fun LibraryScreen(vm: LibraryViewModel) {
                                 state = gridState,
                                 columns = GridCells.Adaptive(minSize = 152.dp),
                                 contentPadding = PaddingValues(
-                                    start = TurjaunSpacing.ScreenHorizontal,
-                                    end = TurjaunSpacing.ScreenHorizontal,
-                                    top = TurjaunSpacing.Md,
-                                    bottom = TurjaunSpacing.BottomListBreath,
+                                    start = LanesSpacing.ScreenHorizontal,
+                                    end = LanesSpacing.ScreenHorizontal,
+                                    top = LanesSpacing.Md,
+                                    bottom = LanesSpacing.BottomListBreath,
                                 ),
-                                horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Md),
-                                verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Lg),
+                                horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Md),
+                                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Lg),
                                 modifier = Modifier.fillMaxSize(),
                             ) {
                                 items(
@@ -368,20 +356,20 @@ fun LibraryScreen(vm: LibraryViewModel) {
                                 if (isLoadingMore) {
                                     item(key = "__LOADING_MORE__", span = { GridItemSpan(maxLineSpan) }) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(TurjaunSpacing.Base),
+                                            modifier = Modifier.fillMaxWidth().padding(LanesSpacing.Base),
                                             horizontalArrangement = Arrangement.Center,
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             CircularProgressIndicator(
                                                 modifier = Modifier.size(18.dp),
                                                 strokeWidth = 2.dp,
-                                                color = TurjaunPalette.Accent,
+                                                color = LanesPalette.Accent,
                                             )
                                             Spacer(Modifier.width(10.dp))
                                             Text(
                                                 "Loading next page…",
                                                 style = TabularBodySmall,
-                                                color = TurjaunPalette.InkSecondary,
+                                                color = LanesPalette.InkSecondary,
                                             )
                                         }
                                     }
@@ -393,7 +381,7 @@ fun LibraryScreen(vm: LibraryViewModel) {
                                         ) {
                                             OutlinedButton(
                                                 onClick = { vm.loadMore() },
-                                                shape = RoundedCornerShape(TurjaunRadii.Control),
+                                                shape = RoundedCornerShape(LanesRadii.Control),
                                             ) {
                                                 Text("Load more titles")
                                             }
@@ -440,16 +428,16 @@ private fun CompactSearchInput(
     Row(
         modifier = modifier
             .height(44.dp)
-            .clip(RoundedCornerShape(TurjaunRadii.Control))
-            .background(TurjaunPalette.SurfaceElevated)
-            .border(1.dp, TurjaunPalette.Rule, RoundedCornerShape(TurjaunRadii.Control))
+            .clip(RoundedCornerShape(LanesRadii.Control))
+            .background(LanesPalette.SurfaceElevated)
+            .border(1.dp, LanesPalette.Rule, RoundedCornerShape(LanesRadii.Control))
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Filled.Search,
             contentDescription = null,
-            tint = TurjaunPalette.InkMuted,
+            tint = LanesPalette.InkMuted,
             modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.width(8.dp))
@@ -458,7 +446,7 @@ private fun CompactSearchInput(
                 Text(
                     text = "Search movies, series, Hindi, 4K…",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TurjaunPalette.InkMuted,
+                    color = LanesPalette.InkMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -467,8 +455,8 @@ private fun CompactSearchInput(
                 value = query,
                 onValueChange = onQueryChange,
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = TurjaunPalette.InkPrimary),
-                cursorBrush = SolidColor(TurjaunPalette.Accent),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = LanesPalette.InkPrimary),
+                cursorBrush = SolidColor(LanesPalette.Accent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
                 modifier = Modifier.fillMaxWidth().semantics {
@@ -481,7 +469,7 @@ private fun CompactSearchInput(
                 Icon(
                     imageVector = Icons.Filled.Clear,
                     contentDescription = "Clear search",
-                    tint = TurjaunPalette.InkSecondary,
+                    tint = LanesPalette.InkSecondary,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -505,7 +493,7 @@ private fun CategoryTab(
             text = label,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) TurjaunPalette.InkPrimary else TurjaunPalette.InkSecondary,
+            color = if (selected) LanesPalette.InkPrimary else LanesPalette.InkSecondary,
             maxLines = 1,
         )
         Spacer(Modifier.height(7.dp))
@@ -513,7 +501,7 @@ private fun CategoryTab(
             modifier = Modifier
                 .width(if (selected) 24.dp else 0.dp)
                 .height(2.dp)
-                .background(if (selected) TurjaunPalette.Accent else TurjaunPalette.Canvas),
+                .background(if (selected) LanesPalette.Accent else LanesPalette.Canvas),
         )
     }
 }
@@ -553,11 +541,11 @@ private fun PosterGridItem(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(TurjaunSizes.PosterAspectRatio)
-                .clip(RoundedCornerShape(TurjaunRadii.Poster))
-                .border(0.75.dp, TurjaunPalette.RuleSubtle, RoundedCornerShape(TurjaunRadii.Poster)),
+                .aspectRatio(LanesSizes.PosterAspectRatio)
+                .clip(RoundedCornerShape(LanesRadii.Poster))
+                .border(0.75.dp, LanesPalette.RuleSubtle, RoundedCornerShape(LanesRadii.Poster)),
         ) {
-            TurjaunPoster(
+            LanesPoster(
                 title = title.title,
                 posterUrl = title.posterUrl,
                 targetWidthPx = 360,
@@ -567,30 +555,30 @@ private fun PosterGridItem(
             )
 
             if (title.downloadedCount > 0) {
-                TurjaunBadge(
+                LanesBadge(
                     text = if (title.fileCount > 0 && title.downloadedCount >= title.fileCount) "Saved"
                     else if (title.fileCount > 0) "${title.downloadedCount}/${title.fileCount}"
                     else "${title.downloadedCount} saved",
-                    containerColor = TurjaunPalette.Accent,
-                    contentColor = TurjaunPalette.OnAccent,
+                    containerColor = LanesPalette.Accent,
+                    contentColor = LanesPalette.OnAccent,
                     modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
                 )
             }
 
             if (title.bestQuality != null) {
-                TurjaunBadge(
+                LanesBadge(
                     text = title.bestQuality,
-                    containerColor = TurjaunPalette.Scrim,
-                    contentColor = TurjaunPalette.InkPrimary,
+                    containerColor = LanesPalette.Scrim,
+                    contentColor = LanesPalette.InkPrimary,
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
                 )
             }
 
             if (bottomBadge != null) {
-                TurjaunBadge(
+                LanesBadge(
                     text = bottomBadge,
-                    containerColor = TurjaunPalette.Scrim,
-                    contentColor = TurjaunPalette.InkPrimary,
+                    containerColor = LanesPalette.Scrim,
+                    contentColor = LanesPalette.InkPrimary,
                     modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                 )
             }
@@ -601,7 +589,7 @@ private fun PosterGridItem(
         Text(
             text = title.category,
             style = MaterialTheme.typography.labelSmall,
-            color = TurjaunPalette.AccentDim,
+            color = LanesPalette.AccentDim,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -611,7 +599,7 @@ private fun PosterGridItem(
         Text(
             text = title.title,
             style = MaterialTheme.typography.titleSmall,
-            color = TurjaunPalette.InkPrimary,
+            color = LanesPalette.InkPrimary,
             minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -626,7 +614,7 @@ private fun PosterGridItem(
             Text(
                 text = metaLine,
                 style = TabularLabelSmall,
-                color = TurjaunPalette.InkSecondary,
+                color = LanesPalette.InkSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
@@ -638,7 +626,7 @@ private fun PosterGridItem(
                 Icon(
                     imageVector = if (title.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = if (title.favorite) "Remove favorite" else "Add favorite",
-                    tint = if (title.favorite) TurjaunPalette.Error else TurjaunPalette.InkMuted,
+                    tint = if (title.favorite) LanesPalette.Error else LanesPalette.InkMuted,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -649,7 +637,7 @@ private fun PosterGridItem(
                 Icon(
                     painter = painterResource(R.drawable.ic_download),
                     contentDescription = "Download ${title.title}",
-                    tint = TurjaunPalette.Accent,
+                    tint = LanesPalette.Accent,
                     modifier = Modifier.size(17.dp),
                 )
             }

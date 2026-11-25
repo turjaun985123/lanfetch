@@ -21,6 +21,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,42 +52,140 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.lanfetch.app.ui.theme.TabularLabelSmall
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSizes
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSizes
+import com.lanfetch.app.ui.theme.LanesSpacing
 import com.lanfetch.app.ui.theme.fallbackPosterTone
+import com.lanfetch.app.data.DownloadState
+import com.lanfetch.app.download.Segment
+import com.lanfetch.app.ui.brand.rememberReducedMotion
 
 @Composable
-fun TurjaunDivider(
+fun LanesDivider(
     modifier: Modifier = Modifier,
     subtle: Boolean = false,
 ) {
     HorizontalDivider(
         modifier = modifier,
-        thickness = if (subtle) TurjaunSizes.Hairline else TurjaunSizes.Divider,
-        color = if (subtle) TurjaunPalette.RuleSubtle else TurjaunPalette.Rule,
+        thickness = if (subtle) LanesSizes.Hairline else LanesSizes.Divider,
+        color = if (subtle) LanesPalette.RuleSubtle else LanesPalette.Rule,
     )
 }
 
 @Composable
+fun SegmentedRing(
+    state: DownloadState,
+    lanes: () -> List<Segment>,
+    totalBytes: Long,
+    downloadedBytes: Long,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 40.dp,
+) {
+    val reducedMotion = rememberReducedMotion()
+    val progress = if (state == DownloadState.RUNNING && totalBytes <= 0 && !reducedMotion) {
+        val transition = rememberInfiniteTransition(label = "unknown_transfer")
+        val turn by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1400)),
+            label = "unknown_transfer_turn",
+        )
+        turn
+    } else 0.25f
+    val percent = if (totalBytes > 0) (downloadedBytes * 100 / totalBytes).toInt().coerceIn(0, 100) else null
+    val label = when (state) {
+        DownloadState.RUNNING -> "Downloading${percent?.let { ", $it percent" } ?: ""}. Tap to pause."
+        DownloadState.QUEUED -> "Queued. Tap to manage."
+        DownloadState.PAUSED -> "Paused. Tap to resume."
+        DownloadState.FAILED -> "Failed. Tap to retry."
+        DownloadState.COMPLETED -> "Finished. Tap to open."
+    }
+    val color = when (state) {
+        DownloadState.PAUSED -> LanesPalette.Amber
+        DownloadState.FAILED -> LanesPalette.Error
+        DownloadState.COMPLETED -> androidx.compose.ui.graphics.Color(0xFF4CC380)
+        else -> LanesPalette.Accent
+    }
+    val trackColor = LanesPalette.SurfaceElevated
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(size)) {
+            val stroke = 3.dp.toPx()
+            val inset = stroke / 2
+            val arcSize = androidx.compose.ui.geometry.Size(this.size.width - stroke, this.size.height - stroke)
+            val segments = lanes()
+            if (state == DownloadState.COMPLETED) {
+                drawCircle(color, style = Stroke(stroke))
+            } else if (state == DownloadState.RUNNING && totalBytes <= 0) {
+                drawCircle(trackColor, style = Stroke(stroke))
+                drawArc(
+                    color = color,
+                    startAngle = -90f + progress * 360f,
+                    sweepAngle = 100f,
+                    useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+                    size = arcSize,
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+            } else {
+                val count = segments.size.coerceAtLeast(1)
+                val gap = if (count == 1) 0f else 6f
+                val step = 360f / count
+                repeat(count) { i ->
+                    val start = -90f + i * step + gap / 2
+                    val sweep = step - gap
+                    drawArc(trackColor, start, sweep, false,
+                        androidx.compose.ui.geometry.Offset(inset, inset), arcSize,
+                        style = Stroke(stroke, cap = StrokeCap.Round))
+                    val segment = segments.getOrNull(i)
+                    val fill = if (state == DownloadState.COMPLETED) 1f else if (segment == null) 0f
+                    else (segment.downloaded.toDouble() / segment.length).toFloat().coerceIn(0f, 1f)
+                    if (fill > 0f) drawArc(color, start, sweep * fill, false,
+                        androidx.compose.ui.geometry.Offset(inset, inset), arcSize,
+                        style = Stroke(stroke, cap = StrokeCap.Round))
+                }
+            }
+        }
+        Text(
+            text = when (state) {
+                DownloadState.RUNNING -> "Ⅱ"
+                DownloadState.QUEUED -> "·"
+                DownloadState.PAUSED -> "▶"
+                DownloadState.FAILED -> "↻"
+                DownloadState.COMPLETED -> "✓"
+            },
+            color = color,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier,
+        )
+    }
+}
+
+@Composable
 fun turjaunRuleBorder(): BorderStroke =
-    BorderStroke(TurjaunSizes.Divider, TurjaunPalette.Rule)
+    BorderStroke(LanesSizes.Divider, LanesPalette.Rule)
 
 /**
  * Compact header anchored to the 16dp horizontal frame across top-level tabs.
  */
 @Composable
-fun TurjaunScreenHeader(
+fun LanesScreenHeader(
     title: @Composable () -> Unit,
     subtitle: String? = null,
     actions: (@Composable () -> Unit)? = null,
 ) {
-    Column(Modifier.fillMaxWidth().background(TurjaunPalette.Canvas)) {
+    Column(Modifier.fillMaxWidth().background(LanesPalette.Canvas)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = 10.dp),
+                .padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f).semantics { heading() }) {
@@ -85,7 +195,7 @@ fun TurjaunScreenHeader(
                     Text(
                         text = subtitle,
                         style = TabularLabelSmall,
-                        color = TurjaunPalette.InkSecondary,
+                        color = LanesPalette.InkSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -93,20 +203,20 @@ fun TurjaunScreenHeader(
             }
             if (actions != null) {
                 Row(
-                    modifier = Modifier.padding(start = TurjaunSpacing.Sm),
+                    modifier = Modifier.padding(start = LanesSpacing.Sm),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Xs),
+                    horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Xs),
                 ) {
                     actions()
                 }
             }
         }
-        TurjaunDivider()
+        LanesDivider()
     }
 }
 
 @Composable
-fun TurjaunSectionLabel(
+fun LanesSectionLabel(
     text: String,
     modifier: Modifier = Modifier,
 ) {
@@ -114,21 +224,21 @@ fun TurjaunSectionLabel(
         text = text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
-        color = TurjaunPalette.InkMuted,
+        color = LanesPalette.InkMuted,
         letterSpacing = 0.9.sp,
         modifier = modifier.semantics { heading() },
     )
 }
 
 @Composable
-fun TurjaunSurface(
+fun LanesSurface(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     elevated: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shape = RoundedCornerShape(TurjaunRadii.Surface)
-    val bg = if (elevated) TurjaunPalette.SurfaceElevated else TurjaunPalette.Surface
+    val shape = RoundedCornerShape(LanesRadii.Surface)
+    val bg = if (elevated) LanesPalette.SurfaceElevated else LanesPalette.Surface
     if (onClick != null) {
         Surface(
             onClick = onClick,
@@ -152,17 +262,17 @@ fun TurjaunSurface(
 }
 
 @Composable
-fun TurjaunBadge(
+fun LanesBadge(
     text: String,
     modifier: Modifier = Modifier,
-    containerColor: Color = TurjaunPalette.SurfaceElevated,
-    contentColor: Color = TurjaunPalette.InkPrimary,
+    containerColor: Color = LanesPalette.SurfaceElevated,
+    contentColor: Color = LanesPalette.InkPrimary,
     borderColor: Color? = null,
 ) {
     val mod = modifier
-        .clip(RoundedCornerShape(TurjaunRadii.Badge))
+        .clip(RoundedCornerShape(LanesRadii.Badge))
         .background(containerColor)
-        .let { m -> if (borderColor != null) m.border(0.5.dp, borderColor, RoundedCornerShape(TurjaunRadii.Badge)) else m }
+        .let { m -> if (borderColor != null) m.border(0.5.dp, borderColor, RoundedCornerShape(LanesRadii.Badge)) else m }
         .padding(horizontal = 6.dp, vertical = 2.dp)
 
     Box(modifier = mod) {
@@ -176,7 +286,7 @@ fun TurjaunBadge(
 }
 
 @Composable
-fun TurjaunEmptyState(
+fun LanesEmptyState(
     painter: Painter,
     title: String,
     subtitle: String,
@@ -191,30 +301,30 @@ fun TurjaunEmptyState(
             Box(
                 modifier = Modifier
                     .size(52.dp)
-                    .clip(RoundedCornerShape(TurjaunRadii.Surface))
-                    .background(TurjaunPalette.SurfaceElevated)
-                    .border(TurjaunSizes.Divider, TurjaunPalette.Rule, RoundedCornerShape(TurjaunRadii.Surface)),
+                    .clip(RoundedCornerShape(LanesRadii.Surface))
+                    .background(LanesPalette.SurfaceElevated)
+                    .border(LanesSizes.Divider, LanesPalette.Rule, RoundedCornerShape(LanesRadii.Surface)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     painter = painter,
                     contentDescription = null,
                     modifier = Modifier.size(24.dp),
-                    tint = TurjaunPalette.InkSecondary,
+                    tint = LanesPalette.InkSecondary,
                 )
             }
             Spacer(Modifier.height(14.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = TurjaunPalette.InkPrimary,
+                color = LanesPalette.InkPrimary,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = TurjaunPalette.InkSecondary,
+                color = LanesPalette.InkSecondary,
                 textAlign = TextAlign.Center,
             )
             if (action != null) {
@@ -230,7 +340,7 @@ fun TurjaunEmptyState(
  * via Precision.INEXACT so scrolling large grids stays smooth and low-memory.
  */
 @Composable
-fun TurjaunPoster(
+fun LanesPoster(
     title: String,
     posterUrl: String?,
     modifier: Modifier = Modifier,
@@ -267,7 +377,7 @@ fun TurjaunPoster(
             text = initials,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
-            color = TurjaunPalette.InkMuted,
+            color = LanesPalette.InkMuted,
         )
         if (imageRequest != null) {
             AsyncImage(

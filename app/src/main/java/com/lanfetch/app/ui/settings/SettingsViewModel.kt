@@ -32,6 +32,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { store.setWifiOnly(value) }
     }
 
+    fun setThemeMode(value: String) {
+        viewModelScope.launch { store.setThemeMode(value) }
+    }
+
+    fun setLanguage(value: String) {
+        viewModelScope.launch { store.setLanguage(value) }
+    }
+
     @OptIn(ExperimentalCoilApi::class)
     fun clearCaches() {
         viewModelScope.launch(Dispatchers.IO) {

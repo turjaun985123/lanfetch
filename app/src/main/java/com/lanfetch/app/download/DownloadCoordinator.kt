@@ -43,6 +43,12 @@ private data class LiveProgress(
     val totalBytes: Long,
 )
 
+internal class PauseReasonRegistry {
+    private val reasons = ConcurrentHashMap<Long, String>()
+    fun set(id: Long, reason: String) { reasons[id] = reason }
+    fun remove(id: Long): String? = reasons.remove(id)
+}
+
 /**
  * Single owner of the download queue and its state machine. Persists segment
  * maps, coalesces progress into one DB write per 2 s, and resumes queued work
@@ -59,7 +65,7 @@ class DownloadCoordinator(
     private val downloadDao = db.downloads()
     private val jobs = ConcurrentHashMap<Long, Job>()
     private val activeSinks = ConcurrentHashMap<Long, DownloadSink>()
-    private val pauseReasons = ConcurrentHashMap<Long, String?>()
+    private val pauseReasons = PauseReasonRegistry()
     private val live = MutableStateFlow<Map<Long, LiveProgress>>(emptyMap())
     private val pumpMutex = Mutex()
     @Volatile private var settings = AppSettings()
@@ -180,7 +186,7 @@ class DownloadCoordinator(
     }
 
     fun pause(id: Long) {
-        pauseReasons[id] = null
+        pauseReasons.set(id, "Paused")
         val job = jobs[id]
         job?.cancel()
         scope.launch {
@@ -195,7 +201,7 @@ class DownloadCoordinator(
     fun pauseAll(reason: String? = null) {
         val resolved = reason ?: "Paused"
         val snapshot = jobs.toMap()
-        snapshot.keys.forEach { pauseReasons[it] = resolved }
+        snapshot.keys.forEach { pauseReasons.set(it, resolved) }
         snapshot.values.forEach { it.cancel() }
         scope.launch {
             pumpMutex.withLock {
@@ -304,7 +310,7 @@ class DownloadCoordinator(
                     probe.acceptRanges && total > 0 ->
                         SegmentPlanner.plan(total, settings.segmentsPerDownload)
                     total > 0 -> listOf(Segment(0, 0, total - 1))
-                    else -> listOf(Segment(0, 0, Long.MAX_VALUE, 0))
+                    else -> listOf(Segment(0, 0, Segment.OPEN_END, 0))
                 }
             } else if (!probe.acceptRanges && segments.size > 1) {
                 // The server stopped honouring Range; a segmented resume would

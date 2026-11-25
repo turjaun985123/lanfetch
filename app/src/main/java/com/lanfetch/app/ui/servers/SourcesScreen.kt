@@ -47,14 +47,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lanfetch.app.data.Source
 import com.lanfetch.app.net.ServerProbeResult
-import com.lanfetch.app.ui.components.TurjaunDivider
-import com.lanfetch.app.ui.components.TurjaunScreenHeader
+import com.lanfetch.app.ui.components.LanesDivider
+import com.lanfetch.app.ui.components.LanesScreenHeader
 import com.lanfetch.app.ui.theme.TabularLabelSmall
 import com.lanfetch.app.ui.theme.LanFetchFontFamily
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSizes
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSizes
+import com.lanfetch.app.ui.theme.LanesSpacing
 
 @Composable
 fun SourcesScreen(vm: SourcesViewModel) {
@@ -74,13 +74,13 @@ fun SourcesScreen(vm: SourcesViewModel) {
     val enabledCount = sources.count { it.enabled }
     val onlineCount = sources.count { it.enabled && probes[it.id]?.reachable == true }
 
-    Column(Modifier.fillMaxSize().background(TurjaunPalette.Canvas)) {
-        TurjaunScreenHeader(
+    Column(Modifier.fillMaxSize().background(LanesPalette.Canvas)) {
+        LanesScreenHeader(
             title = {
                 Text(
                     "Servers",
                     style = MaterialTheme.typography.titleLarge,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                 )
             },
             subtitle = if (probes.isNotEmpty()) "$onlineCount online • $enabledCount of ${sources.size} enabled"
@@ -89,13 +89,13 @@ fun SourcesScreen(vm: SourcesViewModel) {
                 OutlinedButton(
                     onClick = { vm.checkConnections() },
                     enabled = !probingAll && enabledCount > 0,
-                    shape = RoundedCornerShape(TurjaunRadii.Control),
+                    shape = RoundedCornerShape(LanesRadii.Control),
                 ) {
                     if (probingAll) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             strokeWidth = 2.dp,
-                            color = TurjaunPalette.Accent,
+                            color = LanesPalette.Accent,
                         )
                     } else {
                         Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(16.dp))
@@ -105,10 +105,10 @@ fun SourcesScreen(vm: SourcesViewModel) {
                 }
                 Button(
                     onClick = { showAdd = true },
-                    shape = RoundedCornerShape(TurjaunRadii.Control),
+                    shape = RoundedCornerShape(LanesRadii.Control),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = TurjaunPalette.Accent,
-                        contentColor = TurjaunPalette.OnAccent,
+                        containerColor = LanesPalette.Accent,
+                        contentColor = LanesPalette.OnAccent,
                     ),
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(16.dp))
@@ -120,7 +120,7 @@ fun SourcesScreen(vm: SourcesViewModel) {
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = TurjaunSpacing.BottomListBreath),
+            contentPadding = PaddingValues(bottom = LanesSpacing.BottomListBreath),
         ) {
             items(sources, key = { it.id }, contentType = { "server_row" }) { source ->
                 ServerRow(
@@ -130,7 +130,7 @@ fun SourcesScreen(vm: SourcesViewModel) {
                     onEnabled = { vm.setSourceEnabled(source, it) },
                     onDelete = { confirmDelete = source },
                 )
-                TurjaunDivider()
+                LanesDivider()
             }
         }
     }
@@ -139,12 +139,12 @@ fun SourcesScreen(vm: SourcesViewModel) {
     if (deleting != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
-            containerColor = TurjaunPalette.Surface,
-            title = { Text("Remove ${deleting.name}?", color = TurjaunPalette.InkPrimary) },
+            containerColor = LanesPalette.Surface,
+            title = { Text("Remove ${deleting.name}?", color = LanesPalette.InkPrimary) },
             text = {
                 Text(
                     "Removes this server and clears its favorites & cached entries. Downloaded files in phone storage remain untouched.",
-                    color = TurjaunPalette.InkSecondary,
+                    color = LanesPalette.InkSecondary,
                 )
             },
             confirmButton = {
@@ -154,8 +154,8 @@ fun SourcesScreen(vm: SourcesViewModel) {
                         confirmDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = TurjaunPalette.Error,
-                        contentColor = TurjaunPalette.OnError,
+                        containerColor = LanesPalette.Error,
+                        contentColor = LanesPalette.OnError,
                     ),
                 ) {
                     Text("Remove")
@@ -174,10 +174,10 @@ fun SourcesScreen(vm: SourcesViewModel) {
 
         AlertDialog(
             onDismissRequest = { showAdd = false },
-            containerColor = TurjaunPalette.Surface,
-            title = { Text("Add media server", color = TurjaunPalette.InkPrimary) },
+            containerColor = LanesPalette.Surface,
+            title = { Text("Add media server", color = LanesPalette.InkPrimary) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Md)) {
+                Column(verticalArrangement = Arrangement.spacedBy(LanesSpacing.Md)) {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
@@ -194,14 +194,14 @@ fun SourcesScreen(vm: SourcesViewModel) {
                         },
                         label = { Text("Root directory URL") },
                         isError = error != null,
-                        supportingText = error?.let { msg -> { Text(msg, color = TurjaunPalette.Error) } },
+                        supportingText = error?.let { msg -> { Text(msg, color = LanesPalette.Error) } },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
                         "Compatible with h5ai, Apache mod_autoindex, and nginx HTTP directory indexes.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TurjaunPalette.InkSecondary,
+                        color = LanesPalette.InkSecondary,
                     )
                 }
             },
@@ -216,8 +216,8 @@ fun SourcesScreen(vm: SourcesViewModel) {
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = TurjaunPalette.Accent,
-                        contentColor = TurjaunPalette.OnAccent,
+                        containerColor = LanesPalette.Accent,
+                        contentColor = LanesPalette.OnAccent,
                     ),
                 ) {
                     Text("Add server")
@@ -239,10 +239,10 @@ private fun ServerRow(
     onDelete: () -> Unit,
 ) {
     val statusDotColor = when {
-        !source.enabled -> TurjaunPalette.InkMuted
-        probe == null -> TurjaunPalette.InkSecondary
-        probe.reachable -> TurjaunPalette.Accent
-        else -> TurjaunPalette.Error
+        !source.enabled -> LanesPalette.InkMuted
+        probe == null -> LanesPalette.InkSecondary
+        probe.reachable -> LanesPalette.Accent
+        else -> LanesPalette.Error
     }
     val statusLabel = when {
         !source.enabled -> "Disabled"
@@ -254,7 +254,7 @@ private fun ServerRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = 14.dp),
+            .padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -268,7 +268,7 @@ private fun ServerRow(
                 Text(
                     text = source.name,
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (source.enabled) TurjaunPalette.InkPrimary else TurjaunPalette.InkMuted,
+                    color = if (source.enabled) LanesPalette.InkPrimary else LanesPalette.InkMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -277,7 +277,7 @@ private fun ServerRow(
             Text(
                 text = source.rootUrl,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = LanFetchFontFamily),
-                color = TurjaunPalette.InkSecondary,
+                color = LanesPalette.InkSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -291,17 +291,17 @@ private fun ServerRow(
             )
         }
 
-        Spacer(Modifier.width(TurjaunSpacing.Sm))
+        Spacer(Modifier.width(LanesSpacing.Sm))
 
         if (source.enabled && probe != null && !probe.reachable) {
             IconButton(
                 onClick = onCheck,
-                modifier = Modifier.size(TurjaunSizes.MinTouchTarget),
+                modifier = Modifier.size(LanesSizes.MinTouchTarget),
             ) {
                 Icon(
                     Icons.Filled.Refresh,
                     contentDescription = "Retry ${source.name}",
-                    tint = TurjaunPalette.InkSecondary,
+                    tint = LanesPalette.InkSecondary,
                 )
             }
         }
@@ -310,12 +310,12 @@ private fun ServerRow(
 
         IconButton(
             onClick = onDelete,
-            modifier = Modifier.size(TurjaunSizes.MinTouchTarget),
+            modifier = Modifier.size(LanesSizes.MinTouchTarget),
         ) {
             Icon(
                 Icons.Filled.Delete,
                 contentDescription = "Remove ${source.name}",
-                tint = TurjaunPalette.InkMuted,
+                tint = LanesPalette.InkMuted,
             )
         }
     }

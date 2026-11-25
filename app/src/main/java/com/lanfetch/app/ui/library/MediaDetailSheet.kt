@@ -55,14 +55,14 @@ import com.lanfetch.app.R
 import com.lanfetch.app.data.CatalogFile
 import com.lanfetch.app.data.LiveTitle
 import com.lanfetch.app.download.Format
-import com.lanfetch.app.ui.components.TurjaunBadge
-import com.lanfetch.app.ui.components.TurjaunDivider
-import com.lanfetch.app.ui.components.TurjaunPoster
+import com.lanfetch.app.ui.components.LanesBadge
+import com.lanfetch.app.ui.components.LanesDivider
+import com.lanfetch.app.ui.components.LanesPoster
 import com.lanfetch.app.ui.theme.TabularBodySmall
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSizes
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSizes
+import com.lanfetch.app.ui.theme.LanesSpacing
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -95,23 +95,23 @@ fun MediaDetailSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = TurjaunPalette.Surface,
+        containerColor = LanesPalette.Surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = TurjaunSpacing.ScreenHorizontal)
-                .padding(bottom = TurjaunSpacing.Lg),
+                .padding(horizontal = LanesSpacing.ScreenHorizontal)
+                .padding(bottom = LanesSpacing.Lg),
         ) {
             // Hero header: poster artwork + structured metadata hierarchy
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Base),
+                horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Base),
             ) {
-                TurjaunPoster(
+                LanesPoster(
                     title = title.title,
                     posterUrl = title.posterUrl,
                     targetWidthPx = 420,
@@ -119,8 +119,8 @@ fun MediaDetailSheet(
                     allowCrossfade = true,
                     modifier = Modifier
                         .width(96.dp)
-                        .aspectRatio(TurjaunSizes.PosterAspectRatio)
-                        .clip(RoundedCornerShape(TurjaunRadii.Poster)),
+                        .aspectRatio(LanesSizes.PosterAspectRatio)
+                        .clip(RoundedCornerShape(LanesRadii.Poster)),
                 )
 
                 Column(Modifier.weight(1f)) {
@@ -128,19 +128,19 @@ fun MediaDetailSheet(
                         Text(
                             text = title.title,
                             style = MaterialTheme.typography.titleLarge,
-                            color = TurjaunPalette.InkPrimary,
+                            color = LanesPalette.InkPrimary,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
                         IconButton(
                             onClick = { onFavorite(title) },
-                            modifier = Modifier.size(TurjaunSizes.MinTouchTarget),
+                            modifier = Modifier.size(LanesSizes.MinTouchTarget),
                         ) {
                             Icon(
                                 imageVector = if (title.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                                 contentDescription = if (title.favorite) "Remove from favorites" else "Save to favorites",
-                                tint = if (title.favorite) TurjaunPalette.Error else TurjaunPalette.InkSecondary,
+                                tint = if (title.favorite) LanesPalette.Error else LanesPalette.InkSecondary,
                             )
                         }
                     }
@@ -152,7 +152,7 @@ fun MediaDetailSheet(
                             title.sourceName,
                         ).joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
-                        color = TurjaunPalette.InkSecondary,
+                        color = LanesPalette.InkSecondary,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -164,13 +164,13 @@ fun MediaDetailSheet(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         title.bestQuality?.let {
-                            TurjaunBadge(it, containerColor = TurjaunPalette.AccentContainer, contentColor = TurjaunPalette.Accent)
+                            LanesBadge(it, containerColor = LanesPalette.AccentContainer, contentColor = LanesPalette.Accent)
                         }
-                        title.bestSourceTag?.let { TurjaunBadge(it) }
-                        title.bestCodec?.let { TurjaunBadge(it) }
-                        title.language?.let { TurjaunBadge(it) }
+                        title.bestSourceTag?.let { LanesBadge(it) }
+                        title.bestCodec?.let { LanesBadge(it) }
+                        title.language?.let { LanesBadge(it) }
                         if (title.hasDualAudio) {
-                            TurjaunBadge("Dual Audio", containerColor = TurjaunPalette.AmberContainer, contentColor = TurjaunPalette.Amber)
+                            LanesBadge("Dual Audio", containerColor = LanesPalette.AmberContainer, contentColor = LanesPalette.Amber)
                         }
                     }
                 }
@@ -179,14 +179,14 @@ fun MediaDetailSheet(
             if (title.downloadedCount > 0) {
                 Spacer(Modifier.height(10.dp))
                 val totalCount = maxOf(title.downloadedCount, state.files.size)
-                TurjaunBadge(
+                LanesBadge(
                     text = "${title.downloadedCount} of $totalCount saved in Downloads/LanFetch",
-                    containerColor = TurjaunPalette.AccentContainer,
-                    contentColor = TurjaunPalette.Accent,
+                    containerColor = LanesPalette.AccentContainer,
+                    contentColor = LanesPalette.Accent,
                 )
             }
 
-            Spacer(Modifier.height(TurjaunSpacing.Base))
+            Spacer(Modifier.height(LanesSpacing.Base))
 
             // Smart CTA label: single movie vs season pack vs all episodes
             val ctaLabel = when {
@@ -211,10 +211,10 @@ fun MediaDetailSheet(
                 },
                 enabled = visibleFiles.isNotEmpty() && !state.loading,
                 modifier = Modifier.fillMaxWidth().height(46.dp),
-                shape = RoundedCornerShape(TurjaunRadii.Control),
+                shape = RoundedCornerShape(LanesRadii.Control),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = TurjaunPalette.Accent,
-                    contentColor = TurjaunPalette.OnAccent,
+                    containerColor = LanesPalette.Accent,
+                    contentColor = LanesPalette.OnAccent,
                 ),
             ) {
                 Icon(painterResource(R.drawable.ic_download), contentDescription = null, modifier = Modifier.size(18.dp))
@@ -226,13 +226,13 @@ fun MediaDetailSheet(
                 Spacer(Modifier.height(8.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(TurjaunRadii.Control),
-                    color = TurjaunPalette.AccentContainer,
+                    shape = RoundedCornerShape(LanesRadii.Control),
+                    color = LanesPalette.AccentContainer,
                 ) {
                     Text(
                         text = feedback,
                         style = TabularBodySmall,
-                        color = TurjaunPalette.Accent,
+                        color = LanesPalette.Accent,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     )
                 }
@@ -240,23 +240,23 @@ fun MediaDetailSheet(
 
             // Multi-season filter bar automatically shown for multi-season TV series
             if (seasons.size > 1) {
-                Spacer(Modifier.height(TurjaunSpacing.Md))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm)) {
+                Spacer(Modifier.height(LanesSpacing.Md))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Sm)) {
                     items(seasons, key = { it }) { season ->
                         val active = selectedSeason == season
                         Surface(
                             onClick = { selectedSeason = season },
-                            shape = RoundedCornerShape(TurjaunRadii.Pill),
-                            color = if (active) TurjaunPalette.AccentContainer else TurjaunPalette.SurfaceElevated,
+                            shape = RoundedCornerShape(LanesRadii.Pill),
+                            color = if (active) LanesPalette.AccentContainer else LanesPalette.SurfaceElevated,
                             border = BorderStroke(
                                 width = 1.dp,
-                                color = if (active) TurjaunPalette.Accent else TurjaunPalette.Rule,
+                                color = if (active) LanesPalette.Accent else LanesPalette.Rule,
                             ),
                         ) {
                             Text(
                                 text = "Season $season",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (active) TurjaunPalette.Accent else TurjaunPalette.InkSecondary,
+                                color = if (active) LanesPalette.Accent else LanesPalette.InkSecondary,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                             )
                         }
@@ -265,17 +265,17 @@ fun MediaDetailSheet(
                         val active = selectedSeason == null
                         Surface(
                             onClick = { selectedSeason = null },
-                            shape = RoundedCornerShape(TurjaunRadii.Pill),
-                            color = if (active) TurjaunPalette.AccentContainer else TurjaunPalette.SurfaceElevated,
+                            shape = RoundedCornerShape(LanesRadii.Pill),
+                            color = if (active) LanesPalette.AccentContainer else LanesPalette.SurfaceElevated,
                             border = BorderStroke(
                                 width = 1.dp,
-                                color = if (active) TurjaunPalette.Accent else TurjaunPalette.Rule,
+                                color = if (active) LanesPalette.Accent else LanesPalette.Rule,
                             ),
                         ) {
                             Text(
                                 text = "All (${sorted.size})",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (active) TurjaunPalette.Accent else TurjaunPalette.InkSecondary,
+                                color = if (active) LanesPalette.Accent else LanesPalette.InkSecondary,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                             )
                         }
@@ -283,8 +283,8 @@ fun MediaDetailSheet(
                 }
             }
 
-            Spacer(Modifier.height(TurjaunSpacing.Md))
-            TurjaunDivider()
+            Spacer(Modifier.height(LanesSpacing.Md))
+            LanesDivider()
 
             when {
                 state.loading && state.files.isEmpty() -> {
@@ -294,13 +294,13 @@ fun MediaDetailSheet(
                     ) {
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth().height(2.dp),
-                            color = TurjaunPalette.Accent,
-                            trackColor = TurjaunPalette.Rule,
+                            color = LanesPalette.Accent,
+                            trackColor = LanesPalette.Rule,
                         )
                         Text(
                             "Reading folder index from ${title.sourceName}…",
                             style = TabularBodySmall,
-                            color = TurjaunPalette.InkSecondary,
+                            color = LanesPalette.InkSecondary,
                         )
                     }
                 }
@@ -314,11 +314,11 @@ fun MediaDetailSheet(
                         Text(
                             state.error ?: "No downloadable video files found.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TurjaunPalette.InkSecondary,
+                            color = LanesPalette.InkSecondary,
                         )
                         OutlinedButton(
                             onClick = onRetry,
-                            shape = RoundedCornerShape(TurjaunRadii.Control),
+                            shape = RoundedCornerShape(LanesRadii.Control),
                         ) {
                             Text("Retry")
                         }
@@ -329,15 +329,15 @@ fun MediaDetailSheet(
                     if (state.loading) {
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth().height(2.dp),
-                            color = TurjaunPalette.Accent,
-                            trackColor = TurjaunPalette.Rule,
+                            color = LanesPalette.Accent,
+                            trackColor = LanesPalette.Rule,
                         )
                     }
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 360.dp),
-                        contentPadding = PaddingValues(vertical = TurjaunSpacing.Xs),
+                        contentPadding = PaddingValues(vertical = LanesSpacing.Xs),
                     ) {
                         items(visibleFiles, key = { it.fileUrl }) { file ->
                             val isSaved = file.fileUrl in downloadedUrls
@@ -349,7 +349,7 @@ fun MediaDetailSheet(
                                     onDownload(file)
                                 },
                             )
-                            TurjaunDivider(subtle = true)
+                            LanesDivider(subtle = true)
                         }
                     }
                 }
@@ -392,7 +392,7 @@ private fun FileRow(
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = TurjaunPalette.InkPrimary,
+                color = LanesPalette.InkPrimary,
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -402,7 +402,7 @@ private fun FileRow(
                 Text(
                     text = specs,
                     style = TabularBodySmall,
-                    color = TurjaunPalette.InkSecondary,
+                    color = LanesPalette.InkSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -410,21 +410,21 @@ private fun FileRow(
         }
         Spacer(Modifier.width(8.dp))
         Box(
-            modifier = Modifier.size(TurjaunSizes.MinTouchTarget),
+            modifier = Modifier.size(LanesSizes.MinTouchTarget),
             contentAlignment = Alignment.Center,
         ) {
             if (saved) {
                 Icon(
                     imageVector = Icons.Filled.CheckCircle,
                     contentDescription = "Already saved",
-                    tint = TurjaunPalette.Accent,
+                    tint = LanesPalette.Accent,
                     modifier = Modifier.size(22.dp),
                 )
             } else {
                 Icon(
                     painter = painterResource(R.drawable.ic_download),
                     contentDescription = "Download ${file.fileName}",
-                    tint = TurjaunPalette.Accent,
+                    tint = LanesPalette.Accent,
                     modifier = Modifier.size(20.dp),
                 )
             }

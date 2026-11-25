@@ -39,6 +39,18 @@ class SegmentPlannerTest {
         assertEquals(segs[3].end, decoded[3].end)
     }
 
+    @Test fun unknownLengthSegmentDoesNotOverflowAndSurvivesPersistence() {
+        val open = Segment(0, 0, Segment.OPEN_END)
+        assertTrue(open.openEnded)
+        assertEquals(Long.MAX_VALUE, open.length)
+        assertEquals(123L, open.withDownloaded(123).downloaded)
+        assertEquals(listOf(open.withDownloaded(123)), SegmentPlanner.decode(SegmentPlanner.encode(listOf(open.withDownloaded(123)))))
+    }
+
+    @Test fun malformedPlanIsRejectedInsteadOfRenumberingSegments() {
+        assertTrue(SegmentPlanner.decode("0-99-10;bad;200-299-0").isEmpty())
+    }
+
     @Test fun respectsRequestedSegmentCap() {
         val segs = SegmentPlanner.plan(100_000_000, 4)
         assertEquals(4, segs.size)

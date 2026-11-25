@@ -3,10 +3,4 @@
     <external-path
         name="public_downloads"
         path="Download/LanFetch/" />
-    <external-files-path
-        name="app_external_downloads"
-        path="LanFetch/" />
-    <files-path
-        name="app_internal_downloads"
-        path="LanFetch/" />
 </paths>

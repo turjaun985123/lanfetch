@@ -35,11 +35,11 @@ import androidx.compose.ui.unit.dp
 import com.lanfetch.app.filter.CatalogFilter
 import com.lanfetch.app.filter.Facets
 import com.lanfetch.app.filter.SortBy
-import com.lanfetch.app.ui.components.TurjaunDivider
-import com.lanfetch.app.ui.components.TurjaunSectionLabel
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.components.LanesDivider
+import com.lanfetch.app.ui.components.LanesSectionLabel
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSpacing
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -52,7 +52,7 @@ fun LibraryFilterSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = TurjaunPalette.Surface,
+        containerColor = LanesPalette.Surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(
@@ -60,31 +60,31 @@ fun LibraryFilterSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = TurjaunSpacing.ScreenHorizontal)
-                .padding(bottom = TurjaunSpacing.Lg),
-            verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Md),
+                .padding(horizontal = LanesSpacing.ScreenHorizontal)
+                .padding(bottom = LanesSpacing.Lg),
+            verticalArrangement = Arrangement.spacedBy(LanesSpacing.Md),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Filter & Sort",
                     style = MaterialTheme.typography.titleLarge,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                     modifier = Modifier.weight(1f),
                 )
                 OutlinedButton(
                     onClick = onClear,
-                    shape = RoundedCornerShape(TurjaunRadii.Control),
+                    shape = RoundedCornerShape(LanesRadii.Control),
                 ) {
                     Text("Reset")
                 }
             }
 
-            TurjaunDivider()
+            LanesDivider()
 
-            TurjaunSectionLabel("Sort order")
+            LanesSectionLabel("Sort order")
             FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
-                verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
+                horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
+                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
             ) {
                 SortBy.entries.forEach { sort ->
                     StyledFilterChip(
@@ -129,7 +129,7 @@ fun LibraryFilterSheet(
                         (filter.yearMin?.toFloat() ?: minYear)..(filter.yearMax?.toFloat() ?: maxYear)
                     )
                 }
-                TurjaunSectionLabel("Release year (${range.start.toInt()} – ${range.endInclusive.toInt()})")
+                LanesSectionLabel("Release year (${range.start.toInt()} – ${range.endInclusive.toInt()})")
                 RangeSlider(
                     value = range,
                     onValueChange = { range = it },
@@ -145,10 +145,10 @@ fun LibraryFilterSheet(
                 )
             }
 
-            TurjaunSectionLabel("Minimum size")
+            LanesSectionLabel("Minimum size")
             FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
-                verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
+                horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
+                verticalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
             ) {
                 val sizes = listOf(
                     null to "Any",
@@ -165,13 +165,13 @@ fun LibraryFilterSheet(
                 }
             }
 
-            TurjaunDivider()
+            LanesDivider()
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Favorites only",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                     modifier = Modifier.weight(1f),
                 )
                 Switch(
@@ -183,7 +183,7 @@ fun LibraryFilterSheet(
                 Text(
                     "Dual / multi audio only",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                     modifier = Modifier.weight(1f),
                 )
                 Switch(
@@ -195,10 +195,10 @@ fun LibraryFilterSheet(
             Button(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth().height(46.dp),
-                shape = RoundedCornerShape(TurjaunRadii.Control),
+                shape = RoundedCornerShape(LanesRadii.Control),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = TurjaunPalette.Accent,
-                    contentColor = TurjaunPalette.OnAccent,
+                    containerColor = LanesPalette.Accent,
+                    contentColor = LanesPalette.OnAccent,
                 ),
             ) {
                 Text("Done")
@@ -215,11 +215,11 @@ private fun FacetSection(
     selected: Set<String>,
     onToggle: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm)) {
-        TurjaunSectionLabel(title)
+    Column(verticalArrangement = Arrangement.spacedBy(LanesSpacing.Sm)) {
+        LanesSectionLabel(title)
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
-            verticalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
+            horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
+            verticalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
         ) {
             options.forEach { value ->
                 StyledFilterChip(
@@ -242,18 +242,18 @@ private fun StyledFilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label, style = MaterialTheme.typography.labelMedium) },
-        shape = RoundedCornerShape(TurjaunRadii.Control),
+        shape = RoundedCornerShape(LanesRadii.Control),
         colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = TurjaunPalette.AccentContainer,
-            selectedLabelColor = TurjaunPalette.Accent,
-            containerColor = TurjaunPalette.SurfaceElevated,
-            labelColor = TurjaunPalette.InkSecondary,
+            selectedContainerColor = LanesPalette.AccentContainer,
+            selectedLabelColor = LanesPalette.Accent,
+            containerColor = LanesPalette.SurfaceElevated,
+            labelColor = LanesPalette.InkSecondary,
         ),
         border = FilterChipDefaults.filterChipBorder(
             enabled = true,
             selected = selected,
-            borderColor = TurjaunPalette.Rule,
-            selectedBorderColor = TurjaunPalette.Accent,
+            borderColor = LanesPalette.Rule,
+            selectedBorderColor = LanesPalette.Accent,
         ),
     )
 }

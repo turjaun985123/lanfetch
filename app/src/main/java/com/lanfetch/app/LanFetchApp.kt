@@ -12,6 +12,7 @@ import com.lanfetch.app.data.SettingsStore
 import com.lanfetch.app.data.SourceRepository
 import com.lanfetch.app.download.DownloadCoordinator
 import com.lanfetch.app.net.LiveServerClient
+import com.lanfetch.app.net.CleartextHostPolicy
 import com.lanfetch.app.net.defaultHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 
 /**
@@ -35,9 +38,9 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val db: AppDb = AppDb.build(appContext)
     val settingsStore = SettingsStore(appContext)
-    val httpClient = defaultHttpClient()
-
     val sourceRepository = SourceRepository(db)
+    private val cleartextHostPolicy = CleartextHostPolicy()
+    val httpClient = defaultHttpClient(cleartextHostPolicy)
     val catalogRepository = CatalogRepository(db)
     val liveClient = LiveServerClient(httpClient)
 
@@ -58,6 +61,11 @@ class AppContainer(context: Context) {
     init {
         appScope.launch(Dispatchers.IO) {
             sourceRepository.seedDefaults()
+        }
+        appScope.launch(Dispatchers.IO) {
+            sourceRepository.observeAll()
+                .map { sources -> sources.filter { it.enabled }.map { it.rootUrl } }
+                .collect(cleartextHostPolicy::updateSources)
         }
     }
 

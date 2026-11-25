@@ -31,4 +31,19 @@ class H5aiJsonTest {
         val req = H5aiJson.buildSearchRequest("/DHAKA-FLIX-14/", "spider\"man")
         assertTrue(req.contains("\"spider\\\"man\""))
     }
+
+    @Test fun rejectsExcessiveNestingWithoutThrowing() {
+        val nested = "[".repeat(40) + "0" + "]".repeat(40)
+        assertNull(H5aiJson.parseSearch("{\"nested\":$nested,\"search\":[]}"))
+    }
+
+    @Test fun rejectsOversizedPayload() {
+        val oversized = "{\"search\":[],\"padding\":\"${"x".repeat(2_000_001)}\"}"
+        assertNull(H5aiJson.parseSearch(oversized))
+    }
+
+    @Test fun escapesAllJsonControlCharacters() {
+        val req = H5aiJson.buildSearchRequest("/", "a\u0001b")
+        assertTrue(req.contains("a\\u0001b"))
+    }
 }

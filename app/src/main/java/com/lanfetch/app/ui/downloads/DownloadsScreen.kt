@@ -63,15 +63,15 @@ import com.lanfetch.app.download.DownloadCoordinator
 import com.lanfetch.app.download.DownloadUi
 import com.lanfetch.app.download.Format
 import com.lanfetch.app.download.Segment
-import com.lanfetch.app.ui.components.TurjaunBadge
-import com.lanfetch.app.ui.components.TurjaunDivider
-import com.lanfetch.app.ui.components.TurjaunEmptyState
-import com.lanfetch.app.ui.components.TurjaunScreenHeader
-import com.lanfetch.app.ui.components.TurjaunSurface
+import com.lanfetch.app.ui.components.LanesBadge
+import com.lanfetch.app.ui.components.LanesDivider
+import com.lanfetch.app.ui.components.LanesEmptyState
+import com.lanfetch.app.ui.components.LanesScreenHeader
+import com.lanfetch.app.ui.components.LanesSurface
 import com.lanfetch.app.ui.theme.TabularBodySmall
-import com.lanfetch.app.ui.theme.TurjaunPalette
-import com.lanfetch.app.ui.theme.TurjaunRadii
-import com.lanfetch.app.ui.theme.TurjaunSpacing
+import com.lanfetch.app.ui.theme.LanesPalette
+import com.lanfetch.app.ui.theme.LanesRadii
+import com.lanfetch.app.ui.theme.LanesSpacing
 import java.io.File
 
 @Composable
@@ -107,13 +107,13 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(TurjaunPalette.Canvas)) {
-        TurjaunScreenHeader(
+    Column(Modifier.fillMaxSize().background(LanesPalette.Canvas)) {
+        LanesScreenHeader(
             title = {
                 Text(
                     "Downloads",
                     style = MaterialTheme.typography.titleLarge,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                 )
             },
             subtitle = when {
@@ -126,7 +126,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
                     active > 0 -> {
                         OutlinedButton(
                             onClick = vm::pauseAll,
-                            shape = RoundedCornerShape(TurjaunRadii.Control),
+                            shape = RoundedCornerShape(LanesRadii.Control),
                         ) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_pause),
@@ -140,7 +140,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
                     completed > 0 -> {
                         OutlinedButton(
                             onClick = { openSystemDownloadsFolder(context)?.let(vm::notifyMessage) },
-                            shape = RoundedCornerShape(TurjaunRadii.Control),
+                            shape = RoundedCornerShape(LanesRadii.Control),
                         ) {
                             Text("Open folder")
                         }
@@ -150,31 +150,31 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
         )
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && !hasPublicStorage) {
-            Box(Modifier.padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = 10.dp)) {
-                TurjaunSurface(elevated = true) {
+            Box(Modifier.padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = 10.dp)) {
+                LanesSurface(elevated = true) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(TurjaunSpacing.Base),
+                        modifier = Modifier.fillMaxWidth().padding(LanesSpacing.Base),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Md),
+                        horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Md),
                     ) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
                                 "Storage permission needed",
                                 style = MaterialTheme.typography.titleSmall,
-                                color = TurjaunPalette.InkPrimary,
+                                color = LanesPalette.InkPrimary,
                             )
                             Text(
                                 "Grant storage access so completed files save directly to Phone storage / Download / LanFetch.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TurjaunPalette.InkSecondary,
+                                color = LanesPalette.InkSecondary,
                             )
                         }
                         Button(
                             onClick = { permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE) },
-                            shape = RoundedCornerShape(TurjaunRadii.Control),
+                            shape = RoundedCornerShape(LanesRadii.Control),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = TurjaunPalette.Accent,
-                                contentColor = TurjaunPalette.OnAccent,
+                                containerColor = LanesPalette.Accent,
+                                contentColor = LanesPalette.OnAccent,
                             ),
                         ) {
                             Text("Allow")
@@ -185,7 +185,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
         }
 
         if (downloads.isEmpty()) {
-            TurjaunEmptyState(
+            LanesEmptyState(
                 painter = painterResource(R.drawable.ic_download),
                 title = "No transfers",
                 subtitle = "Movies and episodes you download appear here with live multi-segment progress and speed.",
@@ -193,7 +193,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = TurjaunSpacing.BottomListBreath),
+                contentPadding = PaddingValues(bottom = LanesSpacing.BottomListBreath),
             ) {
                 items(downloads, key = { it.id }, contentType = { "download_row" }) { download ->
                     DownloadItemRow(
@@ -205,7 +205,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
                         onCancel = { vm.cancel(download.id) },
                         onRemove = { vm.remove(download.id) },
                     )
-                    TurjaunDivider()
+                    LanesDivider()
                 }
             }
         }
@@ -230,7 +230,7 @@ private fun DownloadItemRow(
 
     Column(
         modifier = rowModifier
-            .padding(horizontal = TurjaunSpacing.ScreenHorizontal, vertical = 14.dp),
+            .padding(horizontal = LanesSpacing.ScreenHorizontal, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -240,14 +240,14 @@ private fun DownloadItemRow(
                 Text(
                     text = download.title,
                     style = MaterialTheme.typography.titleSmall,
-                    color = TurjaunPalette.InkPrimary,
+                    color = LanesPalette.InkPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = download.fileName,
                     style = MaterialTheme.typography.bodySmall,
-                    color = TurjaunPalette.InkSecondary,
+                    color = LanesPalette.InkSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -265,8 +265,8 @@ private fun DownloadItemRow(
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
-                color = if (download.state == DownloadState.FAILED) TurjaunPalette.Error else TurjaunPalette.Accent,
-                trackColor = TurjaunPalette.SurfaceInteractive,
+                color = if (download.state == DownloadState.FAILED) LanesPalette.Error else LanesPalette.Accent,
+                trackColor = LanesPalette.SurfaceInteractive,
             )
         }
 
@@ -292,7 +292,7 @@ private fun DownloadItemRow(
             Text(
                 text = leftMetrics,
                 style = TabularBodySmall,
-                color = TurjaunPalette.InkSecondary,
+                color = LanesPalette.InkSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
@@ -302,7 +302,7 @@ private fun DownloadItemRow(
                 Text(
                     text = rightMetrics,
                     style = TabularBodySmall,
-                    color = TurjaunPalette.Accent,
+                    color = LanesPalette.Accent,
                     maxLines = 1,
                 )
             }
@@ -314,8 +314,8 @@ private fun DownloadItemRow(
             Text(
                 text = download.error,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (download.state == DownloadState.FAILED) TurjaunPalette.Error
-                else TurjaunPalette.Amber,
+                color = if (download.state == DownloadState.FAILED) LanesPalette.Error
+                else LanesPalette.Amber,
             )
         }
 
@@ -323,7 +323,7 @@ private fun DownloadItemRow(
             Text(
                 text = "Saved in ${download.savedPath}",
                 style = MaterialTheme.typography.bodySmall,
-                color = TurjaunPalette.Accent,
+                color = LanesPalette.Accent,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -331,56 +331,56 @@ private fun DownloadItemRow(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(TurjaunSpacing.Sm),
+            horizontalArrangement = Arrangement.spacedBy(LanesSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             when (download.state) {
                 DownloadState.RUNNING -> {
-                    OutlinedButton(onClick = onPause, shape = RoundedCornerShape(TurjaunRadii.Control)) {
+                    OutlinedButton(onClick = onPause, shape = RoundedCornerShape(LanesRadii.Control)) {
                         Icon(painterResource(R.drawable.ic_pause), contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Pause")
                     }
-                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(TurjaunRadii.Control)) {
+                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(LanesRadii.Control)) {
                         Text("Cancel")
                     }
                 }
                 DownloadState.PAUSED -> {
                     Button(
                         onClick = onResume,
-                        shape = RoundedCornerShape(TurjaunRadii.Control),
+                        shape = RoundedCornerShape(LanesRadii.Control),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = TurjaunPalette.Accent,
-                            contentColor = TurjaunPalette.OnAccent,
+                            containerColor = LanesPalette.Accent,
+                            contentColor = LanesPalette.OnAccent,
                         ),
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Resume")
                     }
-                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(TurjaunRadii.Control)) {
+                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(LanesRadii.Control)) {
                         Text("Remove")
                     }
                 }
                 DownloadState.FAILED -> {
                     Button(
                         onClick = onRetry,
-                        shape = RoundedCornerShape(TurjaunRadii.Control),
+                        shape = RoundedCornerShape(LanesRadii.Control),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = TurjaunPalette.Accent,
-                            contentColor = TurjaunPalette.OnAccent,
+                            containerColor = LanesPalette.Accent,
+                            contentColor = LanesPalette.OnAccent,
                         ),
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Retry")
                     }
-                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(TurjaunRadii.Control)) {
+                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(LanesRadii.Control)) {
                         Text("Remove")
                     }
                 }
                 DownloadState.QUEUED -> {
-                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(TurjaunRadii.Control)) {
+                    OutlinedButton(onClick = onCancel, shape = RoundedCornerShape(LanesRadii.Control)) {
                         Icon(painterResource(R.drawable.ic_cancel), contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Cancel")
@@ -389,17 +389,17 @@ private fun DownloadItemRow(
                 DownloadState.COMPLETED -> {
                     Button(
                         onClick = onOpen,
-                        shape = RoundedCornerShape(TurjaunRadii.Control),
+                        shape = RoundedCornerShape(LanesRadii.Control),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = TurjaunPalette.Accent,
-                            contentColor = TurjaunPalette.OnAccent,
+                            containerColor = LanesPalette.Accent,
+                            contentColor = LanesPalette.OnAccent,
                         ),
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Open")
                     }
-                    OutlinedButton(onClick = onRemove, shape = RoundedCornerShape(TurjaunRadii.Control)) {
+                    OutlinedButton(onClick = onRemove, shape = RoundedCornerShape(LanesRadii.Control)) {
                         Icon(Icons.Filled.Delete, contentDescription = null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Clear")
@@ -413,13 +413,13 @@ private fun DownloadItemRow(
 @Composable
 private fun StateBadge(state: DownloadState) {
     val (label, bg, fg) = when (state) {
-        DownloadState.RUNNING -> Triple("Running", TurjaunPalette.AccentContainer, TurjaunPalette.Accent)
-        DownloadState.COMPLETED -> Triple("Saved", TurjaunPalette.AccentContainer, TurjaunPalette.Accent)
-        DownloadState.FAILED -> Triple("Failed", TurjaunPalette.ErrorContainer, TurjaunPalette.Error)
-        DownloadState.QUEUED -> Triple("Queued", TurjaunPalette.SurfaceElevated, TurjaunPalette.InkSecondary)
-        DownloadState.PAUSED -> Triple("Paused", TurjaunPalette.AmberContainer, TurjaunPalette.Amber)
+        DownloadState.RUNNING -> Triple("Running", LanesPalette.AccentContainer, LanesPalette.Accent)
+        DownloadState.COMPLETED -> Triple("Saved", LanesPalette.AccentContainer, LanesPalette.Accent)
+        DownloadState.FAILED -> Triple("Failed", LanesPalette.ErrorContainer, LanesPalette.Error)
+        DownloadState.QUEUED -> Triple("Queued", LanesPalette.SurfaceElevated, LanesPalette.InkSecondary)
+        DownloadState.PAUSED -> Triple("Paused", LanesPalette.AmberContainer, LanesPalette.Amber)
     }
-    TurjaunBadge(text = label, containerColor = bg, contentColor = fg)
+    LanesBadge(text = label, containerColor = bg, contentColor = fg)
 }
 
 @Composable
@@ -429,25 +429,25 @@ private fun StateGlyph(state: DownloadState) {
             Icons.Filled.CheckCircle,
             contentDescription = "Completed",
             modifier = Modifier.size(20.dp),
-            tint = TurjaunPalette.Accent,
+            tint = LanesPalette.Accent,
         )
         DownloadState.FAILED -> Icon(
             painterResource(R.drawable.ic_error),
             contentDescription = "Failed",
             modifier = Modifier.size(20.dp),
-            tint = TurjaunPalette.Error,
+            tint = LanesPalette.Error,
         )
         DownloadState.RUNNING -> Icon(
             painterResource(R.drawable.ic_download),
             contentDescription = "Running",
             modifier = Modifier.size(20.dp),
-            tint = TurjaunPalette.Accent,
+            tint = LanesPalette.Accent,
         )
         else -> Icon(
             painterResource(R.drawable.ic_pause),
             contentDescription = "Paused or queued",
             modifier = Modifier.size(20.dp),
-            tint = if (state == DownloadState.PAUSED) TurjaunPalette.Amber else TurjaunPalette.InkMuted,
+            tint = if (state == DownloadState.PAUSED) LanesPalette.Amber else LanesPalette.InkMuted,
         )
     }
 }
@@ -464,13 +464,13 @@ private fun SegmentProgressTrack(segments: List<Segment>) {
                     .weight(1f)
                     .height(6.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(TurjaunPalette.SurfaceInteractive)
+                    .background(LanesPalette.SurfaceInteractive)
             ) {
                 Box(
                     Modifier
                         .fillMaxWidth(fraction)
                         .fillMaxHeight()
-                        .background(TurjaunPalette.Accent)
+                        .background(LanesPalette.Accent)
                 )
             }
         }

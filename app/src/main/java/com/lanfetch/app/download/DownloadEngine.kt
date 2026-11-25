@@ -152,7 +152,7 @@ class DownloadEngine(
             }
 
             try {
-                val outcome = if (plan.size <= 1) {
+                val outcome = if (plan.size <= 1 || plan.any { it.openEnded }) {
                     runSingleStream(url, sink, plan[0], counters, total, knownTotal, validator)
                 } else {
                     runSegmented(url, sink, plan, counters, total, knownTotal, validator)
@@ -224,8 +224,9 @@ class DownloadEngine(
             var bytesThisAttempt = 0L
 
             try {
+                val rangeHeader = if (segment.openEnded) "bytes=$from-" else "bytes=$from-${segment.end}"
                 val builder = Request.Builder().url(url)
-                    .header("Range", "bytes=$from-${segment.end}")
+                    .header("Range", rangeHeader)
                     .header("User-Agent", USER_AGENT)
                 validator?.let { builder.header("If-Range", it) }
                 client.withCall(builder.build()) { res ->
@@ -335,7 +336,7 @@ class DownloadEngine(
                             coroutineContext.ensureActive()
                             val read = input.read(buffer)
                             if (read < 0) break
-                            val writable = if (totalBytes > 0) {
+            val writable = if (totalBytes > 0) {
                                 minOf(read.toLong(), totalBytes - existing).toInt()
                             } else {
                                 read

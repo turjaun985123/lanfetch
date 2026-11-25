@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LanFetch</string>
+    <string name="browse">ব্রাউজ</string>
+    <string name="transfers">ট্রান্সফার</string>
+    <string name="servers">সার্ভার</string>
+    <string name="settings">সেটিংস</string>
+    <string name="search_movies_series">মুভি ও সিরিজ খুঁজুন</string>
+    <string name="download">ডাউনলোড</string>
+    <string name="pause">থামান</string>
+    <string name="resume">চালিয়ে যান</string>
+    <string name="try_again">আবার চেষ্টা করুন</string>
+    <string name="waiting_wifi">ওয়াই-ফাইয়ের অপেক্ষায়</string>
+    <string name="finished">সম্পন্ন</string>
+    <string name="undo">ফিরিয়ে আনুন</string>
+    <string name="empty_transfers">এখনো কোনো ডাউনলোড নেই। ব্রাউজ থেকে কিছু বেছে নিন, এখানে দেখা যাবে।</string>
+</resources>
