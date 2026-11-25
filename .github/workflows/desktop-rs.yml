@@ -39,8 +39,12 @@ jobs:
       - name: Render UI snapshot (headless)
         # Every Rune app can render its first frame to a PNG with --snap;
         # this is the desktop UI's visual check, uploaded as an artifact.
+        # The runner has no display, so provide a virtual one via Xvfb
+        # (winit refuses to start without WAYLAND_DISPLAY or DISPLAY).
         continue-on-error: true
-        run: ./target/release/lanfetch-rs --snap "$GITHUB_WORKSPACE/lanfetch-ui.png"
+        run: |
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
+          xvfb-run -a ./target/release/lanfetch-rs --snap "$GITHUB_WORKSPACE/lanfetch-ui.png"
 
       - name: Upload UI snapshot
         if: always()

@@ -290,7 +290,7 @@ fn browse_view(s: &State, p: &Palette) -> El {
                                     .child(text(src.name.clone()).font(HEADLINE).color(p.ink))
                                     .child(text(src.root_url.clone()).font(SMALL).color(p.ink2)),
                             )
-                            .child(badge(p, note, p.raised, p.ink2)),
+                            .child(badge(note, p.raised, p.ink2)),
                     )
                     .on_press(move |s: &mut State| open_url(s, label.clone(), url.clone())),
             );
@@ -399,7 +399,7 @@ fn browse_view(s: &State, p: &Palette) -> El {
                                     .gap(12.0)
                                     .child(tile)
                                     .child(text(name).font(LABEL).color(p.ink).grow(1.0))
-                                    .child(badge(p, "Folder".to_string(), p.raised, p.ink2))
+                                    .child(badge("Folder".to_string(), p.raised, p.ink2))
                                     .child(text("›").font(HEADLINE).color(p.ink3)),
                             )
                             .on_press(move |s: &mut State| open_url(s, label.clone(), url.clone())),
@@ -414,7 +414,7 @@ fn browse_view(s: &State, p: &Palette) -> El {
                                 .gap(12.0)
                                 .child(tile)
                                 .child(text(name).font(BODY).color(p.ink).grow(1.0))
-                                .child(badge(p, size, p.raised, p.ink2))
+                                .child(badge(size, p.raised, p.ink2))
                                 .child(btn_primary("Download", p, move |s: &mut State| {
                                     s.manager.enqueue(url.clone(), fname.clone());
                                     s.tab = Tab::Transfers;
@@ -470,6 +470,15 @@ fn transfer_card(s: &State, p: &Palette, task: &manager::Task) -> El {
         DlState::Completed => format!("Finished · {}", fmt_bytes(task.total)),
         DlState::Failed => format!("Failed: {}", task.error.clone().unwrap_or_default()),
     };
+    // State chip in the Android app's container colors (paused/failed
+    // containers exist in the palette precisely for these).
+    let state_badge = match task.state {
+        DlState::Running => badge("Downloading".to_string(), p.accent_container, p.on_accent_container),
+        DlState::Queued => badge("Queued".to_string(), p.raised, p.ink2),
+        DlState::Paused => badge("Paused".to_string(), p.paused_container, p.paused),
+        DlState::Failed => badge("Failed".to_string(), p.failed_container, p.failed),
+        DlState::Completed => badge("Finished".to_string(), p.raised, p.done),
+    };
     let ring = segmented_ring(
         p,
         color,
@@ -494,7 +503,13 @@ fn transfer_card(s: &State, p: &Palette, task: &manager::Task) -> El {
                     .grow(1.0)
                     .gap(3.0)
                     .child(text(task.name.clone()).font(HEADLINE).color(p.ink).w_full().wrap())
-                    .child(text(status).font(SMALL).color(p.ink2).w_full().wrap()),
+                    .child(
+                        row()
+                            .w_full()
+                            .gap(8.0)
+                            .child(state_badge)
+                            .child(text(status).font(SMALL).color(p.ink2).grow(1.0).wrap()),
+                    ),
             )
             .child(text(if expanded { "⌄" } else { "›" }).font(HEADLINE).color(p.ink3)),
     )
@@ -674,7 +689,7 @@ fn servers_view(s: &State, p: &Palette) -> El {
                             .child(text(src.name.clone()).font(HEADLINE).color(p.ink))
                             .child(text(src.root_url.clone()).font(SMALL).color(p.ink2)),
                     )
-                    .child(badge(p, note, p.raised, p.ink2))
+                    .child(badge(note, p.raised, p.ink2))
                     .child(actions),
             ),
         );

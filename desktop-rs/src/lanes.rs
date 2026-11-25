@@ -145,7 +145,7 @@ pub fn section_label(p: &Palette, s: &str) -> El {
 }
 
 /// LanesBadge: small rounded label chip.
-pub fn badge(p: &Palette, s: String, bg: Color, fg: Color) -> El {
+pub fn badge(s: String, bg: Color, fg: Color) -> El {
     el()
         .radius(8.0)
         .fill(bg)
