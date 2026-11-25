@@ -184,6 +184,8 @@ struct State {
     add_url: TextEdit,
     settings: Settings,
     cache_msg: Option<String>,
+    update_msg: Option<String>,
+    update_latest: Latest<Result<Option<String>, String>>,
     selected_transfer: Option<u64>,
     manager: Arc<Manager>,
 }
@@ -488,6 +490,14 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
                 (u, res)
             });
         }
+    }
+    if let Some(res) = s.update_latest.take() {
+        s.update_msg = Some(match res {
+            Ok(Some(tag)) => format!("Update available: {tag} — download it from the GitHub releases page"),
+            Ok(None) => "You're on the latest desktop version".to_string(),
+            Err(e) => format!("Update check failed: {e}"),
+        });
+        changed = true;
     }
     changed
 }
@@ -1340,7 +1350,7 @@ fn settings_view(s: &State, p: &Palette) -> El {
         }));
     }
 
-    let mut body = col()
+    let body = col()
         .w_full()
         .grow(1.0)
         .shrink()
@@ -1474,6 +1484,23 @@ fn settings_view(s: &State, p: &Palette) -> El {
                             .color(p.ink2)
                             .w_full()
                             .wrap(),
+                    )
+                    .child(el().w_full().h(1.0).fill(p.hairline))
+                    .child(
+                        row()
+                            .w_full()
+                            .gap(12.0)
+                            .child(
+                                text(s.update_msg.clone().unwrap_or_else(|| "Updates ship as GitHub releases (desktop-rs tags)".to_string()))
+                                    .font(SMALL)
+                                    .color(p.ink2)
+                                    .grow(1.0)
+                                    .wrap(),
+                            )
+                            .child(btn_tonal("Check for updates", p, |s: &mut State| {
+                                s.update_msg = Some("Checking…".to_string());
+                                s.update_latest.request((), |_: ()| catalog::check_desktop_update());
+                            })),
                     ),
             ),
         );
@@ -1582,6 +1609,7 @@ fn main() {
         s.search_latest.set_waker(waker.clone());
         s.detail_latest.set_waker(waker.clone());
         s.poster_latest.set_waker(waker.clone());
+        s.update_latest.set_waker(waker.clone());
         s.image_cache = Some(ImageCache::new(waker));
     });
     spec.poll = Some(poll);
@@ -1625,9 +1653,11 @@ fn main() {
             poster_latest: Latest::default(),
             image_cache: None,
             add_name: TextEdit::new(""),
-            add_url: TextEdit::new(),
+            add_url: TextEdit::new(""),
             settings,
             cache_msg: None,
+            update_msg: None,
+            update_latest: Latest::default(),
             selected_transfer: None,
             manager: Manager::load(),
         }

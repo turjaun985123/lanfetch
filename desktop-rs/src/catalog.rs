@@ -758,6 +758,37 @@ pub fn hydrate_and_load_files(mut title: Title) -> Title {
     title
 }
 
+// ------------------------------------------------------------ update check
+
+fn version_gt(a: &str, b: &str) -> bool {
+    let parse = |v: &str| {
+        v.split('.').map(|p| p.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>()
+    };
+    parse(a) > parse(b)
+}
+
+/// The Android app's UpdateChecker, desktop edition: the newest GitHub
+/// release tagged `desktop-rs-v*`, if it is newer than this build.
+pub fn check_desktop_update() -> Result<Option<String>, String> {
+    let resp = http_agent()
+        .get("https://api.github.com/repos/turjaun985123/lanfetch/releases?per_page=10")
+        .call()
+        .map_err(|e| e.to_string())?;
+    let text = resp.into_string().map_err(|e| e.to_string())?;
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let current = env!("CARGO_PKG_VERSION");
+    if let Some(releases) = json.as_array() {
+        for rel in releases {
+            if let Some(tag) = rel.get("tag_name").and_then(|v| v.as_str()) {
+                if let Some(v) = tag.strip_prefix("desktop-rs-v") {
+                    return Ok(if version_gt(v, current) { Some(tag.to_string()) } else { None });
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 // ------------------------------------------------------------------ posters
 
 /// Fetch poster bytes (bounded to ~2 MB) for the UI's ImageCache.

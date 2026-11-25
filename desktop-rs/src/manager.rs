@@ -90,6 +90,18 @@ pub fn downloads_dir() -> PathBuf {
     PathBuf::from(home).join("Downloads/LanFetch")
 }
 
+/// Desktop notification via notify-send (the Android app posts a
+/// per-file notification on completion/failure; this is the Linux
+/// equivalent). Best-effort: silently does nothing when notify-send
+/// is not installed.
+fn notify(title: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .args(["--app-name=LanFetch", title, body])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 fn state_file() -> PathBuf {
     data_dir().join("downloads.json")
 }
@@ -245,14 +257,20 @@ impl Manager {
                 mgr.wake();
             }
             Err(e) => {
-                let mut tasks = mgr.tasks.lock().unwrap();
-                if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
-                    t.state = DlState::Failed;
-                    t.error = Some(e);
+                let mut failed_name = String::new();
+                {
+                    let mut tasks = mgr.tasks.lock().unwrap();
+                    if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                        t.state = DlState::Failed;
+                        t.error = Some(e.clone());
+                        failed_name = t.name.clone();
+                    }
                 }
-                drop(tasks);
                 mgr.save();
                 mgr.wake();
+                if !failed_name.is_empty() {
+                    notify("Download failed", &format!("{failed_name}: {e}"));
+                }
             }
         });
     }
@@ -353,6 +371,12 @@ impl Manager {
                         t.speed_bps = 0.0;
                     }
                 }
+            }
+            if finished {
+                notify("Download finished", &name);
+            } else if failed {
+                let err = progress.message.lock().unwrap().clone().unwrap_or_default();
+                notify("Download failed", &format!("{name}: {err}"));
             }
             mgr.save();
             mgr.pump();
