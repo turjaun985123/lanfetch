@@ -106,6 +106,8 @@ pub fn initials(title: &str) -> String {
 const ANEK: Family = Family::Named("Anek Bangla");
 
 pub const BRAND: TextStyle = TextStyle::new(22.0, 600.0).family(ANEK).tracking(-0.4);
+/// Detail-screen display title (Netflix-scale headline type).
+pub const DISPLAY: TextStyle = TextStyle::new(26.0, 700.0).family(ANEK).tracking(-0.5);
 pub const TITLE: TextStyle = TextStyle::new(17.0, 600.0).family(ANEK);
 pub const HEADLINE: TextStyle = TextStyle::new(14.0, 600.0).family(ANEK);
 pub const LABEL: TextStyle = TextStyle::new(12.5, 500.0).family(ANEK);
@@ -162,6 +164,7 @@ pub fn btn_primary<S: 'static>(label: &str, p: &Palette, f: impl Fn(&mut S) + 's
         .center()
         .radius(999.0)
         .fill(p.accent)
+        .press_scale(0.97)
         .child(text(label).font(LABEL).color(p.on_accent))
         .on_press(f)
 }
@@ -174,6 +177,8 @@ pub fn btn_tonal<S: 'static>(label: &str, p: &Palette, f: impl Fn(&mut S) + 'sta
         .center()
         .radius(999.0)
         .fill(p.raised)
+        .hover_fill(p.hairline)
+        .press_scale(0.97)
         .child(text(label).font(LABEL).color(p.ink))
         .on_press(f)
 }
@@ -185,14 +190,16 @@ pub fn chip<S: 'static>(label: &str, selected: bool, p: &Palette, f: impl Fn(&mu
     } else {
         (p.raised, p.ink2)
     };
-    el()
+    let el = el()
         .h(30.0)
         .px(14.0)
         .center()
         .radius(999.0)
         .fill(bg)
-        .child(text(label).font(LABEL).color(fg))
-        .on_press(f)
+        .press_scale(0.97)
+        .child(text(label).font(LABEL).color(fg));
+    let el = if selected { el } else { el.hover_fill(p.hairline) };
+    el.on_press(f)
 }
 
 /// Thin progress bar (per-lane bars in the expanded transfer view).

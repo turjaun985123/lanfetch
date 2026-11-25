@@ -598,7 +598,8 @@ fn nav_item<S: 'static>(
                 .child(text(badge_count.to_string()).font(SMALL).color(p.on_accent)),
         );
     }
-    item.on_press(f)
+    let item = if selected { item } else { item.hover_fill(p.raised) };
+    item.press_scale(0.98).on_press(f)
 }
 
 fn rail(s: &State, p: &Palette) -> El {
@@ -647,9 +648,9 @@ fn c_white() -> rune::Color {
 fn poster_el(s: &State, p: &Palette, t: &Title, w: f32, h: f32) -> El {
     // w <= 0 means "fill the available width" (grid cards).
     let base = if w <= 0.0 {
-        el().w_full().h(h).radius(12.0).clip_rounded(12.0).fill(poster_tone(&t.title))
+        el().w_full().h(h).radius(14.0).clip_rounded(14.0).fill(poster_tone(&t.title))
     } else {
-        el().w(w).h(h).radius(12.0).clip_rounded(12.0).fill(poster_tone(&t.title))
+        el().w(w).h(h).radius(14.0).clip_rounded(14.0).fill(poster_tone(&t.title))
     };
     if let Some(url) = &t.poster_url {
         if let Some(PosterState::Ready(img)) = s.posters.get(url) {
@@ -687,46 +688,49 @@ fn title_card(s: &State, p: &Palette, t: &Title) -> El {
     let open = t.clone();
     let dl = t.clone();
     let fav_url = t.folder_url.clone();
-    card(p)
+    // Netflix-style boxless card: the 2:3 portrait poster IS the card
+    // (the old build boxed a ~2:1 landscape crop of portrait art inside
+    // a bordered surface — the UX audit's #1 visual complaint).
+    col()
         .grow(1.0)
-        .padding(10.0)
+        .gap(8.0)
+        .child(poster_el(s, p, t, 0.0, 248.0))
+        .child(text(t.title.clone()).font(LABEL).color(p.ink).w_full().wrap())
+        .child(text(meta).font(SMALL).color(p.ink2).w_full().wrap())
         .child(
-            col()
+            row()
                 .w_full()
-                .gap(8.0)
-                .child(poster_el(s, p, t, 0.0, 148.0))
-                .child(text(t.title.clone()).font(LABEL).color(p.ink).w_full().wrap())
-                .child(text(meta).font(SMALL).color(p.ink2).w_full().wrap())
+                .gap(6.0)
+                .child(badge(
+                    if t.kind == "series" { u.series.to_string() } else { u.movies.to_string() },
+                    p.accent_container,
+                    p.on_accent_container,
+                ))
+                .child(el().grow(1.0))
                 .child(
-                    row()
-                        .w_full()
-                        .gap(6.0)
-                        .child(badge(
-                            if t.kind == "series" { u.series.to_string() } else { u.movies.to_string() },
-                            p.accent_container,
-                            p.on_accent_container,
-                        ))
-                        .child(el().grow(1.0))
-                        .child(
-                            el()
-                                .px(8.0)
-                                .py(4.0)
-                                .radius(8.0)
-                                .fill(if fav { p.accent_container } else { p.raised })
-                                .child(text("★").font(LABEL).color(if fav { p.accent } else { p.ink3 }))
-                                .on_press(move |s: &mut State| toggle_favorite(s, &fav_url)),
-                        )
-                        .child(
-                            el()
-                                .px(8.0)
-                                .py(4.0)
-                                .radius(8.0)
-                                .fill(p.raised)
-                                .child(text("↓").font(LABEL).color(p.ink2))
-                                .on_press(move |s: &mut State| request_download(s, &dl)),
-                        ),
+                    el()
+                        .px(8.0)
+                        .py(4.0)
+                        .radius(8.0)
+                        .fill(if fav { p.accent_container } else { p.raised })
+                        .hover_border(p.accent)
+                        .press_scale(0.92)
+                        .child(text("★").font(LABEL).color(if fav { p.accent } else { p.ink3 }))
+                        .on_press(move |s: &mut State| toggle_favorite(s, &fav_url)),
+                )
+                .child(
+                    el()
+                        .px(8.0)
+                        .py(4.0)
+                        .radius(8.0)
+                        .fill(p.raised)
+                        .hover_border(p.accent)
+                        .press_scale(0.92)
+                        .child(text("↓").font(LABEL).color(p.ink2))
+                        .on_press(move |s: &mut State| request_download(s, &dl)),
                 ),
         )
+        .press_scale(0.99)
         .on_press(move |s: &mut State| open_detail(s, &open))
 }
 
@@ -767,12 +771,12 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
         row()
             .w_full()
             .gap(16.0)
-            .child(poster_el(s, p, t, 150.0, 210.0))
+            .child(poster_el(s, p, t, 176.0, 264.0))
             .child(
                 col()
                     .grow(1.0)
                     .gap(8.0)
-                    .child(text(t.title.clone()).font(TITLE).color(p.ink).w_full().wrap())
+                    .child(text(t.title.clone()).font(DISPLAY).color(p.ink).w_full().wrap())
                     .child(text(format!("{} · {}", t.category, t.source_name)).font(BODY).color(p.ink2))
                     .child(badges)
                     .child(
@@ -878,6 +882,53 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
     col().w_full().h_full().fill(p.canvas).child(body)
 }
 
+/// Loading placeholder shaped like a title card (poster block + two
+/// text bars) — the grid keeps its shape while pages stream in instead
+/// of collapsing to a bare "Loading…" line.
+fn skeleton_card(p: &Palette) -> El {
+    col()
+        .grow(1.0)
+        .gap(8.0)
+        .child(el().w_full().h(248.0).radius(14.0).fill(p.raised))
+        .child(el().w(120.0).h(12.0).radius(6.0).fill(p.raised))
+        .child(el().w(80.0).h(10.0).radius(5.0).fill(p.raised))
+}
+
+/// Real empty state: what happened, why, and the way out — the old UI
+/// silently rendered an empty grid for unreachable servers, failed
+/// searches and over-tight filters alike (UX audit #10).
+fn empty_state(s: &State, p: &Palette) -> El {
+    let u = ui(s);
+    let online = s.probes.iter().filter(|x| matches!(x, ProbeState::Up(_))).count();
+    let (head, hint) = if s.search_mode {
+        (
+            "No results",
+            "Try another title, or check the Servers tab — the servers answer only from inside the ISP network.",
+        )
+    } else if online == 0 {
+        (
+            "No servers reachable",
+            "The DHAKA-FLIX servers answer only from inside the ISP network. Connect to that network, then re-check.",
+        )
+    } else {
+        ("Nothing here yet", "No titles match the current filters — loosen them, or pick another category.")
+    };
+    let mut c = col()
+        .w_full()
+        .center()
+        .gap(10.0)
+        .child(el().h(36.0))
+        .child(text(head).font(HEADLINE).color(p.ink))
+        .child(text(hint).font(BODY).color(p.ink2).w(520.0).wrap());
+    if online == 0 && !s.search_mode {
+        c = c.child(btn_primary(u.refresh, p, |s: &mut State| {
+            start_probes(s);
+            refresh_library(s);
+        }));
+    }
+    c
+}
+
 fn library_view(s: &State, p: &Palette) -> El {
     let u = ui(s);
     if s.detail_loading {
@@ -890,9 +941,23 @@ fn library_view(s: &State, p: &Palette) -> El {
             .child(
                 col()
                     .w_full()
-                    .grow(1.0)
-                    .center()
-                    .child(text("Loading…").font(BODY).color(p.ink2)),
+                    .padding(16.0)
+                    .gap(12.0)
+                    .child(
+                        row()
+                            .w_full()
+                            .gap(16.0)
+                            .child(el().w(176.0).h(264.0).radius(14.0).fill(p.raised))
+                            .child(
+                                col()
+                                    .gap(10.0)
+                                    .child(el().w(320.0).h(22.0).radius(6.0).fill(p.raised))
+                                    .child(el().w(200.0).h(14.0).radius(6.0).fill(p.raised))
+                                    .child(el().w(260.0).h(14.0).radius(6.0).fill(p.raised)),
+                            ),
+                    )
+                    .child(el().w_full().h(14.0).radius(6.0).fill(p.raised))
+                    .child(el().w_full().h(14.0).radius(6.0).fill(p.raised)),
             );
     }
     if let Some(t) = &s.detail {
@@ -941,7 +1006,15 @@ fn library_view(s: &State, p: &Palette) -> El {
                 .radius(10.0)
                 .fill(p.surface)
                 .border(1.0, p.hairline)
-                .on_edit(|s: &mut State| &mut s.lib_search),
+                .on_edit(|s: &mut State| &mut s.lib_search)
+                .on_input_key(|s: &mut State, ev, _tx| {
+                    if matches!(ev.key, rune::Key::Enter) {
+                        submit_search(s);
+                        true
+                    } else {
+                        false
+                    }
+                }),
         )
         .child(btn_primary(u.search, p, |s: &mut State| submit_search(s)));
     if s.search_mode {
@@ -1005,25 +1078,28 @@ fn library_view(s: &State, p: &Palette) -> El {
         body = body.child(qrow);
     }
 
-    // Title grid, three cards per row.
+    // Title grid, five portrait cards per row (Netflix density).
     let visible = visible_titles(s);
-    let mut grid = col().w_full().grow(1.0).shrink().gap(12.0).scroll(ScrollSpec { stick_bottom: false });
+    let mut grid = col().w_full().grow(1.0).shrink().gap(14.0).scroll(ScrollSpec { stick_bottom: false });
     if visible.is_empty() {
-        let msg = if s.feed_loading || s.search_loading || s.cats_loading {
-            "Loading…"
-        } else if s.search_mode {
-            "No results. Try another title, or check the Servers tab — the servers answer only from inside the ISP network."
+        if s.feed_loading || s.search_loading || s.cats_loading {
+            for _ in 0..2 {
+                let mut row_el = row().w_full().gap(14.0);
+                for _ in 0..5 {
+                    row_el = row_el.child(skeleton_card(p));
+                }
+                grid = grid.child(row_el);
+            }
         } else {
-            "No titles yet. If the servers are unreachable, connect to the ISP network and press Refresh."
-        };
-        grid = grid.child(text(msg).font(BODY).color(p.ink2).w_full().wrap());
+            grid = grid.child(empty_state(s, p));
+        }
     }
-    for chunk in visible.chunks(3) {
-        let mut row_el = row().w_full().gap(12.0);
+    for chunk in visible.chunks(5) {
+        let mut row_el = row().w_full().gap(14.0);
         for t in chunk {
             row_el = row_el.child(title_card(s, p, t));
         }
-        for _ in chunk.len()..3 {
+        for _ in chunk.len()..5 {
             row_el = row_el.child(el().grow(1.0));
         }
         grid = grid.child(row_el);
@@ -1321,7 +1397,15 @@ fn servers_view(s: &State, p: &Palette) -> El {
                             .radius(10.0)
                             .fill(p.canvas)
                             .border(1.0, p.hairline)
-                            .on_edit(|s: &mut State| &mut s.add_name),
+                            .on_edit(|s: &mut State| &mut s.add_name)
+                            .on_input_key(|s: &mut State, ev, _tx| {
+                                if matches!(ev.key, rune::Key::Enter) {
+                                    add_custom_server(s);
+                                    true
+                                } else {
+                                    false
+                                }
+                            }),
                     )
                     .child(
                         text_input(&s.add_url, BODY)
@@ -1334,23 +1418,17 @@ fn servers_view(s: &State, p: &Palette) -> El {
                             .radius(10.0)
                             .fill(p.canvas)
                             .border(1.0, p.hairline)
-                            .on_edit(|s: &mut State| &mut s.add_url),
+                            .on_edit(|s: &mut State| &mut s.add_url)
+                            .on_input_key(|s: &mut State, ev, _tx| {
+                                if matches!(ev.key, rune::Key::Enter) {
+                                    add_custom_server(s);
+                                    true
+                                } else {
+                                    false
+                                }
+                            }),
                     )
-                    .child(btn_primary("Add", p, |s: &mut State| {
-                        let name = s.add_name.text.trim().to_string();
-                        let mut url = s.add_url.text.trim().to_string();
-                        if name.is_empty() || url.is_empty() {
-                            return;
-                        }
-                        if !url.ends_with('/') {
-                            url.push('/');
-                        }
-                        s.sources.push(SourceItem { name, root_url: url, enabled: true, custom: true });
-                        s.add_name = TextEdit::new("");
-                        s.add_url = TextEdit::new("");
-                        persist_sources(s);
-                        start_probes(s);
-                    })),
+                    .child(btn_primary("Add", p, |s: &mut State| add_custom_server(s))),
             ),
     );
     let body = col()
@@ -1647,9 +1725,43 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .fill(p.canvas)
+        .on_key_preview(|s: &mut State, ev, _tx| {
+            // Escape backs out: close the detail first, then clear a
+            // search — the two "back" gestures a keyboard user expects.
+            if matches!(ev.key, rune::Key::Escape) {
+                if s.detail.is_some() {
+                    s.detail = None;
+                    s.quality_choice = None;
+                    return true;
+                }
+                if s.search_mode {
+                    clear_search(s);
+                    return true;
+                }
+            }
+            false
+        })
         .child(rail(s, &p))
         .child(el().w(1.0).h_full().fill(p.hairline))
         .child(screen.grow(1.0))
+}
+
+/// The Servers tab's Add action, shared by the button and Enter in
+/// either field.
+fn add_custom_server(s: &mut State) {
+    let name = s.add_name.text.trim().to_string();
+    let mut url = s.add_url.text.trim().to_string();
+    if name.is_empty() || url.is_empty() {
+        return;
+    }
+    if !url.ends_with('/') {
+        url.push('/');
+    }
+    s.sources.push(SourceItem { name, root_url: url, enabled: true, custom: true });
+    s.add_name = TextEdit::new("");
+    s.add_url = TextEdit::new("");
+    persist_sources(s);
+    start_probes(s);
 }
 
 fn main() {
