@@ -143,11 +143,16 @@ object LanesMotion {
 }
 
 /** Bundled Inter family so text looks consistent across Android system fonts. */
+/**
+ * Anek Bangla (spec: one family covering Bangla and Latin with matching
+ * proportions, SIL OFL — license in assets/licenses/Anek-OFL.txt). Four
+ * static weights; variable fonts would lose weights below API 26.
+ */
 val LanFetchFontFamily = FontFamily(
-    Font(R.font.inter_regular, FontWeight.Normal),
-    Font(R.font.inter_medium, FontWeight.Medium),
-    Font(R.font.inter_semibold, FontWeight.SemiBold),
-    Font(R.font.inter_bold, FontWeight.Bold),
+    Font(R.font.anek_bangla_regular, FontWeight.Normal),
+    Font(R.font.anek_bangla_medium, FontWeight.Medium),
+    Font(R.font.anek_bangla_semibold, FontWeight.SemiBold),
+    Font(R.font.anek_bangla_bold, FontWeight.Bold),
 )
 
 private val MaterialTypography = Typography()
