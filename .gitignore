@@ -10,3 +10,7 @@
 local.properties
 *.apk
 *.aab
+
+# LanFetch Desktop build output
+desktop/build/
+desktop/.gradle/
