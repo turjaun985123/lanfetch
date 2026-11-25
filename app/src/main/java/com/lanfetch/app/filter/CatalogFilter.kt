@@ -1,7 +1,11 @@
 package com.lanfetch.app.filter
 
+import androidx.compose.runtime.Immutable
+import com.lanfetch.app.data.LiveTitle
+
 enum class SortBy { TITLE, YEAR_DESC, SIZE_DESC, NEWEST, SIZE_ASC }
 
+@Immutable
 data class CatalogFilter(
     val query: String = "",
     val kinds: Set<String> = emptySet(),       // movie / series
@@ -15,7 +19,7 @@ data class CatalogFilter(
     val minSizeBytes: Long? = null,
     val favoritesOnly: Boolean = false,
     val dualAudioOnly: Boolean = false,
-    val sort: SortBy = SortBy.TITLE,
+    val sort: SortBy = SortBy.NEWEST,
 ) {
     val activeCount: Int
         get() = kinds.size + categories.size + sourceNames.size + qualities.size +
@@ -25,65 +29,85 @@ data class CatalogFilter(
             (if (favoritesOnly) 1 else 0) + (if (dualAudioOnly) 1 else 0)
 }
 
-/** A SQL statement plus its bind arguments, kept free of Android classes so it is unit-testable. */
-data class QuerySpec(val sql: String, val args: List<Any?>)
+@Immutable
+data class Facets(
+    val categories: List<String> = emptyList(),
+    val sourceNames: List<String> = emptyList(),
+    val qualities: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val sourceTags: List<String> = emptyList(),
+    val years: List<Int> = emptyList(),
+)
 
 /**
- * Builds the paged library query. Filtering, searching and sorting all happen
- * in SQLite; the UI only ever receives one page of title rows.
+ * Pure filtering, sorting, and dynamic facet computation for live catalog cards.
+ * Kept Android-free so every filter/sort edge case is covered by JVM unit tests.
  */
-object CatalogQuery {
+object TitleFilterEngine {
+    private val qualityOrder = listOf("2160p", "1080p", "720p", "480p", "360p", "CAM")
 
-    fun build(f: CatalogFilter): QuerySpec {
-        val where = mutableListOf("1 = 1")
-        val args = mutableListOf<Any?>()
-
-        val query = f.query.trim()
-        if (query.isNotEmpty()) {
-            val pattern = "%${escapeLike(query.lowercase())}%"
-            where += """(t.searchText LIKE ? ESCAPE '\' OR EXISTS (
-                SELECT 1 FROM files f
-                WHERE f.titleId = t.id AND f.searchText LIKE ? ESCAPE '\'
-            ))"""
-            args += pattern
-            args += pattern
+    fun enrich(
+        title: LiveTitle,
+        favoriteUrls: Set<String>,
+        downloadedUrls: Set<String>,
+    ): LiveTitle {
+        val dlCount = if (title.cachedFiles.isEmpty()) {
+            title.downloadedCount
+        } else {
+            title.cachedFiles.count { it.fileUrl in downloadedUrls }
         }
-        addIn(where, args, "t.kind", f.kinds)
-        addIn(where, args, "t.category", f.categories)
-        addIn(where, args, "t.sourceName", f.sourceNames)
-        addIn(where, args, "t.bestQuality", f.qualities)
-        addIn(where, args, "t.language", f.languages)
-        addIn(where, args, "t.bestSourceTag", f.sourceTags)
-        f.yearMin?.let { where += "t.year >= ?"; args += it }
-        f.yearMax?.let { where += "t.year <= ?"; args += it }
-        f.minSizeBytes?.let { where += "t.maxSizeBytes >= ?"; args += it }
-        if (f.favoritesOnly) where += "t.favorite = 1"
-        if (f.dualAudioOnly) where += "t.hasDualAudio = 1"
-
-        val order = when (f.sort) {
-            SortBy.TITLE -> "t.title COLLATE NOCASE ASC, t.id ASC"
-            SortBy.YEAR_DESC -> "t.year IS NULL ASC, t.year DESC, t.title COLLATE NOCASE ASC"
-            SortBy.SIZE_DESC -> "t.maxSizeBytes DESC, t.title COLLATE NOCASE ASC"
-            SortBy.SIZE_ASC -> "CASE WHEN t.maxSizeBytes < 0 THEN 1 ELSE 0 END, t.maxSizeBytes ASC, t.title COLLATE NOCASE ASC"
-            SortBy.NEWEST -> "t.addedAt DESC, t.id DESC"
-        }
-
-        val sql = buildString {
-            append("SELECT t.* FROM titles t WHERE ")
-            append(where.joinToString(" AND "))
-            append(" ORDER BY ")
-            append(order)
-        }
-        return QuerySpec(sql, args)
+        return title.copy(
+            favorite = title.folderUrl in favoriteUrls,
+            downloadedCount = dlCount,
+        )
     }
 
-    private fun addIn(where: MutableList<String>, args: MutableList<Any?>, column: String, values: Set<String>) {
-        if (values.isEmpty()) return
-        val placeholders = values.joinToString(", ") { "?" }
-        where += "$column IN ($placeholders)"
-        args.addAll(values)
+    fun filterAndSort(
+        pool: List<LiveTitle>,
+        filter: CatalogFilter,
+        favoriteUrls: Set<String>,
+        downloadedUrls: Set<String>,
+    ): List<LiveTitle> {
+        val filtered = pool.asSequence()
+            .map { enrich(it, favoriteUrls, downloadedUrls) }
+            .filter { item ->
+                (filter.kinds.isEmpty() || item.kind in filter.kinds) &&
+                    (filter.categories.isEmpty() || item.category in filter.categories) &&
+                    (filter.sourceNames.isEmpty() || item.sourceName in filter.sourceNames) &&
+                    (filter.qualities.isEmpty() || item.bestQuality in filter.qualities) &&
+                    (filter.languages.isEmpty() || item.language in filter.languages) &&
+                    (filter.sourceTags.isEmpty() || item.bestSourceTag in filter.sourceTags) &&
+                    (filter.yearMin == null || (item.year != null && item.year >= filter.yearMin)) &&
+                    (filter.yearMax == null || (item.year != null && item.year <= filter.yearMax)) &&
+                    (filter.minSizeBytes == null || item.maxSizeBytes >= filter.minSizeBytes) &&
+                    (!filter.favoritesOnly || item.favorite) &&
+                    (!filter.dualAudioOnly || item.hasDualAudio)
+            }
+            .toList()
+
+        return when (filter.sort) {
+            SortBy.NEWEST -> filtered
+            SortBy.TITLE -> filtered.sortedBy { it.title.lowercase() }
+            SortBy.YEAR_DESC -> filtered.sortedWith(
+                compareByDescending<LiveTitle> { it.year ?: Int.MIN_VALUE }.thenBy { it.title.lowercase() }
+            )
+            SortBy.SIZE_DESC -> filtered.sortedWith(
+                compareByDescending<LiveTitle> { it.maxSizeBytes }.thenBy { it.title.lowercase() }
+            )
+            SortBy.SIZE_ASC -> filtered.sortedWith(
+                compareBy<LiveTitle> { if (it.maxSizeBytes < 0L) Long.MAX_VALUE else it.maxSizeBytes }
+                    .thenBy { it.title.lowercase() }
+            )
+        }
     }
 
-    fun escapeLike(value: String): String =
-        value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    fun buildFacets(pool: List<LiveTitle>): Facets = Facets(
+        categories = pool.map { it.category }.filter { it.isNotBlank() }.distinct().sorted(),
+        sourceNames = pool.map { it.sourceName }.filter { it.isNotBlank() }.distinct().sorted(),
+        qualities = pool.mapNotNull { it.bestQuality }.distinct()
+            .sortedBy { q -> qualityOrder.indexOf(q).let { if (it < 0) qualityOrder.size else it } },
+        languages = pool.mapNotNull { it.language }.distinct().sorted(),
+        sourceTags = pool.mapNotNull { it.bestSourceTag }.distinct().sorted(),
+        years = pool.mapNotNull { it.year }.distinct().sorted(),
+    )
 }

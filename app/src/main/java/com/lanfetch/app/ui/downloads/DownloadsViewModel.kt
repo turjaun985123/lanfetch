@@ -1,4 +1,4 @@
-package com.lanfetch.app.ui
+package com.lanfetch.app.ui.downloads
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel

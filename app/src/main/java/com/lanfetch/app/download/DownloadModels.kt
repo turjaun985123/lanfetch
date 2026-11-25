@@ -1,7 +1,9 @@
 package com.lanfetch.app.download
 
+import androidx.compose.runtime.Immutable
 import com.lanfetch.app.data.DownloadState
 
+@Immutable
 data class DownloadUi(
     val id: Long,
     val title: String,

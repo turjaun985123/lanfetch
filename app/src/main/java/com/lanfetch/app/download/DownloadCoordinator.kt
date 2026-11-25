@@ -11,7 +11,6 @@ import androidx.room.withTransaction
 import com.lanfetch.app.data.AppDb
 import com.lanfetch.app.data.AppSettings
 import com.lanfetch.app.data.CatalogFile
-import com.lanfetch.app.data.CatalogRepository
 import com.lanfetch.app.data.DownloadEntity
 import com.lanfetch.app.data.DownloadState
 import com.lanfetch.app.data.SettingsStore
@@ -53,7 +52,6 @@ class DownloadCoordinator(
     private val context: Context,
     private val db: AppDb,
     private val settingsStore: SettingsStore,
-    private val catalog: CatalogRepository,
     private val scope: CoroutineScope,
     private val client: OkHttpClient,
     private val engine: DownloadEngine = DownloadEngine(client),
@@ -402,7 +400,6 @@ class DownloadCoordinator(
                             updatedAt = System.currentTimeMillis(),
                         )
                     )
-                    scope.launch { catalog.refreshDownloadedCounts() }
                 }
 
                 is DownloadOutcome.Failed -> {
@@ -584,7 +581,7 @@ class DownloadCoordinator(
             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
         if (settings.wifiOnly && !wifi) {
             pauseAll("Waiting for Wi-Fi (Wi-Fi only)")
-        } else if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+        } else if (hasLanOrInternet(caps)) {
             scope.launch { resumeWaiting(wifiAvailable = wifi) }
         }
     }
@@ -603,8 +600,13 @@ class DownloadCoordinator(
 
     private fun isOnline(): Boolean {
         val caps = activeCapabilities() ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        return hasLanOrInternet(caps)
     }
+
+    private fun hasLanOrInternet(caps: NetworkCapabilities): Boolean =
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
 
     private fun activeCapabilities(): NetworkCapabilities? {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null

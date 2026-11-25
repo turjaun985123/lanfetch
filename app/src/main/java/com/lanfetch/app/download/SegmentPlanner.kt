@@ -1,6 +1,9 @@
 package com.lanfetch.app.download
 
+import androidx.compose.runtime.Immutable
+
 /** One byte range of a file. [end] is inclusive, like HTTP Range. Immutable by design. */
+@Immutable
 data class Segment(
     val index: Int,
     val start: Long,

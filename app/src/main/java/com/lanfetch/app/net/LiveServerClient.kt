@@ -32,6 +32,13 @@ import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
+data class ServerProbeResult(
+    val sourceId: Long,
+    val reachable: Boolean,
+    val latencyMs: Long = 0L,
+    val detail: String = "",
+)
+
 /**
  * Live directory browser and direct server search client.
  *
@@ -63,6 +70,50 @@ class LiveServerClient(
         listingCache.clear()
         filesCache.clear()
         searchCache.clear()
+    }
+
+    /** Lightweight reachability & latency probe for the Servers screen. */
+    suspend fun probeServer(source: Source): ServerProbeResult = withContext(Dispatchers.IO) {
+        val start = System.currentTimeMillis()
+        val req = Request.Builder()
+            .url(source.rootUrl)
+            .head()
+            .header("User-Agent", USER_AGENT)
+            .build()
+        try {
+            client.withCall(req) { res ->
+                val elapsed = (System.currentTimeMillis() - start).coerceAtLeast(1L)
+                if (res.isSuccessful || res.code == 405) {
+                    if (res.code == 405) {
+                        val getReq = Request.Builder().url(source.rootUrl).header("User-Agent", USER_AGENT).build()
+                        val t0 = System.currentTimeMillis()
+                        return@withCall client.withCall(getReq) { getRes ->
+                            val getMs = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
+                            if (getRes.isSuccessful) {
+                                markReachable(source.id)
+                                ServerProbeResult(source.id, true, getMs, "${getMs} ms")
+                            } else {
+                                ServerProbeResult(source.id, false, getMs, "HTTP ${getRes.code}")
+                            }
+                        }
+                    }
+                    markReachable(source.id)
+                    ServerProbeResult(source.id, true, elapsed, "${elapsed} ms")
+                } else {
+                    ServerProbeResult(source.id, false, elapsed, "HTTP ${res.code}")
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
+            if (isConnectFailure(e)) markUnreachable(source.id)
+            ServerProbeResult(
+                sourceId = source.id,
+                reachable = false,
+                detail = e.message?.take(60) ?: "Unreachable",
+            )
+        }
     }
 
     fun isTemporarilyUnreachable(sourceId: Long): Boolean {
@@ -406,11 +457,7 @@ class LiveServerClient(
         val isSeriesSet = HashSet<String>()
 
         for (item in items) {
-            val absUrl = try {
-                rootUri.resolve(item.href).toString()
-            } catch (_: Exception) {
-                continue
-            }
+            val absUrl = safeResolveUrl(rootUri, item.href) ?: continue
             if (!absUrl.startsWith(source.rootUrl)) continue
 
             if (item.isDir) {
@@ -509,7 +556,7 @@ class LiveServerClient(
             rawTitleName = rawTitleName,
             year = MetaParser.parseYear(haystack),
             kind = if (isSeries) "series" else "movie",
-            posterUrl = Scraper.pickPoster(entries),
+            posterUrl = PosterPicker.pickPoster(entries),
             language = MetaParser.parseLanguage(category),
             fileCount = files.size,
             seasonCount = seasonDirs.size,
@@ -674,6 +721,15 @@ class LiveServerClient(
             "imdb" in n -> 5
             "series" in n || "anime" in n -> 6
             else -> 7
+        }
+    }
+
+    private fun safeResolveUrl(rootUri: URI, rawHref: String): String? {
+        return try {
+            rootUri.resolve(rawHref).toString()
+        } catch (_: Exception) {
+            val encoded = rawHref.replace(" ", "%20").replace("[", "%5B").replace("]", "%5D")
+            runCatching { rootUri.resolve(encoded).toString() }.getOrNull()
         }
     }
 

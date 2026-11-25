@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="turjaun_canvas">#07090F</color>
+
+    <style name="Theme.Turjaun" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/turjaun_canvas</item>
+        <item name="android:colorBackground">@color/turjaun_canvas</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

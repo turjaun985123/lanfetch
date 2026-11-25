@@ -1,11 +1,15 @@
 package com.lanfetch.app.data
 
+import androidx.compose.runtime.Immutable
+
 /** A category discovered live from one or more LAN servers. */
+@Immutable
 data class LiveCategory(
     val name: String,
     val locations: List<CategoryLocation>,
 )
 
+@Immutable
 data class CategoryLocation(
     val source: Source,
     val url: String,
@@ -16,6 +20,7 @@ data class CategoryLocation(
  * Files are loaded directly when a movie folder is inspected, or lazily on tap
  * for multi-season series.
  */
+@Immutable
 data class LiveTitle(
     val folderUrl: String,
     val sourceId: Long,

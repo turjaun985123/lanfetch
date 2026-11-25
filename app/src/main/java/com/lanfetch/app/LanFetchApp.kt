@@ -5,13 +5,14 @@ import android.content.Context
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.lanfetch.app.data.AppDb
 import com.lanfetch.app.data.CatalogRepository
 import com.lanfetch.app.data.SettingsStore
 import com.lanfetch.app.data.SourceRepository
 import com.lanfetch.app.download.DownloadCoordinator
 import com.lanfetch.app.net.LiveServerClient
-import com.lanfetch.app.net.Scraper
+import com.lanfetch.app.net.defaultHttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,11 +35,10 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val db: AppDb = AppDb.build(appContext)
     val settingsStore = SettingsStore(appContext)
-    val httpClient = Scraper.defaultClient()
+    val httpClient = defaultHttpClient()
 
     val sourceRepository = SourceRepository(db)
     val catalogRepository = CatalogRepository(db)
-    val scraper = Scraper(httpClient)
     val liveClient = LiveServerClient(httpClient)
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -51,7 +51,6 @@ class AppContainer(context: Context) {
         context = appContext,
         db = db,
         settingsStore = settingsStore,
-        catalog = catalogRepository,
         scope = appScope,
         client = httpClient,
     )
@@ -87,6 +86,11 @@ class LanFetchApp : Application(), ImageLoaderFactory {
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build()
             }
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.18)
+                    .build()
+            }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
@@ -94,6 +98,5 @@ class LanFetchApp : Application(), ImageLoaderFactory {
                     .build()
             }
             .respectCacheHeaders(false)
-            .crossfade(true)
             .build()
 }

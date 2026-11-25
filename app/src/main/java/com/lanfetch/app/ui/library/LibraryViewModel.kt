@@ -1,16 +1,18 @@
-package com.lanfetch.app.ui
+package com.lanfetch.app.ui.library
 
 import android.app.Application
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lanfetch.app.LanFetchApp
 import com.lanfetch.app.data.CatalogFile
-import com.lanfetch.app.data.Facets
 import com.lanfetch.app.data.LiveCategory
 import com.lanfetch.app.data.LiveTitle
 import com.lanfetch.app.data.Source
 import com.lanfetch.app.filter.CatalogFilter
+import com.lanfetch.app.filter.Facets
 import com.lanfetch.app.filter.SortBy
+import com.lanfetch.app.filter.TitleFilterEngine
 import com.lanfetch.app.net.CrawlRules
 import com.lanfetch.app.net.LiveFeedSession
 import kotlinx.coroutines.CancellationException
@@ -40,10 +42,19 @@ import kotlinx.coroutines.sync.withPermit
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
+@Immutable
 data class CategoryState(
     val categories: List<LiveCategory> = emptyList(),
     val discovering: Boolean = true,
     val fromCache: Boolean = false,
+)
+
+@Immutable
+data class DetailSheetState(
+    val title: LiveTitle? = null,
+    val files: List<CatalogFile> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
 )
 
 private data class FeedKey(
@@ -67,12 +78,10 @@ private data class FeedTriggerKey(
 )
 
 /**
- * Live YouTube-style library controller with 3-tier caching:
- * 1. Room stale-while-revalidate cache (`cached_categories`, `cached_feed_items`)
- *    for instant (<50 ms) cold startup without blocking spinners.
- * 2. In-memory category session cache so switching `All <-> Hindi Movies <-> Search`
- *    resumes instantaneously without losing scroll pages or hitting the network.
- * 3. Directory/file/search TTL caches inside [LiveServerClient].
+ * Live YouTube-style library controller backed by 3-tier caching:
+ * 1. Persistent Room stale-while-revalidate caches (`cached_categories`, `cached_feed_items`)
+ * 2. Per-tab in-memory `LiveFeedSession` cursor cache
+ * 3. Bounded TTL caches inside [com.lanfetch.app.net.LiveServerClient]
  */
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
@@ -90,7 +99,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _submittedQuery = MutableStateFlow<String?>(null)
 
-    private val _selectedCategory = MutableStateFlow<String?>(null) // null = All, FAVORITES_CATEGORY = Favorites
+    private val _selectedCategory = MutableStateFlow<String?>(null)
     val selectedCategory: StateFlow<String?> = _selectedCategory.asStateFlow()
 
     private val _filter = MutableStateFlow(CatalogFilter(sort = SortBy.NEWEST))
@@ -158,7 +167,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val activeSearchQuery: StateFlow<String> = combine(
         _searchQuery
             .map { it.trim() }
-            .debounce { q -> if (q.isEmpty()) 0L else 350L }
+            .debounce { q -> if (q.isEmpty()) 0L else 320L }
             .map { q -> if (q.length >= 2) q else "" },
         _submittedQuery.map { it?.trim().orEmpty() },
     ) { debounced, submitted ->
@@ -176,10 +185,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val downloadedUrls: StateFlow<Set<String>> = catalog.completedDownloadUrls()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
-    // --- Live Feed state + in-memory per-category session cache ---
+    // --- Feed paging state ---
     private val feedMemoryCache = ConcurrentHashMap<FeedKey, CachedFeedMemoryState>()
     private val _rawFeedItems = MutableStateFlow<List<LiveTitle>>(emptyList())
-    private val _isLoadingFeedInitial = MutableStateFlow(false)
+    private val _isLoadingFeedInitial = MutableStateFlow(true)
     private val _isRefreshingFeed = MutableStateFlow(false)
     private val _isLoadingFeedMore = MutableStateFlow(false)
     private val _hasMoreFeed = MutableStateFlow(false)
@@ -190,7 +199,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private var activeFeedSession: LiveFeedSession? = null
     private var feedLoadMoreJob: Job? = null
 
-    // --- Live Direct Search state + lazy poster hydration ---
+    // --- Search + lazy hydration ---
     private val _rawSearchResults = MutableStateFlow<List<LiveTitle>>(emptyList())
     private val _revealedSearchCount = MutableStateFlow(PAGE_SIZE)
     private val _isSearching = MutableStateFlow(false)
@@ -200,49 +209,49 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val deadSearchUrls = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
     private var hydrateSearchJob: Job? = null
 
-    // --- Detail sheet state (on-demand file/episode fetch) ---
-    private val _selectedTitle = MutableStateFlow<LiveTitle?>(null)
-    val selectedTitle: StateFlow<LiveTitle?> = combine(_selectedTitle, favoriteUrls, downloadedUrls) { title, favs, dlUrls ->
-        title?.enrich(favs, dlUrls)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
-    private val _selectedFiles = MutableStateFlow<List<CatalogFile>>(emptyList())
-    val selectedFiles: StateFlow<List<CatalogFile>> = _selectedFiles.asStateFlow()
-
-    private val _selectedFilesLoading = MutableStateFlow(false)
-    val selectedFilesLoading: StateFlow<Boolean> = _selectedFilesLoading.asStateFlow()
-
-    private val _selectedFilesError = MutableStateFlow<String?>(null)
-    val selectedFilesError: StateFlow<String?> = _selectedFilesError.asStateFlow()
-
+    // --- Detail sheet state ---
+    private val _detailTitle = MutableStateFlow<LiveTitle?>(null)
+    private val _detailFiles = MutableStateFlow<List<CatalogFile>>(emptyList())
+    private val _detailLoading = MutableStateFlow(false)
+    private val _detailError = MutableStateFlow<String?>(null)
     private var loadFilesJob: Job? = null
 
-    private val filteredSourcePool: StateFlow<List<LiveTitle>> = combine(
-        combine(_rawFeedItems, _rawSearchResults, favoriteTitles) { feed, search, favs ->
-            Triple(feed, search, favs)
-        },
+    val detailSheet: StateFlow<DetailSheetState> = combine(
+        _detailTitle,
+        _detailFiles,
+        _detailLoading,
+        _detailError,
+        combine(favoriteUrls, downloadedUrls) { f, d -> f to d },
+    ) { title, files, loading, err, (favs, dlUrls) ->
+        DetailSheetState(
+            title = title?.let { TitleFilterEngine.enrich(it, favs, dlUrls) },
+            files = files,
+            loading = loading,
+            error = err,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DetailSheetState())
+
+    private val activeRawPool: StateFlow<List<LiveTitle>> = combine(
+        _rawFeedItems,
+        _rawSearchResults,
+        favoriteTitles,
         activeSearchQuery,
         _selectedCategory,
+    ) { feed, search, favs, query, selCat ->
+        when {
+            query.isNotEmpty() -> search
+            selCat == FAVORITES_CATEGORY -> favs
+            else -> feed
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val filteredSourcePool: StateFlow<List<LiveTitle>> = combine(
+        activeRawPool,
         _filter,
         favoriteUrls,
         downloadedUrls,
-    ) { arrayOfValues ->
-        @Suppress("UNCHECKED_CAST")
-        val triple = arrayOfValues[0] as Triple<List<LiveTitle>, List<LiveTitle>, List<LiveTitle>>
-        val query = arrayOfValues[1] as String
-        val selCat = arrayOfValues[2] as String?
-        val flt = arrayOfValues[3] as CatalogFilter
-        @Suppress("UNCHECKED_CAST")
-        val favSet = arrayOfValues[4] as Set<String>
-        @Suppress("UNCHECKED_CAST")
-        val dlSet = arrayOfValues[5] as Set<String>
-
-        val pool = when {
-            query.isNotEmpty() -> triple.second
-            selCat == FAVORITES_CATEGORY -> triple.third
-            else -> triple.first
-        }
-        applyFilterAndSort(pool, flt, favSet, dlSet)
+    ) { pool, flt, favSet, dlSet ->
+        TitleFilterEngine.filterAndSort(pool, flt, favSet, dlSet)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val items: StateFlow<List<LiveTitle>> = combine(
@@ -253,20 +262,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         if (query.isNotEmpty()) pool.take(revealed) else pool
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val facets: StateFlow<Facets> = combine(
-        _rawFeedItems,
-        _rawSearchResults,
-        favoriteTitles,
-        activeSearchQuery,
-        _selectedCategory,
-    ) { feed, search, favs, query, selCat ->
-        val pool = when {
-            query.isNotEmpty() -> search
-            selCat == FAVORITES_CATEGORY -> favs
-            else -> feed
-        }
-        buildFacets(pool)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Facets())
+    val facets: StateFlow<Facets> = activeRawPool
+        .map { TitleFilterEngine.buildFacets(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Facets())
 
     val isLoadingInitial: StateFlow<Boolean> = combine(
         activeSearchQuery,
@@ -274,21 +272,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         discoveringCategories,
         _isLoadingFeedInitial,
         _isSearching,
-        items,
-    ) { arrayOfValues ->
-        val query = arrayOfValues[0] as String
-        val selCat = arrayOfValues[1] as String?
-        val discovering = arrayOfValues[2] as Boolean
-        val loadingFeed = arrayOfValues[3] as Boolean
-        val searching = arrayOfValues[4] as Boolean
-        @Suppress("UNCHECKED_CAST")
-        val visible = arrayOfValues[5] as List<LiveTitle>
-
+    ) { query, selCat, discovering, loadingFeed, searching ->
         when {
-            query.isNotEmpty() -> searching && visible.isEmpty()
+            query.isNotEmpty() -> searching && items.value.isEmpty()
             selCat == FAVORITES_CATEGORY -> false
-            else -> visible.isEmpty() && (discovering || loadingFeed)
+            else -> items.value.isEmpty() && (discovering || loadingFeed)
         }
+    }.combine(items) { loading, visible ->
+        if (visible.isNotEmpty()) false else loading
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val isRefreshing: StateFlow<Boolean> = combine(
@@ -335,7 +326,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _searchError,
     ) { enabled, query, selCat, feedErr, searchErr ->
         when {
-            !enabled -> "No enabled LAN servers. Enable at least one server in Sources."
+            !enabled -> "No enabled LAN servers. Enable at least one server in Servers."
             query.isNotEmpty() -> searchErr
             selCat == FAVORITES_CATEGORY -> null
             else -> feedErr
@@ -345,58 +336,37 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val statusText: StateFlow<String> = combine(
         activeSearchQuery,
         _selectedCategory,
-        categories,
-        items,
-        filteredSourcePool,
-        isLoadingInitial,
-        hasMore,
-        _isSearching,
-        _isRefreshingFeed,
-        _feedFromCache,
-    ) { arrayOfValues ->
-        val query = arrayOfValues[0] as String
-        val selCat = arrayOfValues[1] as String?
-        @Suppress("UNCHECKED_CAST")
-        val cats = arrayOfValues[2] as List<LiveCategory>
-        @Suppress("UNCHECKED_CAST")
-        val visible = arrayOfValues[3] as List<LiveTitle>
-        @Suppress("UNCHECKED_CAST")
-        val total = arrayOfValues[4] as List<LiveTitle>
-        val loadingInit = arrayOfValues[5] as Boolean
-        val more = arrayOfValues[6] as Boolean
-        val searching = arrayOfValues[7] as Boolean
-        val refreshing = arrayOfValues[8] as Boolean
-        val cachedFlag = arrayOfValues[9] as Boolean
-
+        combine(categories, items, filteredSourcePool) { c, v, t -> Triple(c, v, t) },
+        combine(isLoadingInitial, hasMore, _isSearching) { i, m, s -> Triple(i, m, s) },
+        combine(_isRefreshingFeed, _feedFromCache, discoveringCategories) { r, c, d -> Triple(r, c, d) },
+    ) { query, selCat, (cats, visible, total), (loadingInit, more, searching), (refreshing, cachedFlag, discovering) ->
         when {
             query.isNotEmpty() && searching && total.isEmpty() ->
-                "Searching servers for \"$query\"…"
+                "Searching LAN servers for \"$query\"…"
 
             query.isNotEmpty() ->
-                "${visible.size} of ${total.size} results for \"$query\""
+                "${visible.size} of ${total.size} results"
 
             selCat == FAVORITES_CATEGORY ->
-                if (visible.size == 1) "1 favorite title" else "${visible.size} favorite titles"
+                if (visible.size == 1) "1 saved favorite" else "${visible.size} saved favorites"
 
-            loadingInit ->
-                if (selCat == null) "Loading live feed from LAN…" else "Loading $selCat…"
+            loadingInit -> when {
+                cats.isEmpty() && discovering -> "Discovering LAN servers…"
+                selCat != null -> "Loading $selCat…"
+                else -> "Fetching live catalog…"
+            }
 
             refreshing ->
-                if (selCat != null) "${visible.size} cached • $selCat • updating…"
-                else "${visible.size} cached • ${cats.size} categories • updating…"
+                if (selCat != null) "$selCat • updating…" else "${visible.size} titles • updating…"
 
-            selCat != null -> {
-                val verb = if (cachedFlag) "cached" else "loaded"
-                if (more) "${visible.size} $verb • $selCat • scroll for more"
-                else "${visible.size} titles • $selCat"
-            }
+            selCat != null ->
+                "${visible.size} ${if (cachedFlag) "cached" else "loaded"} • $selCat"
 
-            else -> {
-                val verb = if (cachedFlag) "cached" else "loaded"
-                "${visible.size} $verb • ${cats.size} categories" + if (more) " • scroll for more" else ""
-            }
+            else ->
+                "${visible.size} ${if (cachedFlag) "cached" else "loaded"} • ${cats.size} categories" +
+                    if (more) " • scroll for more" else ""
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "Loading cached library…")
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "Connecting to LAN servers…")
 
     init {
         observeFeedDriver()
@@ -444,7 +414,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 .collectLatest { (key, pair) ->
                     feedLoadMoreJob?.cancel()
                     val (catState, activeCats) = pair
-
                     if (key.signature == "INACTIVE") return@collectLatest
 
                     val feedKey = FeedKey(key.selectedCategory, key.kindFilter)
@@ -453,7 +422,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     val isExplicitRefresh = key.refreshToken != handledRefreshToken
                     val enabledIds = enabledSources.value.mapTo(HashSet()) { it.id }
 
-                    // 1. Check Room cache BEFORE category discovery even finishes so cold reopen is <50 ms!
                     if (key.signature == "DISCOVERING") {
                         if (isExplicitRefresh) {
                             _isRefreshingFeed.value = _rawFeedItems.value.isNotEmpty()
@@ -482,17 +450,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                         return@collectLatest
                     }
 
-                    // 2. Fast in-memory session cache restore (zero network calls on tab switch!)
                     val mem = if (isExplicitRefresh) null else feedMemoryCache[feedKey]
                     if (mem != null) {
                         val ageMs = System.currentTimeMillis() - mem.cachedAt
                         applyMemorySnapshot(mem)
-                        if (ageMs < FEED_CACHE_TTL_MS) {
-                            return@collectLatest
-                        }
+                        if (ageMs < FEED_CACHE_TTL_MS) return@collectLatest
                     }
 
-                    // 3. Persistent Room cache restore (stale-while-revalidate on cold launch or category switch)
                     val roomSnap = if (isExplicitRefresh || mem != null) null
                     else catalog.loadCachedFeed(roomKey, enabledIds)
                     if (roomSnap != null && roomSnap.items.isNotEmpty()) {
@@ -510,7 +474,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
 
-                    // 4. Empty or missing categories check
                     if (catState.categories.isEmpty() && !catState.discovering) {
                         if (_rawFeedItems.value.isEmpty()) {
                             activeFeedSession = null
@@ -535,7 +498,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                         return@collectLatest
                     }
 
-                    // 5. Fetch live page 1 (showing background update indicator if cached cards are visible)
                     val hasVisibleCache = (mem != null || roomSnap != null || isExplicitRefresh) &&
                         _rawFeedItems.value.isNotEmpty()
                     val session = LiveFeedSession(
@@ -582,7 +544,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                             _rawFeedItems.value = emptyList()
                             _hasMoreFeed.value = false
                             _feedError.value = if (hasEnabledSources.value) {
-                                "Could not load items from the selected servers right now."
+                                "Could not load titles from the enabled servers right now."
                             } else null
                         }
                         _isLoadingFeedInitial.value = false
@@ -608,7 +570,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             combine(activeSearchQuery, enabledSources, _refreshToken) { query, sources, token ->
                 Triple(query, sources, token)
-            }.collectLatest { (query, sources, _) ->
+            }.collectLatest { (query, sources, token) ->
                 hydrateSearchJob?.cancel()
                 if (query.isEmpty()) {
                     _rawSearchResults.value = emptyList()
@@ -623,12 +585,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     return@collectLatest
                 }
 
+                val force = token > 0 && token != handledRefreshToken
                 _rawSearchResults.value = emptyList()
                 _revealedSearchCount.value = PAGE_SIZE
                 _isSearching.value = true
                 _searchError.value = null
 
-                liveClient.searchDirect(sources, query)
+                liveClient.searchDirect(sources, query, forceRefresh = force)
                     .catch { err ->
                         _searchError.value = err.message ?: "Live search failed"
                     }
@@ -709,10 +672,26 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectCategory(categoryName: String?) {
+        val changed = _selectedCategory.value != categoryName
         _selectedCategory.value = categoryName
         if (_searchQuery.value.isNotEmpty() || _submittedQuery.value != null) {
             _searchQuery.value = ""
             _submittedQuery.value = null
+        }
+        if (changed && categoryName != FAVORITES_CATEGORY) {
+            feedLoadMoreJob?.cancel()
+            _isLoadingFeedMore.value = false
+            _feedError.value = null
+            val key = FeedKey(categoryName, _filter.value.kinds.singleOrNull())
+            val mem = feedMemoryCache[key]
+            if (mem != null) {
+                applyMemorySnapshot(mem)
+            } else {
+                activeFeedSession = null
+                _rawFeedItems.value = emptyList()
+                _hasMoreFeed.value = false
+                _isLoadingFeedInitial.value = true
+            }
         }
     }
 
@@ -755,7 +734,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         val key = FeedKey(selCat, _filter.value.kinds.singleOrNull())
         val existingItems = _rawFeedItems.value
 
-        // Lazily initialize a live LiveFeedSession skipping items already loaded from Room cache!
         val session = activeFeedSession ?: run {
             val cats = categoryState.value.categories
             if (cats.isEmpty()) return
@@ -784,8 +762,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             if (activeFeedSession === session && activeFeedKey == key) {
                 val combined = if (page.isNotEmpty()) {
                     val seen = _rawFeedItems.value.mapTo(HashSet()) { it.folderUrl }
-                    val uniqueNew = page.filter { seen.add(it.folderUrl) }
-                    _rawFeedItems.value + uniqueNew
+                    _rawFeedItems.value + page.filter { seen.add(it.folderUrl) }
                 } else {
                     _rawFeedItems.value
                 }
@@ -809,60 +786,60 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectTitle(title: LiveTitle) {
-        _selectedTitle.value = title
-        _selectedFilesError.value = null
+        _detailTitle.value = title
+        _detailError.value = null
         loadFilesJob?.cancel()
 
         if (title.filesLoaded && title.cachedFiles.isNotEmpty()) {
-            _selectedFiles.value = title.cachedFiles
-            _selectedFilesLoading.value = false
+            _detailFiles.value = title.cachedFiles
+            _detailLoading.value = false
             return
         }
 
-        _selectedFiles.value = title.cachedFiles
-        _selectedFilesLoading.value = true
+        _detailFiles.value = title.cachedFiles
+        _detailLoading.value = true
         loadFilesJob = viewModelScope.launch {
             val loaded = runCatching { liveClient.loadFiles(title) }
             loaded.onSuccess { files ->
-                _selectedFiles.value = files
-                _selectedFilesLoading.value = false
+                _detailFiles.value = files
+                _detailLoading.value = false
                 if (files.isEmpty()) {
-                    _selectedFilesError.value = "No video files found in this folder."
+                    _detailError.value = "No video files found in this folder."
                 }
                 updateTitleFilesCache(title.folderUrl, files)
             }.onFailure { err ->
-                _selectedFilesLoading.value = false
-                if (_selectedFiles.value.isEmpty()) {
-                    _selectedFilesError.value = err.message ?: "Failed to load files from server."
+                _detailLoading.value = false
+                if (_detailFiles.value.isEmpty()) {
+                    _detailError.value = err.message ?: "Failed to load files from server."
                 }
             }
         }
     }
 
     fun retrySelectedFiles() {
-        val current = _selectedTitle.value ?: return
+        val current = _detailTitle.value ?: return
         loadFilesJob?.cancel()
-        _selectedFilesError.value = null
-        _selectedFilesLoading.value = true
+        _detailError.value = null
+        _detailLoading.value = true
         loadFilesJob = viewModelScope.launch {
             val loaded = runCatching { liveClient.loadFiles(current.copy(filesLoaded = false), forceRefresh = true) }
             loaded.onSuccess { files ->
-                _selectedFiles.value = files
-                _selectedFilesLoading.value = false
+                _detailFiles.value = files
+                _detailLoading.value = false
                 updateTitleFilesCache(current.folderUrl, files)
             }.onFailure { err ->
-                _selectedFilesLoading.value = false
-                _selectedFilesError.value = err.message ?: "Failed to load files from server."
+                _detailLoading.value = false
+                _detailError.value = err.message ?: "Failed to load files from server."
             }
         }
     }
 
     fun closeTitle() {
         loadFilesJob?.cancel()
-        _selectedTitle.value = null
-        _selectedFiles.value = emptyList()
-        _selectedFilesLoading.value = false
-        _selectedFilesError.value = null
+        _detailTitle.value = null
+        _detailFiles.value = emptyList()
+        _detailLoading.value = false
+        _detailError.value = null
     }
 
     fun toggleFavorite(title: LiveTitle) {
@@ -872,18 +849,20 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     fun download(file: CatalogFile, title: String) {
         viewModelScope.launch {
             downloads.enqueue(file, title)
-            container.message("Queued ${file.fileName}")
+            container.message("Added to Downloads queue: ${file.fileName}")
         }
     }
 
     fun downloadAll(files: List<CatalogFile>, title: String) {
         viewModelScope.launch {
             val count = downloads.enqueueAll(files, title)
-            container.message(if (count > 0) "Queued $count files for $title" else "All files already queued or downloaded")
+            container.message(
+                if (count > 0) "Added $count files for $title. Track progress in Downloads."
+                else "These files are already queued or saved. Check Downloads for status.",
+            )
         }
     }
 
-    /** Card quick-download: fetches episodes/files on demand if not yet loaded, then queues. */
     fun downloadTitle(title: LiveTitle) {
         viewModelScope.launch {
             val files = if (title.filesLoaded && title.cachedFiles.isNotEmpty()) {
@@ -904,13 +883,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             if (title.kind == "series" && files.size > 1) {
                 val count = downloads.enqueueAll(files, title.title)
                 container.message(
-                    if (count > 0) "Queued $count files for ${title.title}"
-                    else "${title.title} already queued or saved"
+                    if (count > 0) "Added $count files for ${title.title}. Track progress in Downloads."
+                    else "${title.title} already queued or saved",
                 )
             } else {
                 val chosen = files.maxByOrNull { it.sizeBytes } ?: files.first()
                 downloads.enqueue(chosen, title.title)
-                container.message("Queued ${chosen.fileName}")
+                container.message("Added to Downloads queue: ${chosen.fileName}")
             }
         }
     }
@@ -932,67 +911,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
         _rawFeedItems.update { list -> list.map { if (it.folderUrl == folderUrl) it.applyFiles() else it } }
         _rawSearchResults.update { list -> list.map { if (it.folderUrl == folderUrl) it.applyFiles() else it } }
-        _selectedTitle.update { cur -> if (cur?.folderUrl == folderUrl) cur.applyFiles() else cur }
-    }
-
-    private fun applyFilterAndSort(
-        pool: List<LiveTitle>,
-        f: CatalogFilter,
-        favoriteUrls: Set<String>,
-        downloadedUrls: Set<String>,
-    ): List<LiveTitle> {
-        val enriched = pool.asSequence()
-            .map { it.enrich(favoriteUrls, downloadedUrls) }
-            .filter { item ->
-                (f.kinds.isEmpty() || item.kind in f.kinds) &&
-                    (f.categories.isEmpty() || item.category in f.categories) &&
-                    (f.sourceNames.isEmpty() || item.sourceName in f.sourceNames) &&
-                    (f.qualities.isEmpty() || item.bestQuality in f.qualities) &&
-                    (f.languages.isEmpty() || item.language in f.languages) &&
-                    (f.sourceTags.isEmpty() || item.bestSourceTag in f.sourceTags) &&
-                    (f.yearMin == null || (item.year != null && item.year >= f.yearMin)) &&
-                    (f.yearMax == null || (item.year != null && item.year <= f.yearMax)) &&
-                    (f.minSizeBytes == null || item.maxSizeBytes >= f.minSizeBytes) &&
-                    (!f.favoritesOnly || item.favorite) &&
-                    (!f.dualAudioOnly || item.hasDualAudio)
-            }
-            .toList()
-
-        return when (f.sort) {
-            SortBy.NEWEST -> enriched
-            SortBy.TITLE -> enriched.sortedBy { it.title.lowercase() }
-            SortBy.YEAR_DESC -> enriched.sortedWith(
-                compareByDescending<LiveTitle> { it.year ?: Int.MIN_VALUE }.thenBy { it.title.lowercase() }
-            )
-            SortBy.SIZE_DESC -> enriched.sortedWith(
-                compareByDescending<LiveTitle> { it.maxSizeBytes }.thenBy { it.title.lowercase() }
-            )
-            SortBy.SIZE_ASC -> enriched.sortedWith(
-                compareBy<LiveTitle> { if (it.maxSizeBytes < 0L) Long.MAX_VALUE else it.maxSizeBytes }
-                    .thenBy { it.title.lowercase() }
-            )
-        }
-    }
-
-    private fun buildFacets(pool: List<LiveTitle>): Facets {
-        val qualityOrder = listOf("2160p", "1080p", "720p", "480p", "360p", "CAM")
-        return Facets(
-            categories = pool.map { it.category }.filter { it.isNotBlank() }.distinct().sorted(),
-            sourceNames = pool.map { it.sourceName }.filter { it.isNotBlank() }.distinct().sorted(),
-            qualities = pool.mapNotNull { it.bestQuality }.distinct()
-                .sortedBy { q -> qualityOrder.indexOf(q).let { if (it < 0) qualityOrder.size else it } },
-            languages = pool.mapNotNull { it.language }.distinct().sorted(),
-            sourceTags = pool.mapNotNull { it.bestSourceTag }.distinct().sorted(),
-            years = pool.mapNotNull { it.year }.distinct().sorted(),
-        )
-    }
-
-    private fun LiveTitle.enrich(favoriteUrls: Set<String>, downloadedUrls: Set<String>): LiveTitle {
-        val dlCount = if (cachedFiles.isEmpty()) downloadedCount else cachedFiles.count { it.fileUrl in downloadedUrls }
-        return copy(
-            favorite = folderUrl in favoriteUrls,
-            downloadedCount = dlCount,
-        )
+        _detailTitle.update { cur -> if (cur?.folderUrl == folderUrl) cur.applyFiles() else cur }
     }
 
     private fun roomFeedKey(key: FeedKey): String =

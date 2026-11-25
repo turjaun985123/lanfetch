@@ -1,4 +1,4 @@
-package com.lanfetch.app.ui
+package com.lanfetch.app.ui.settings
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -41,7 +41,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             loader.memoryCache?.clear()
             loader.diskCache?.clear()
             container.notifyCacheCleared()
-            container.message("Cleared live directory & poster cache")
+            container.message("Cleared live feed & poster cache")
         }
     }
 }

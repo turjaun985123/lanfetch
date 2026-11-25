@@ -8,13 +8,35 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+/**
+ * Shared OkHttp client configured for high-throughput segmented transfers and
+ * fast concurrent LAN directory browsing without exhausting connection pools.
+ */
+fun defaultHttpClient(): OkHttpClient {
+    val dispatcher = Dispatcher().apply {
+        maxRequests = 48
+        maxRequestsPerHost = 14
+    }
+    return OkHttpClient.Builder()
+        .dispatcher(dispatcher)
+        .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .retryOnConnectionFailure(true)
+        .build()
+}
 
 /**
  * Runs an OkHttp call scoped to the current coroutine. Cancelling the coroutine

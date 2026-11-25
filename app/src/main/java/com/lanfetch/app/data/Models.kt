@@ -1,11 +1,8 @@
 package com.lanfetch.app.data
 
-/**
- * One video file discovered by the crawler. [folderUrl] is the *title* folder
- * (the show root for episodes), while [dirUrl] is the listing folder the file
- * actually came from. Keeping both is what lets a show group all of its
- * seasons under one card.
- */
+import androidx.compose.runtime.Immutable
+
+/** Intermediate parsed file record built by [com.lanfetch.app.net.MetaParser]. */
 data class CatalogItem(
     val sourceId: Long,
     val sourceName: String,
@@ -31,31 +28,8 @@ data class CatalogItem(
     val addedAt: Long = 0,
 )
 
-/** A card in the library: one title folder, with aggregate metadata. */
-data class CatalogTitle(
-    val id: Long,
-    val sourceId: Long,
-    val sourceName: String,
-    val category: String,
-    val folderUrl: String,
-    val title: String,
-    val year: Int?,
-    val kind: String,                  // movie / series
-    val posterUrl: String?,
-    val favorite: Boolean,
-    val language: String?,
-    val fileCount: Int,
-    val totalSizeBytes: Long,
-    val maxSizeBytes: Long,
-    val bestQuality: String?,
-    val bestSourceTag: String?,
-    val bestCodec: String?,
-    val hasDualAudio: Boolean,
-    val downloadedCount: Int,
-    val addedAt: Long,
-)
-
-/** One downloadable file inside a [CatalogTitle]. */
+/** One downloadable file inside a title folder or season subfolder. */
+@Immutable
 data class CatalogFile(
     val id: Long,
     val titleId: Long,
@@ -72,7 +46,8 @@ data class CatalogFile(
     val addedAt: Long,
 )
 
-/** A configured directory server. */
+/** A configured HTTP directory server. */
+@Immutable
 data class Source(
     val id: Long = 0,
     val name: String,

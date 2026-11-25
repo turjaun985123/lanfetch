@@ -21,11 +21,11 @@ class SourceRepository(private val db: AppDb) {
     }
 
     suspend fun add(name: String, rawUrl: String): Long {
-        val clean = if (rawUrl.endsWith("/")) rawUrl else "$rawUrl/"
+        val clean = normalizeUrl(rawUrl)
         val existing = db.sources().byRootUrl(clean)
         if (existing != null) return existing.id
         return db.sources().insert(
-            SourceEntity(name = name.ifBlank { clean }, rootUrl = clean)
+            SourceEntity(name = name.trim().ifBlank { clean }, rootUrl = clean)
         )
     }
 
@@ -43,9 +43,14 @@ class SourceRepository(private val db: AppDb) {
             db.favorites().deleteForSource(sourceId)
             db.liveCache().deleteCategoriesForSource(sourceId)
             db.liveCache().deleteFeedForSource(sourceId)
-            db.files().deleteForSource(sourceId)
-            db.titles().deleteForSource(sourceId)
             db.sources().delete(sourceId)
+        }
+    }
+
+    companion object {
+        fun normalizeUrl(rawUrl: String): String {
+            val trimmed = rawUrl.trim()
+            return if (trimmed.endsWith("/")) trimmed else "$trimmed/"
         }
     }
 }

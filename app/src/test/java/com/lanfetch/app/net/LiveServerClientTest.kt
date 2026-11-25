@@ -105,7 +105,46 @@ class LiveServerClientTest {
             client.clearAllCaches()
             client.searchDirect(listOf(source), "d").last()
             assertTrue(server.requestCount.get() > reqsAfterFirstSearch)
+
+            // forceRefresh bypasses search TTL cache directly.
+            val reqsBeforeForce = server.requestCount.get()
+            client.searchDirect(listOf(source), "d", forceRefresh = true).last()
+            assertTrue(server.requestCount.get() > reqsBeforeForce)
         }
+    }
+
+    @Test fun safeResolveHandlesRawSpacesAndProbeSupportsHeadOr405Fallback() = runBlocking {
+        val searchJson = """
+            {"search":[
+              {"href":"/SRV/Hindi Movies/(2025)/Movie Name (2025)/Movie Name.1080p.mkv","time":1,"size":1500000000}
+            ]}
+        """.trimIndent()
+        FakeH5aiServer(
+            pages = mapOf("/SRV/" to "<html>ok</html>"),
+            searchResponse = searchJson,
+            headStatus = 405,
+        ).use { server ->
+            val client = LiveServerClient(OkHttpClient())
+            val source = Source(id = 7, name = "SRV7", rootUrl = server.url("/SRV/"))
+
+            // 405 on HEAD falls back to GET and marks source reachable.
+            val probeOk = client.probeServer(source)
+            assertTrue(probeOk.reachable)
+            assertTrue(probeOk.latencyMs >= 1L)
+
+            // Unencoded space in h5ai search href resolves cleanly without exception.
+            val hits = client.searchDirect(listOf(source), "movie").last()
+            assertEquals(1, hits.size)
+            assertEquals("Movie Name", hits.single().title)
+        }
+
+        // Unreachable closed port populates failure result and temporary cooldown.
+        val deadPort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        val client = LiveServerClient(OkHttpClient())
+        val deadSource = Source(id = 99, name = "Dead", rootUrl = "http://127.0.0.1:$deadPort/SRV/")
+        val probeDead = client.probeServer(deadSource)
+        assertFalse(probeDead.reachable)
+        assertTrue(client.isTemporarilyUnreachable(deadSource.id))
     }
 
     @Test fun cacheServesRepeatedListingsAndInitialEmittedSkipsPage1() = runBlocking {
@@ -151,6 +190,7 @@ class LiveServerClientTest {
     private class FakeH5aiServer(
         private val pages: Map<String, String>,
         private val searchResponse: String? = null,
+        private val headStatus: Int = 200,
     ) : Closeable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         private val running = AtomicBoolean(true)
@@ -174,7 +214,9 @@ class LiveServerClientTest {
                         requestedPaths += path
                         requestCount.incrementAndGet()
                         val out = s.getOutputStream()
-                        if (method == "POST" && searchResponse != null) {
+                        if (method == "HEAD") {
+                            out.write("HTTP/1.1 $headStatus Status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                        } else if (method == "POST" && searchResponse != null) {
                             val bytes = searchResponse.toByteArray()
                             out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json;charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
                             out.write(bytes)

@@ -79,7 +79,7 @@ class LiveFeedSession(
     suspend fun loadNextPage(pageSize: Int = 18): List<LiveTitle> = mutex.withLock {
         val collected = ArrayList<LiveTitle>(pageSize)
         var requestsMade = 0
-        val maxRequestsPerPage = pageSize * 4
+        val maxRequestsPerPage = pageSize * 6
 
         while (collected.size < pageSize && requestsMade < maxRequestsPerPage && hasMore) {
             val needed = pageSize - collected.size
@@ -208,7 +208,7 @@ class LiveFeedSession(
 
     companion object {
         private const val MAX_DEPTH = 4
-        private const val BATCH_CONCURRENCY = 10
+        private const val BATCH_CONCURRENCY = 8
         private val YEAR_CONTAINER_RE = Regex("""^(?:\(((?:19|20)\d{2})\)|((?:19|20)\d{2})$)""")
         private val ALPHA_CONTAINER_RE = Regex("""^(?:0-9|A-Z|[A-Z]\s*[-–]\s*[A-Z])$""", RegexOption.IGNORE_CASE)
     }
