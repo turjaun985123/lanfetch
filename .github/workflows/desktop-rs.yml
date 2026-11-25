@@ -38,11 +38,11 @@ jobs:
 
       - name: Package .deb
         run: |
-          ./packaging/package-deb.sh target/release/lanfetch-rs "$GITHUB_WORKSPACE/lanfetch-rs_1.1.0_amd64.deb"
-          dpkg-deb -I "$GITHUB_WORKSPACE/lanfetch-rs_1.1.0_amd64.deb"
+          ./packaging/package-deb.sh target/release/lanfetch-rs "$GITHUB_WORKSPACE/lanfetch-rs_1.2.0_amd64.deb"
+          dpkg-deb -I "$GITHUB_WORKSPACE/lanfetch-rs_1.2.0_amd64.deb"
 
       - name: Upload .deb
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lanfetch-rs-deb
-          path: lanfetch-rs_1.1.0_amd64.deb
+          path: lanfetch-rs_1.2.0_amd64.deb

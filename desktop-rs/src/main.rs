@@ -727,6 +727,17 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
                             .child(btn_primary(u.download, p, move |s: &mut State| {
                                 do_download(s, &dl_title)
                             }))
+                            .child(if t.files.len() > 1 {
+                                let all_title = t.clone();
+                                btn_tonal(u.download_all, p, move |s: &mut State| {
+                                    for f in &all_title.files {
+                                        enqueue_file(s, f);
+                                    }
+                                    s.tab = Tab::Transfers;
+                                })
+                            } else {
+                                el()
+                            })
                             .child(
                                 el()
                                     .px(10.0)

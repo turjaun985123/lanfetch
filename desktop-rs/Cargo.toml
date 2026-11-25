@@ -1,6 +1,6 @@
 [package]
 name = "lanfetch-rs"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 description = "LanFetch Desktop (Rust + Rune) — browse LAN file servers and download with a segmented, resumable engine"
