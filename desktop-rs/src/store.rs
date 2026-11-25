@@ -2,6 +2,11 @@
 //! list (seeds + custom servers, with enabled flags), mirroring the
 //! Android app's SettingsStore / SourceRepository. Files live next to the
 //! download state in ~/.local/share/lanfetch/.
+//!
+//! All writes go through `write_atomic` (stage to temp, snapshot the
+//! previous good file to `.bak`, rename over the target) and all reads
+//! fall back to the `.bak` sibling: a crash or power loss mid-save must
+//! never silently wipe the user's settings, servers or favorites.
 
 use crate::core::{seed_sources, Source};
 use serde::{Deserialize, Serialize};
@@ -10,6 +15,43 @@ use std::path::PathBuf;
 fn dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".local/share/lanfetch")
+}
+
+// ------------------------------------------------------------- atomic io
+
+/// Sibling backup path ("settings.json" → "settings.json.bak").
+pub fn bak_path(path: &std::path::Path) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".bak");
+    PathBuf::from(s)
+}
+
+/// Crash-safe write: stage to a temp file, snapshot the current file to
+/// `.bak`, then rename over the target (atomic on Linux).
+pub fn write_atomic(path: &std::path::Path, contents: &str) {
+    let mut tmp_os = path.as_os_str().to_owned();
+    tmp_os.push(".tmp");
+    let tmp = PathBuf::from(tmp_os);
+    if std::fs::write(&tmp, contents).is_err() {
+        return;
+    }
+    if path.exists() {
+        let _ = std::fs::copy(path, bak_path(path));
+    }
+    let _ = std::fs::rename(&tmp, path);
+}
+
+/// Read + parse a JSON state file, falling back to its `.bak` sibling
+/// when the main file is missing or corrupt.
+fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<T> {
+    for candidate in [path.to_path_buf(), bak_path(path)] {
+        if let Ok(raw) = std::fs::read_to_string(&candidate) {
+            if let Ok(value) = serde_json::from_str(&raw) {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------- settings
@@ -48,17 +90,13 @@ impl Default for Settings {
 }
 
 pub fn load_settings() -> Settings {
-    let path = dir().join("settings.json");
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+    read_json(&dir().join("settings.json")).unwrap_or_default()
 }
 
 pub fn save_settings(s: &Settings) {
     let _ = std::fs::create_dir_all(dir());
     if let Ok(json) = serde_json::to_string_pretty(s) {
-        let _ = std::fs::write(dir().join("settings.json"), json);
+        write_atomic(&dir().join("settings.json"), &json);
     }
 }
 
@@ -82,11 +120,9 @@ impl SourceItem {
 /// The stored server list; first run seeds the DHAKA-FLIX defaults.
 pub fn load_sources() -> Vec<SourceItem> {
     let path = dir().join("sources.json");
-    if let Ok(raw) = std::fs::read_to_string(&path) {
-        if let Ok(items) = serde_json::from_str::<Vec<SourceItem>>(&raw) {
-            if !items.is_empty() {
-                return items;
-            }
+    if let Some(items) = read_json::<Vec<SourceItem>>(&path) {
+        if !items.is_empty() {
+            return items;
         }
     }
     seed_sources()
@@ -98,7 +134,7 @@ pub fn load_sources() -> Vec<SourceItem> {
 pub fn save_sources(items: &[SourceItem]) {
     let _ = std::fs::create_dir_all(dir());
     if let Ok(json) = serde_json::to_string_pretty(items) {
-        let _ = std::fs::write(dir().join("sources.json"), json);
+        write_atomic(&dir().join("sources.json"), &json);
     }
 }
 
@@ -106,16 +142,12 @@ pub fn save_sources(items: &[SourceItem]) {
 
 /// Favorite title folder URLs (Android: favorites table in Room).
 pub fn load_favorites() -> Vec<String> {
-    let path = dir().join("favorites.json");
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+    read_json(&dir().join("favorites.json")).unwrap_or_default()
 }
 
 pub fn save_favorites(urls: &[String]) {
     let _ = std::fs::create_dir_all(dir());
     if let Ok(json) = serde_json::to_string_pretty(urls) {
-        let _ = std::fs::write(dir().join("favorites.json"), json);
+        write_atomic(&dir().join("favorites.json"), &json);
     }
 }

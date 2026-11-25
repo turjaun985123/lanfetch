@@ -62,7 +62,7 @@ const LISTING_TTL: Duration = Duration::from_secs(600);
 
 pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
     {
-        let cache = LISTING_CACHE.lock().unwrap();
+        let cache = LISTING_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, entries)) = cache.get(url) {
             if at.elapsed() < LISTING_TTL {
                 return Ok(entries.clone());
@@ -78,7 +78,7 @@ pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
 }
 
 pub fn clear_listing_cache() -> usize {
-    let mut cache = LISTING_CACHE.lock().unwrap();
+    let mut cache = LISTING_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let n = cache.len();
     cache.clear();
     n

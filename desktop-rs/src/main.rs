@@ -550,7 +550,7 @@ fn nav_item<S: 'static>(
 fn rail(s: &State, p: &Palette) -> El {
     let u = ui(s);
     let active = {
-        let tasks = s.manager.tasks.lock().unwrap();
+        let tasks = s.manager.tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.iter().filter(|t| matches!(t.state, DlState::Running | DlState::Queued)).count()
     };
     col()
@@ -1118,12 +1118,12 @@ fn transfer_card(s: &State, p: &Palette, task: &manager::Task) -> El {
 }
 
 fn task_state_of(s: &State, id: u64) -> Option<DlState> {
-    s.manager.tasks.lock().unwrap().iter().find(|t| t.id == id).map(|t| t.state)
+    s.manager.tasks.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|t| t.id == id).map(|t| t.state)
 }
 
 fn transfers_view(s: &State, p: &Palette) -> El {
     let u = ui(s);
-    let tasks = s.manager.tasks.lock().unwrap();
+    let tasks = s.manager.tasks.lock().unwrap_or_else(|e| e.into_inner());
     let active = tasks.iter().filter(|t| t.state == DlState::Running).count();
     let queued = tasks.iter().filter(|t| t.state == DlState::Queued).count();
     let done = tasks.iter().filter(|t| t.state == DlState::Completed).count();

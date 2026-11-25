@@ -54,7 +54,7 @@ impl Task {
     /// Segments with live progress while running; the persisted plan
     /// otherwise (identical shape, so the ring renders the same either way).
     pub fn live_segments(&self) -> Vec<Segment> {
-        let live = self.progress.live_segments.lock().unwrap();
+        let live = self.progress.live_segments.lock().unwrap_or_else(|e| e.into_inner());
         if live.is_empty() {
             self.segments.clone()
         } else {
@@ -114,9 +114,17 @@ impl Manager {
             waker: Mutex::new(None),
             settings: Mutex::new(load_settings()),
         });
-        if let Ok(raw) = std::fs::read_to_string(state_file()) {
-            if let Ok(saved) = serde_json::from_str::<Vec<PersistedTask>>(&raw) {
-                let mut tasks = mgr.tasks.lock().unwrap();
+        // A torn previous save falls back to the .bak snapshot rather
+        // than silently dropping the whole queue (see store::write_atomic).
+        let saved: Option<Vec<PersistedTask>> =
+            [state_file(), crate::store::bak_path(&state_file())].iter().find_map(|candidate| {
+                std::fs::read_to_string(candidate)
+                    .ok()
+                    .and_then(|raw| serde_json::from_str(&raw).ok())
+            });
+        if let Some(saved) = saved {
+            {
+                let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                 for p in saved {
                     let downloaded: u64 = p.segments.iter().map(|s| s.done).sum();
                     let was_ready = !p.segments.is_empty();
@@ -151,30 +159,30 @@ impl Manager {
     }
 
     pub fn set_waker(&self, waker: Waker) {
-        *self.waker.lock().unwrap() = Some(waker);
+        *self.waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(waker);
     }
 
     pub fn settings(&self) -> Settings {
-        self.settings.lock().unwrap().clone()
+        self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Persist new settings and re-run the scheduler (a raised concurrency
     /// limit starts waiting downloads immediately).
     pub fn apply_settings(self: &Arc<Self>, s: Settings) {
         save_settings(&s);
-        *self.settings.lock().unwrap() = s;
+        *self.settings.lock().unwrap_or_else(|e| e.into_inner()) = s;
         self.pump();
         self.wake();
     }
 
     pub fn wake(&self) {
-        if let Some(w) = self.waker.lock().unwrap().as_ref() {
+        if let Some(w) = self.waker.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             w();
         }
     }
 
     pub fn save(&self) {
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<PersistedTask> = tasks
             .iter()
             .map(|t| PersistedTask {
@@ -191,7 +199,9 @@ impl Manager {
         drop(tasks);
         let _ = std::fs::create_dir_all(data_dir());
         if let Ok(json) = serde_json::to_string_pretty(&saved) {
-            let _ = std::fs::write(state_file(), json);
+            // Atomic write + .bak snapshot: a crash mid-save must not
+            // tear the only copy of the queue and its resume state.
+            crate::store::write_atomic(&state_file(), &json);
         }
     }
 
@@ -200,7 +210,7 @@ impl Manager {
     /// (the Android download coordinator dedups the same way).
     pub fn enqueue(self: &Arc<Self>, url: String, name: String) {
         {
-            let tasks = self.tasks.lock().unwrap();
+            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             if tasks.iter().any(|t| {
                 t.url == url && matches!(t.state, DlState::Queued | DlState::Running | DlState::Paused)
             }) {
@@ -210,7 +220,7 @@ impl Manager {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let progress = Arc::new(Progress::new(0));
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             tasks.push(Task {
                 id,
                 url: url.clone(),
@@ -243,7 +253,7 @@ impl Manager {
                     vec![Segment { start: 0, end: u64::MAX, done: 0 }]
                 };
                 {
-                    let mut tasks = mgr.tasks.lock().unwrap();
+                    let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                         t.total = total;
                         t.validator = probe.validator.clone();
@@ -259,7 +269,7 @@ impl Manager {
             Err(e) => {
                 let mut failed_name = String::new();
                 {
-                    let mut tasks = mgr.tasks.lock().unwrap();
+                    let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                         t.state = DlState::Failed;
                         t.error = Some(e.clone());
@@ -279,7 +289,7 @@ impl Manager {
     /// scheduler starts it as soon as a concurrency slot is free.
     pub fn start(self: &Arc<Self>, id: u64) {
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             let Some(t) = tasks.iter_mut().find(|t| t.id == id) else { return };
             if t.state == DlState::Running || t.state == DlState::Completed || !t.ready {
                 return;
@@ -297,7 +307,7 @@ impl Manager {
         let max = self.settings().max_concurrent.max(1);
         let mut to_launch: Vec<u64> = Vec::new();
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             let mut running = tasks.iter().filter(|t| t.state == DlState::Running).count() as u32;
             for t in tasks.iter_mut() {
                 if running >= max {
@@ -320,7 +330,7 @@ impl Manager {
     /// Spawn the engine thread for a task already marked Running by pump().
     fn launch(self: &Arc<Self>, id: u64) {
         let (url, name, segments, validator, pause_flag, progress) = {
-            let tasks = self.tasks.lock().unwrap();
+            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             let Some(t) = tasks.iter().find(|t| t.id == id) else { return };
             (
                 t.url.clone(),
@@ -357,7 +367,7 @@ impl Manager {
                 let _ = std::fs::rename(&part, &final_path);
             }
             {
-                let mut tasks = mgr.tasks.lock().unwrap();
+                let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                     t.segments = out;
                     if finished {
@@ -365,7 +375,7 @@ impl Manager {
                         t.speed_bps = 0.0;
                     } else if failed {
                         t.state = DlState::Failed;
-                        t.error = progress.message.lock().unwrap().clone();
+                        t.error = progress.message.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     } else {
                         t.state = DlState::Paused;
                         t.speed_bps = 0.0;
@@ -375,7 +385,7 @@ impl Manager {
             if finished {
                 notify("Download finished", &name);
             } else if failed {
-                let err = progress.message.lock().unwrap().clone().unwrap_or_default();
+                let err = progress.message.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
                 notify("Download failed", &format!("{name}: {err}"));
             }
             mgr.save();
@@ -385,7 +395,7 @@ impl Manager {
     }
 
     pub fn pause(&self, id: u64) {
-        let mut tasks = self.tasks.lock().unwrap();
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
             t.pause_flag.store(true, Ordering::SeqCst);
         }
@@ -394,7 +404,7 @@ impl Manager {
     /// Drop all completed tasks (the Transfers header's Clear action).
     pub fn clear_completed(self: &Arc<Self>) {
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             tasks.retain(|t| t.state != DlState::Completed);
         }
         self.save();
@@ -403,7 +413,7 @@ impl Manager {
 
     pub fn remove(self: &Arc<Self>, id: u64, delete_part: bool) {
         let removed = {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(pos) = tasks.iter().position(|t| t.id == id) {
                 let t = tasks.remove(pos);
                 t.pause_flag.store(true, Ordering::SeqCst);
@@ -422,7 +432,7 @@ impl Manager {
     }
 
     fn tick_speed(&self, id: u64) {
-        let mut tasks = self.tasks.lock().unwrap();
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
             let now = std::time::Instant::now();
             let dt = now.duration_since(t.last_tick_at).as_secs_f64();

@@ -43,12 +43,19 @@ pub struct DirEntry {
     pub size: Option<u64>,
 }
 
+/// One process-wide agent: building a fresh Agent per call (the old
+/// behavior) throws away the connection pool every time, so each
+/// listing, poster and segment paid a new TCP handshake. ureq Agents
+/// are cheap to clone and safe to share between threads.
 pub fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(6))
-        .timeout_read(Duration::from_secs(30))
-        .user_agent("LanFetch/1.0 (desktop-rs)")
-        .build()
+    static AGENT: std::sync::LazyLock<ureq::Agent> = std::sync::LazyLock::new(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(6))
+            .timeout_read(Duration::from_secs(30))
+            .user_agent("LanFetch/1.0 (desktop-rs)")
+            .build()
+    });
+    AGENT.clone()
 }
 
 /// Probe a server root: Ok(elapsed_ms) when it answers with any HTTP status.
@@ -63,13 +70,23 @@ pub fn probe(source: &Source) -> Result<u128, String> {
 
 /// Fetch and parse one directory listing (Apache/nginx autoindex or h5ai —
 /// both are anchor lists at heart; sizes are best-effort from the row text).
+/// Largest listing body we will read into memory (the Android client
+/// caps at 4 MB; a hostile or misdirected URL must not OOM the app).
+pub const MAX_LISTING_BYTES: u64 = 4 * 1024 * 1024;
+
 pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
-    let body = http_agent()
+    let mut reader = http_agent()
         .get(url)
         .call()
         .map_err(|e| format!("request failed: {e}"))?
-        .into_string()
-        .map_err(|e| format!("read failed: {e}"))?;
+        .into_reader()
+        .take(MAX_LISTING_BYTES + 1);
+    let mut raw = Vec::new();
+    reader.read_to_end(&mut raw).map_err(|e| format!("read failed: {e}"))?;
+    if raw.len() as u64 > MAX_LISTING_BYTES {
+        return Err("listing too large".to_string());
+    }
+    let body = String::from_utf8_lossy(&raw);
     Ok(parse_listing(&body, url))
 }
 
@@ -245,11 +262,24 @@ pub fn sanitize_keep_ext(name: &str) -> String {
         cleaned = "download".to_string();
     }
     if cleaned.len() > 180 {
+        // Cut on a UTF-8 char boundary: names on these servers carry
+        // Bangla/emoji, and slicing mid-character panics — and this runs
+        // on the UI thread via enqueue, so that was a crash on tapping
+        // Download for long non-ASCII names.
+        let floor_boundary = |s: &str, mut n: usize| {
+            n = n.min(s.len());
+            while n > 0 && !s.is_char_boundary(n) {
+                n -= 1;
+            }
+            n
+        };
         if let Some(dot) = cleaned.rfind('.') {
             let ext = cleaned[dot..].to_string();
-            cleaned = format!("{}{}", &cleaned[..(180 - ext.len()).min(cleaned.len())], ext);
+            let keep = floor_boundary(&cleaned, 180usize.saturating_sub(ext.len()).min(dot));
+            cleaned = format!("{}{}", &cleaned[..keep], ext);
         } else {
-            cleaned.truncate(180);
+            let cut = floor_boundary(&cleaned, 180);
+            cleaned.truncate(cut);
         }
     }
     cleaned
@@ -379,7 +409,7 @@ pub fn run_download(
         Ok(f) => f,
         Err(e) => {
             progress.failed.store(true, Ordering::SeqCst);
-            *progress.message.lock().unwrap() = Some(format!("cannot open file: {e}"));
+            *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("cannot open file: {e}"));
             return segments;
         }
     };
@@ -391,14 +421,14 @@ pub fn run_download(
     let file = Arc::new(file);
     let seg_state: Vec<Arc<Mutex<Segment>>> =
         segments.drain(..).map(|s| Arc::new(Mutex::new(s))).collect();
-    let already: u64 = seg_state.iter().map(|s| s.lock().unwrap().done).sum();
+    let already: u64 = seg_state.iter().map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).done).sum();
     progress.downloaded.store(already, Ordering::SeqCst);
-    *progress.live_segments.lock().unwrap() =
-        seg_state.iter().map(|s| *s.lock().unwrap()).collect();
+    *progress.live_segments.lock().unwrap_or_else(|e| e.into_inner()) =
+        seg_state.iter().map(|s| *s.lock().unwrap_or_else(|e| e.into_inner())).collect();
 
     let mut handles = Vec::new();
     for (seg_idx, seg) in seg_state.iter().enumerate() {
-        if seg.lock().unwrap().remaining() == 0 {
+        if seg.lock().unwrap_or_else(|e| e.into_inner()).remaining() == 0 {
             continue;
         }
         let seg = Arc::clone(seg);
@@ -407,14 +437,21 @@ pub fn run_download(
         let progress = Arc::clone(&progress);
         let url = url.to_string();
         let validator = validator.clone();
+        let single_segment = seg_state.len() == 1;
         handles.push(std::thread::spawn(move || {
             let agent = http_agent();
+            // Bounded retries with backoff: a server that accepts then
+            // drops, trickles, or answers 206 with empty bodies must fail
+            // the segment — the old loop re-requested the remaining range
+            // immediately, forever, at full speed.
+            let mut stalled = 0u32;
+            let mut last_done = seg.lock().unwrap_or_else(|e| e.into_inner()).done;
             loop {
                 if pause.load(Ordering::SeqCst) || progress.failed.load(Ordering::SeqCst) {
                     return;
                 }
                 let (from, to) = {
-                    let s = seg.lock().unwrap();
+                    let s = seg.lock().unwrap_or_else(|e| e.into_inner());
                     if s.remaining() == 0 {
                         return;
                     }
@@ -431,62 +468,135 @@ pub fn run_download(
                     req = req.set("If-Range", v);
                 }
                 let resp = match req.call() {
-                    Ok(r) => r,
-                    Err(ureq::Error::Status(416, _)) => return, // range done/invalid
-                    Err(e) => {
-                        progress.failed.store(true, Ordering::SeqCst);
-                        *progress.message.lock().unwrap() = Some(format!("segment failed: {e}"));
+                    Ok(r) => Some(r),
+                    Err(ureq::Error::Status(416, _)) => {
+                        // Range not satisfiable: benign only when the
+                        // segment is already fully on disk; otherwise the
+                        // file shrank or changed under the resume.
+                        let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                        if s.remaining() > 0 {
+                            progress.failed.store(true, Ordering::SeqCst);
+                            *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+                                "range not satisfiable — file may have changed; restart needed"
+                                    .into(),
+                            );
+                        }
                         return;
                     }
-                };
-                let status = resp.status();
-                if status == 200 {
-                    // Server ignored Range (or If-Range validator changed):
-                    // only safe if this segment starts at 0 with nothing done.
-                    let s = seg.lock().unwrap();
-                    if s.start != 0 || s.done != 0 {
+                    Err(ureq::Error::Status(code, _)) => {
                         progress.failed.store(true, Ordering::SeqCst);
-                        *progress.message.lock().unwrap() =
-                            Some("server ignored Range / file changed — restart needed".into());
+                        *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(format!("segment failed: HTTP {code}"));
                         return;
+                    }
+                    // Transport errors (refused, reset, timeout) retry
+                    // through the stall/backoff path below.
+                    Err(ureq::Error::Transport(_)) => None,
+                };
+                let mut hit_eof = false;
+                if let Some(resp) = resp {
+                    let status = resp.status();
+                    if status == 200 {
+                        // Server ignored Range (or If-Range validator
+                        // changed): the body is the whole file, which is
+                        // only safe for a single-segment plan starting at
+                        // 0 with nothing done — otherwise lanes would
+                        // write over each other's ranges.
+                        let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                        if s.start != 0 || s.done != 0 || !single_segment {
+                            progress.failed.store(true, Ordering::SeqCst);
+                            *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+                                "server ignored Range / file changed — restart needed".into(),
+                            );
+                            return;
+                        }
+                    }
+                    let mut reader = resp.into_reader();
+                    let mut buf = vec![0u8; 256 * 1024];
+                    loop {
+                        if pause.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        // Never read past the segment's end: an
+                        // over-sending server would otherwise stream into
+                        // the next segment's territory while `done`
+                        // overshoots — a "completed" but corrupt file.
+                        let want = {
+                            let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                            let rem = s.remaining();
+                            if rem == 0 {
+                                break;
+                            }
+                            if s.end == u64::MAX {
+                                buf.len()
+                            } else {
+                                (rem as usize).min(buf.len())
+                            }
+                        };
+                        match reader.read(&mut buf[..want]) {
+                            Ok(0) => {
+                                hit_eof = true;
+                                break;
+                            }
+                            Ok(n) => {
+                                let offset = {
+                                    let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                                    s.start + s.done
+                                };
+                                if let Err(e) = file.write_all_at(&buf[..n], offset) {
+                                    progress.failed.store(true, Ordering::SeqCst);
+                                    *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                                        Some(format!("write failed: {e}"));
+                                    return;
+                                }
+                                {
+                                    let mut s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                                    s.done += n as u64;
+                                    if let Some(live) = progress
+                                        .live_segments
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .get_mut(seg_idx)
+                                    {
+                                        live.done = s.done;
+                                    }
+                                }
+                                progress.downloaded.fetch_add(n as u64, Ordering::SeqCst);
+                            }
+                            Err(_) => break, // mid-segment drop: judged below
+                        }
                     }
                 }
-                let mut reader = resp.into_reader();
-                let mut buf = vec![0u8; 256 * 1024];
-                loop {
-                    if pause.load(Ordering::SeqCst) {
+                if hit_eof {
+                    // Unknown-total stream: EOF is the true end of file.
+                    let mut s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                    if s.end == u64::MAX && s.done > 0 {
+                        s.end = s.start + s.done - 1;
+                    }
+                }
+                // Judge the attempt: no byte progress → back off and
+                // retry a bounded number of times, then fail honestly.
+                let now_done = seg.lock().unwrap_or_else(|e| e.into_inner()).done;
+                if now_done == last_done {
+                    stalled += 1;
+                    if stalled > 6 {
+                        progress.failed.store(true, Ordering::SeqCst);
+                        *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some("download stalled — server stopped sending data".into());
                         return;
                     }
-                    match reader.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            let offset = {
-                                let s = seg.lock().unwrap();
-                                s.start + s.done
-                            };
-                            if let Err(e) = file.write_all_at(&buf[..n], offset) {
-                                progress.failed.store(true, Ordering::SeqCst);
-                                *progress.message.lock().unwrap() = Some(format!("write failed: {e}"));
-                                return;
-                            }
-                            {
-                                let mut s = seg.lock().unwrap();
-                                s.done += n as u64;
-                                if let Some(live) =
-                                    progress.live_segments.lock().unwrap().get_mut(seg_idx)
-                                {
-                                    live.done = s.done;
-                                }
-                            }
-                            progress.downloaded.fetch_add(n as u64, Ordering::SeqCst);
+                    let backoff_ms = (250u64 << stalled.min(4)).min(4000);
+                    let mut slept = 0u64;
+                    while slept < backoff_ms {
+                        if pause.load(Ordering::SeqCst) || progress.failed.load(Ordering::SeqCst) {
+                            return;
                         }
-                        Err(e) => {
-                            // Mid-segment network drop: loop to re-request the
-                            // remaining range (bounded by pause/fail flags).
-                            let _ = e;
-                            break;
-                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                        slept += 50;
                     }
+                } else {
+                    stalled = 0;
+                    last_done = now_done;
                 }
             }
         }));
@@ -494,19 +604,34 @@ pub fn run_download(
     for h in handles {
         let _ = h.join();
     }
-    let out: Vec<Segment> = seg_state.iter().map(|s| *s.lock().unwrap()).collect();
+    let out: Vec<Segment> = seg_state.iter().map(|s| *s.lock().unwrap_or_else(|e| e.into_inner())).collect();
     let complete = out.iter().all(|s| s.remaining() == 0);
     if complete && !progress.failed.load(Ordering::SeqCst) {
-        // Truncate any over-long tail (server shrank) and finish.
+        // Truncate any over-long tail (server shrank) and finish. The
+        // reopen must not panic: the .part can vanish mid-download
+        // ("Remove + delete partial" races this path), and a panic here
+        // would wedge the task as Running forever.
+        let mut finished_ok = true;
         if let Some(last) = out.last() {
             if last.end != u64::MAX {
-                let mut f = std::fs::OpenOptions::new().write(true).open(part_path).unwrap();
-                let _ = f.set_len(last.end + 1);
-                let _ = f.flush();
-                let _ = f.seek(SeekFrom::Start(0));
+                match std::fs::OpenOptions::new().write(true).open(part_path) {
+                    Ok(mut f) => {
+                        let _ = f.set_len(last.end + 1);
+                        let _ = f.flush();
+                        let _ = f.seek(SeekFrom::Start(0));
+                    }
+                    Err(err) => {
+                        finished_ok = false;
+                        progress.failed.store(true, Ordering::SeqCst);
+                        *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(format!("cannot reopen finished file: {err}"));
+                    }
+                }
             }
         }
-        progress.finished.store(true, Ordering::SeqCst);
+        if finished_ok {
+            progress.finished.store(true, Ordering::SeqCst);
+        }
     }
     out
 }
