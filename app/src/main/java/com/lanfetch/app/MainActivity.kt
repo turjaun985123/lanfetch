@@ -2,6 +2,7 @@ package com.lanfetch.app
 
 import android.graphics.Color
 import android.os.Bundle
+import kotlinx.coroutines.launch
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -90,7 +91,18 @@ private fun LanesAppRoot() {
     SideEffect { applyLanguage(appSettings.language) }
 
     LanesTheme(mode = themeMode) {
-        LanesAppScaffold(libraryVm, app)
+        if (!appSettings.onboardingDone) {
+            // First run: live network check before the tabs (redesign spec).
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            com.lanfetch.app.ui.onboarding.FirstRunCheck(
+                container = app.container,
+                onDone = {
+                    scope.launch { app.container.settingsStore.setOnboardingDone() }
+                },
+            )
+        } else {
+            LanesAppScaffold(libraryVm, app)
+        }
     }
 }
 

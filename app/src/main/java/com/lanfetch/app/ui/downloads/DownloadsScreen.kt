@@ -36,6 +36,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -85,6 +86,10 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
     val queued = downloads.count { it.state == DownloadState.QUEUED }
     val completed = downloads.count { it.state == DownloadState.COMPLETED }
     val active = running + queued
+
+    // Download focus view (redesign spec): tap a row for the big ring + lanes.
+    var focusedId by remember { mutableStateOf<Long?>(null) }
+    val focused = focusedId?.let { id -> downloads.firstOrNull { it.id == id } }
 
     var hasPublicStorage by remember {
         mutableStateOf(DiskSpace.hasPublicStoragePermission(context))
@@ -188,6 +193,19 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
         // Audit B6: verify completed files still exist when Transfers opens.
         LaunchedEffect(Unit) { vm.checkMissing() }
 
+        focused?.let { download ->
+            DownloadFocusSheet(
+                download = download,
+                onDismiss = { focusedId = null },
+                onPause = { vm.pause(download.id) },
+                onResume = { vm.resume(download.id) },
+                onRetry = { vm.retry(download.id) },
+                onRedownload = { vm.redownload(download.id) },
+                onRemove = { vm.remove(download.id); focusedId = null },
+                onOpen = { openDownloadedFile(context, download)?.let(vm::notifyMessage) },
+            )
+        }
+
         if (downloads.isEmpty()) {
             LanesEmptyState(
                 painter = painterResource(R.drawable.ic_download),
@@ -207,6 +225,7 @@ fun DownloadsScreen(vm: DownloadsViewModel) {
                         onResume = { vm.resume(download.id) },
                         onRetry = { vm.retry(download.id) },
                         onRedownload = { vm.redownload(download.id) },
+                        onFocus = { focusedId = download.id },
                         onCancel = { vm.cancel(download.id) },
                         onRemove = { vm.remove(download.id) },
                     )
@@ -225,14 +244,12 @@ private fun DownloadItemRow(
     onResume: () -> Unit,
     onRetry: () -> Unit,
     onRedownload: () -> Unit,
+    onFocus: () -> Unit,
     onCancel: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    val rowModifier = if (download.state == DownloadState.COMPLETED) {
-        Modifier.fillMaxWidth().clickable(onClick = onOpen)
-    } else {
-        Modifier.fillMaxWidth()
-    }
+    // Tapping a row opens the focus view; Open lives on its button (and in the sheet).
+    val rowModifier = Modifier.fillMaxWidth().clickable(onClick = onFocus)
 
     Column(
         modifier = rowModifier
@@ -438,6 +455,155 @@ private fun DownloadItemRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Download focus view (redesign spec): the segmented ring at 96 dp, one bar
+ * per lane with its own fill, and the facts — server, file, saved location.
+ */
+@Composable
+private fun DownloadFocusSheet(
+    download: DownloadUi,
+    onDismiss: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onRetry: () -> Unit,
+    onRedownload: () -> Unit,
+    onRemove: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                com.lanfetch.app.ui.components.SegmentedRing(
+                    state = download.state,
+                    lanes = { download.segments },
+                    totalBytes = download.totalBytes,
+                    downloadedBytes = download.downloadedBytes,
+                    onClick = {
+                        when (download.state) {
+                            DownloadState.RUNNING -> onPause()
+                            DownloadState.PAUSED -> onResume()
+                            DownloadState.FAILED -> onRetry()
+                            DownloadState.MISSING -> onRedownload()
+                            DownloadState.COMPLETED -> onOpen()
+                            DownloadState.QUEUED -> Unit
+                        }
+                    },
+                    size = 96.dp,
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = download.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = LanesPalette.InkPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val percent = if (download.totalBytes > 0) {
+                        (download.downloadedBytes * 100 / download.totalBytes).toInt()
+                    } else null
+                    Text(
+                        text = buildString {
+                            append(Format.bytes(download.downloadedBytes))
+                            if (download.totalBytes > 0) {
+                                append(" of ").append(Format.bytes(download.totalBytes))
+                                percent?.let { append(" · ").append(it).append("%") }
+                            }
+                            if (download.state == DownloadState.RUNNING && download.speedBps > 1) {
+                                append(" · ").append(Format.speed(download.speedBps))
+                                Format.eta(download.etaSeconds).takeIf { it.isNotEmpty() }
+                                    ?.let { append(" · ").append(it).append(" left") }
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LanesPalette.InkSecondary,
+                    )
+                }
+            }
+
+            if (download.segments.size > 1) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "Lanes",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = LanesPalette.InkPrimary,
+                )
+                Spacer(Modifier.height(8.dp))
+                download.segments.forEach { segment ->
+                    val fraction = if (segment.length > 0) {
+                        (segment.downloaded.toDouble() / segment.length).toFloat().coerceIn(0f, 1f)
+                    } else 0f
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = "Lane ${segment.index + 1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LanesPalette.InkSecondary,
+                            modifier = Modifier.width(56.dp),
+                        )
+                        LinearProgressIndicator(
+                            progress = { fraction },
+                            modifier = Modifier.weight(1f),
+                            color = LanesPalette.Accent,
+                            trackColor = LanesPalette.SurfaceElevated,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "${Format.bytes(segment.downloaded)} / ${Format.bytes(segment.length)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LanesPalette.InkMuted,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "File: ${download.fileName}",
+                style = MaterialTheme.typography.bodySmall,
+                color = LanesPalette.InkSecondary,
+            )
+            Text(
+                text = "Server: ${android.net.Uri.parse(download.url).host ?: download.url}",
+                style = MaterialTheme.typography.bodySmall,
+                color = LanesPalette.InkSecondary,
+            )
+            if (!download.savedPath.isNullOrBlank()) {
+                Text(
+                    text = "Saved: ${download.savedPath}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LanesPalette.InkSecondary,
+                )
+            }
+            if (!download.error.isNullOrBlank()) {
+                Text(
+                    text = download.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LanesPalette.Error,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (download.state) {
+                    DownloadState.RUNNING -> OutlinedButton(onClick = onPause) { Text("Pause") }
+                    DownloadState.PAUSED -> Button(onClick = onResume) { Text("Resume") }
+                    DownloadState.FAILED -> Button(onClick = onRetry) { Text("Retry") }
+                    DownloadState.MISSING -> Button(onClick = onRedownload) { Text("Download again") }
+                    DownloadState.COMPLETED -> Button(onClick = onOpen) { Text("Open") }
+                    DownloadState.QUEUED -> Unit
+                }
+                OutlinedButton(onClick = onRemove) { Text("Remove") }
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }

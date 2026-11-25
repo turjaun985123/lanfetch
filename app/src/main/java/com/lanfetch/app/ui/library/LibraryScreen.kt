@@ -91,6 +91,7 @@ import com.lanfetch.app.ui.theme.LanesRadii
 import com.lanfetch.app.ui.theme.LanesSizes
 import com.lanfetch.app.ui.theme.LanesSpacing
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
     val searchQuery by vm.searchQuery.collectAsState()
@@ -262,6 +263,11 @@ fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
                     )
                 }
 
+                androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = vm::refresh,
+                    modifier = Modifier.weight(1f),
+                ) {
                 when {
                     isLoadingInitial -> {
                         Box(
@@ -394,6 +400,7 @@ fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
                             }
                         }
                     }
+                }
                 }
             }
 

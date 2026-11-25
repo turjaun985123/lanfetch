@@ -15,6 +15,7 @@ data class AppSettings(
     val wifiOnly: Boolean = false,
     val themeMode: String = "SYSTEM",
     val language: String = "system",
+    val onboardingDone: Boolean = false,
 )
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
@@ -25,6 +26,7 @@ class SettingsStore(private val context: Context) {
     private val wifiOnlyKey = booleanPreferencesKey("wifi_only")
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val languageKey = stringPreferencesKey("language")
+    private val onboardingDoneKey = booleanPreferencesKey("onboarding_done")
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(
@@ -33,6 +35,7 @@ class SettingsStore(private val context: Context) {
             wifiOnly = prefs[wifiOnlyKey] ?: false,
             themeMode = prefs[themeModeKey] ?: "SYSTEM",
             language = prefs[languageKey] ?: "system",
+            onboardingDone = prefs[onboardingDoneKey] ?: false,
         )
     }
 
@@ -41,4 +44,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setWifiOnly(v: Boolean) = context.dataStore.edit { it[wifiOnlyKey] = v }
     suspend fun setThemeMode(v: String) = context.dataStore.edit { it[themeModeKey] = v }
     suspend fun setLanguage(v: String) = context.dataStore.edit { it[languageKey] = v }
+    suspend fun setOnboardingDone() = context.dataStore.edit { it[onboardingDoneKey] = true }
 }
