@@ -14,3 +14,6 @@ local.properties
 # LanFetch Desktop build output
 desktop/build/
 desktop/.gradle/
+
+# LanFetch Desktop (Rust) build output
+desktop-rs/target/
