@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Lanes" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Lanes" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/turjaun_canvas</item>
         <item name="android:colorBackground">@color/turjaun_canvas</item>
         <item name="android:windowSplashScreenBackground">@color/turjaun_canvas</item>

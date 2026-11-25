@@ -2,7 +2,7 @@
 <resources>
     <color name="turjaun_canvas">#07090F</color>
 
-    <style name="Theme.Lanes" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Lanes" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/turjaun_canvas</item>
         <item name="android:colorBackground">@color/turjaun_canvas</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
