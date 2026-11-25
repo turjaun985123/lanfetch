@@ -1,0 +1,53 @@
+name: Screenshot (existing binary, no rebuild)
+
+# One-shot visual check: downloads the .deb artifact from an earlier
+# Desktop RS CI run and runs THAT binary headless (--snap) — nothing
+# is compiled here. Created on the user's order after the build
+# workflow's own snapshot steps were removed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Desktop RS CI run ID whose lanfetch-rs-deb artifact to try"
+        required: true
+        default: "45669940478"
+
+jobs:
+  snap:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the existing .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lanfetch-rs-deb
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: deb
+
+      - name: Run the downloaded binary headless
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0
+          dpkg-deb -x deb/lanfetch-rs_1.2.0_amd64.deb root
+          # Library screen: first-run check already completed.
+          mkdir -p home/.local/share/lanfetch
+          printf '{"connections":8,"max_concurrent":3,"theme":"system","language":"system","onboarding_done":true}' > home/.local/share/lanfetch/settings.json
+          HOME="$PWD/home" xvfb-run -a ./root/usr/bin/lanfetch --snap library.png
+          # Onboarding screen: fresh profile.
+          mkdir -p home2
+          HOME="$PWD/home2" xvfb-run -a ./root/usr/bin/lanfetch --snap onboarding.png
+          ls -la *.png
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanfetch-rs-screenshots
+          path: "*.png"
+          if-no-files-found: error
