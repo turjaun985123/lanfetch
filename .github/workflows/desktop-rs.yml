@@ -43,7 +43,7 @@ jobs:
         # (winit refuses to start without WAYLAND_DISPLAY or DISPLAY).
         continue-on-error: true
         run: |
-          sudo apt-get install -y xvfb mesa-vulkan-drivers
+          sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0
           xvfb-run -a ./target/release/lanfetch-rs --snap "$GITHUB_WORKSPACE/lanfetch-ui.png"
 
       - name: Upload UI snapshot
