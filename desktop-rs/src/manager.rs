@@ -107,6 +107,7 @@ impl Manager {
                 let mut tasks = mgr.tasks.lock().unwrap();
                 for p in saved {
                     let downloaded: u64 = p.segments.iter().map(|s| s.done).sum();
+                    let was_ready = !p.segments.is_empty();
                     let progress = Arc::new(Progress::new(p.total));
                     progress.downloaded.store(downloaded, Ordering::SeqCst);
                     mgr.next_id.fetch_max(p.id + 1, Ordering::SeqCst);
@@ -125,7 +126,7 @@ impl Manager {
                         error: p.error,
                         pause_flag: Arc::new(AtomicBool::new(true)),
                         // A restored task with a plan can resume immediately.
-                        ready: !p.segments.is_empty(),
+                        ready: was_ready,
                         progress,
                         speed_bps: 0.0,
                         last_tick_bytes: downloaded,

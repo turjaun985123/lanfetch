@@ -351,7 +351,7 @@ fn browse_view(s: &State, p: &Palette) -> El {
             .on_edit(|s: &mut State| &mut s.search),
     );
 
-    let query = s.search.text().trim().to_lowercase();
+    let query = s.search.text.trim().to_lowercase();
     let mut list = col().w_full().grow(1.0).shrink().gap(8.0).scroll(ScrollSpec { stick_bottom: false });
     match &s.listing {
         Listing::Idle | Listing::Loading => {
@@ -715,8 +715,8 @@ fn servers_view(s: &State, p: &Palette) -> El {
                             .on_edit(|s: &mut State| &mut s.add_url),
                     )
                     .child(btn_primary("Add", p, |s: &mut State| {
-                        let name = s.add_name.text().trim().to_string();
-                        let mut url = s.add_url.text().trim().to_string();
+                        let name = s.add_name.text.trim().to_string();
+                        let mut url = s.add_url.text.trim().to_string();
                         if name.is_empty() || url.is_empty() {
                             return;
                         }
