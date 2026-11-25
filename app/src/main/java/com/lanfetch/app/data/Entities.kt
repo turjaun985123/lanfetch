@@ -70,6 +70,8 @@ data class DownloadEntity(
     val segments: String = "",
     val state: DownloadState = DownloadState.QUEUED,
     val error: String? = null,
+    /** Audit B10: machine-readable pause code (WAITING_WIFI, WAITING_NETWORK, USER, ...). Display text lives in [error]; auto-resume matches this column, never the text. */
+    val pauseReason: String? = null,
     val savedPath: String? = null,
     val sha256: String? = null,
     val etag: String? = null,

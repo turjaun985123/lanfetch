@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -96,6 +98,7 @@ fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
     val categories by vm.categories.collectAsState()
     val discoveringCategories by vm.discoveringCategories.collectAsState()
     val selectedCategory by vm.selectedCategory.collectAsState()
+    val qualityChoice by vm.qualityChoice.collectAsState()
     val filter by vm.filter.collectAsState()
     val facets by vm.facets.collectAsState()
     val items by vm.items.collectAsState()
@@ -401,6 +404,33 @@ fun LibraryScreen(vm: LibraryViewModel, onSettings: () -> Unit = {}) {
             onChange = vm::setFilter,
             onClear = vm::clearFilters,
             onDismiss = { showFilterSheet = false },
+        )
+    }
+
+    // Audit B12: choose a file size/quality before queueing a multi-file title.
+    qualityChoice?.let { request ->
+        AlertDialog(
+            onDismissRequest = vm::dismissQualityChoice,
+            title = { Text("Download ${request.title.title}") },
+            text = {
+                Column {
+                    Text("This title has ${request.files.size} files. Pick one:")
+                    Spacer(Modifier.height(12.dp))
+                    LibraryViewModel.QualityPick.entries.forEach { pick ->
+                        val file = vm.pickFileFor(request.files, pick)
+                        TextButton(onClick = { vm.chooseQuality(pick) }) {
+                            Text(
+                                "${pick.name.lowercase().replaceFirstChar { it.uppercase() }} — " +
+                                    "${file.quality ?: "Unknown quality"} · ${Format.bytes(file.sizeBytes)}",
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = vm::dismissQualityChoice) { Text("Cancel") }
+            },
         )
     }
 

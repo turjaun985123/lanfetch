@@ -87,7 +87,13 @@ class DownloadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_PAUSE_ALL) {
-            coordinator.pauseAll("Paused from notification")
+            coordinator.pauseAll("Paused from notification", code = "NOTIFICATION")
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RETRY) {
+            // Audit B11: Retry action on a failure notification.
+            val id = intent.getLongExtra(EXTRA_DOWNLOAD_ID, -1L)
+            if (id > 0) coordinator.retry(id)
             return START_NOT_STICKY
         }
         if (stopping) {
@@ -100,7 +106,7 @@ class DownloadService : Service() {
 
     /** Android 15+ dataSync timeout. */
     override fun onTimeout(startId: Int) {
-        coordinator.pauseAll("Foreground time limit reached — tap Resume")
+        coordinator.pauseAll("Foreground time limit reached — tap Resume", code = "FG_LIMIT")
         stopIfIdle()
     }
 
@@ -216,6 +222,66 @@ class DownloadService : Service() {
         private const val CHANNEL = "downloads"
         private const val NOTIFICATION_ID = 42
         private const val ACTION_PAUSE_ALL = "com.lanfetch.app.action.PAUSE_ALL"
+        private const val ACTION_RETRY = "com.lanfetch.app.action.RETRY"
+        private const val EXTRA_DOWNLOAD_ID = "download_id"
+        private const val FINISHED_CHANNEL = "finished"
+        private const val ATTENTION_CHANNEL = "attention"
+
+        private fun ensureResultChannels(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            manager.createNotificationChannel(
+                NotificationChannel(FINISHED_CHANNEL, "Finished downloads", NotificationManager.IMPORTANCE_DEFAULT),
+            )
+            manager.createNotificationChannel(
+                NotificationChannel(ATTENTION_CHANNEL, "Needs attention", NotificationManager.IMPORTANCE_DEFAULT),
+            )
+        }
+
+        private fun openAppIntent(context: Context): PendingIntent = PendingIntent.getActivity(
+            context,
+            1,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        /** Audit B11: per-file completion notification with an Open action. */
+        fun notifyFinished(context: Context, id: Long, title: String) {
+            ensureResultChannels(context)
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            val notification = NotificationCompat.Builder(context, FINISHED_CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("$title is ready")
+                .setContentText("Download finished. Tap to open Transfers.")
+                .setContentIntent(openAppIntent(context))
+                .setAutoCancel(true)
+                .build()
+            runCatching { manager.notify(1000 + (id % 100_000).toInt(), notification) }
+        }
+
+        /** Audit B11: per-file failure notification with Open and Retry actions. */
+        fun notifyFailed(context: Context, id: Long, title: String, reason: String?) {
+            ensureResultChannels(context)
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            val retryIntent = PendingIntent.getService(
+                context,
+                (id % 100_000).toInt(),
+                Intent(context, DownloadService::class.java).apply {
+                    action = ACTION_RETRY
+                    putExtra(EXTRA_DOWNLOAD_ID, id)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(context, ATTENTION_CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_notify_error)
+                .setContentTitle("Download stopped: $title")
+                .setContentText(reason ?: "The download failed.")
+                .setContentIntent(openAppIntent(context))
+                .addAction(0, "Retry", retryIntent)
+                .setAutoCancel(true)
+                .build()
+            runCatching { manager.notify(2000 + (id % 100_000).toInt(), notification) }
+        }
 
         /**
          * Starts the foreground service. Returns false when Android refuses

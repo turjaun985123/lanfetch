@@ -81,7 +81,7 @@ class DownloadCoordinator(
                 val oldConcurrency = settings.maxConcurrent
                 settings = value
                 if (!wasWifiOnly && value.wifiOnly && !isOnWifi()) {
-                    pauseAll("Waiting for Wi-Fi (Wi-Fi only)")
+                    pauseAll("Waiting for Wi-Fi (Wi-Fi only)", code = "WAITING_WIFI")
                 } else if (wasWifiOnly && !value.wifiOnly) {
                     resumeWaiting()
                 }
@@ -204,7 +204,7 @@ class DownloadCoordinator(
         }
     }
 
-    fun pauseAll(reason: String? = null) {
+    fun pauseAll(reason: String? = null, code: String? = "USER") {
         val resolved = reason ?: "Paused"
         val snapshot = jobs.toMap()
         snapshot.keys.forEach { pauseReasons.set(it, resolved) }
@@ -213,7 +213,7 @@ class DownloadCoordinator(
             pumpMutex.withLock {
                 snapshot.values.forEach { it.join() }
                 snapshot.keys.forEach { pauseReasons.remove(it) }
-                downloadDao.pauseAllActive(resolved, System.currentTimeMillis())
+                downloadDao.pauseAllActive(resolved, code, System.currentTimeMillis())
             }
         }
     }
@@ -223,7 +223,7 @@ class DownloadCoordinator(
             val rec = downloadDao.byId(id) ?: return@launch
             if (rec.state == DownloadState.PAUSED || rec.state == DownloadState.FAILED) {
                 downloadDao.update(
-                    rec.copy(state = DownloadState.QUEUED, error = null, updatedAt = System.currentTimeMillis())
+                    rec.copy(state = DownloadState.QUEUED, error = null, pauseReason = null, updatedAt = System.currentTimeMillis())
                 )
                 pump()
             }
@@ -408,6 +408,7 @@ class DownloadCoordinator(
                         updatedAt = System.currentTimeMillis(),
                     )
                 )
+                DownloadService.notifyFailed(context, id, rec.title, "Not enough free space")
                 return
             }
 
@@ -483,9 +484,11 @@ class DownloadCoordinator(
                             savedPath = path,
                             mediaUri = mediaUri,
                             error = null,
+                            pauseReason = null,
                             updatedAt = System.currentTimeMillis(),
                         )
                     )
+                    DownloadService.notifyFinished(context, id, rec.title)
                 }
 
                 is DownloadOutcome.Failed -> {
@@ -501,12 +504,16 @@ class DownloadCoordinator(
                         rec.copy(
                             state = state,
                             error = error,
+                            pauseReason = if (state == DownloadState.PAUSED) waitingCode(error) else null,
                             downloadedBytes = snapshot?.downloaded ?: SegmentPlanner.totalDownloaded(segments),
                             segments = SegmentPlanner.encode(snapshot?.segments ?: segments),
                             totalBytes = total,
                             updatedAt = System.currentTimeMillis(),
                         )
                     )
+                    if (state == DownloadState.FAILED) {
+                        DownloadService.notifyFailed(context, id, rec.title, error)
+                    }
                 }
 
                 DownloadOutcome.Stale -> {
@@ -524,6 +531,7 @@ class DownloadCoordinator(
                             updatedAt = System.currentTimeMillis(),
                         )
                     )
+                    DownloadService.notifyFailed(context, id, rec.title, "Server file changed")
                 }
             }
         } catch (e: CancellationException) {
@@ -560,12 +568,16 @@ class DownloadCoordinator(
                 rec.copy(
                     state = state,
                     error = error,
+                    pauseReason = if (state == DownloadState.PAUSED) waitingCode(error) else null,
                     downloadedBytes = snapshot?.downloaded ?: SegmentPlanner.totalDownloaded(segments),
                     segments = SegmentPlanner.encode(snapshot?.segments ?: segments),
                     totalBytes = total,
                     updatedAt = System.currentTimeMillis(),
                 )
             )
+            if (state == DownloadState.FAILED) {
+                DownloadService.notifyFailed(context, id, rec.title, error)
+            }
         } finally {
             activeSinks.remove(id)
             runCatching { sink?.close() }
@@ -573,9 +585,21 @@ class DownloadCoordinator(
         }
     }
 
+    /** Audit B10: derive the machine-readable pause code from the waiting reason. */
+    private fun waitingCode(error: String): String? = when {
+        error.contains("Wi-Fi") -> "WAITING_WIFI"
+        error.contains("network", ignoreCase = true) -> "WAITING_NETWORK"
+        else -> null
+    }
+
     private suspend fun setWaiting(rec: DownloadEntity, reason: String) {
         downloadDao.update(
-            rec.copy(state = DownloadState.PAUSED, error = reason, updatedAt = System.currentTimeMillis())
+            rec.copy(
+                state = DownloadState.PAUSED,
+                error = reason,
+                pauseReason = waitingCode(reason),
+                updatedAt = System.currentTimeMillis(),
+            )
         )
     }
 
@@ -645,7 +669,7 @@ class DownloadCoordinator(
 
             override fun onLost(network: Network) {
                 if (settings.wifiOnly && !isOnWifi()) {
-                    pauseAll("Waiting for Wi-Fi (Wi-Fi only)")
+                    pauseAll("Waiting for Wi-Fi (Wi-Fi only)", code = "WAITING_WIFI")
                 }
             }
         }
@@ -666,7 +690,7 @@ class DownloadCoordinator(
         val wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
         if (settings.wifiOnly && !wifi) {
-            pauseAll("Waiting for Wi-Fi (Wi-Fi only)")
+            pauseAll("Waiting for Wi-Fi (Wi-Fi only)", code = "WAITING_WIFI")
         } else if (hasLanOrInternet(caps)) {
             scope.launch { resumeWaiting(wifiAvailable = wifi) }
         }

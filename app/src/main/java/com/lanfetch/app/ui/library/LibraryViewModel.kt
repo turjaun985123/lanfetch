@@ -863,6 +863,47 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Audit B12: which file to queue when a title has several. */
+    enum class QualityPick { SMALLEST, BALANCED, BEST }
+
+    data class QualityChoiceRequest(val title: LiveTitle, val files: List<CatalogFile>)
+
+    private val _qualityChoice = MutableStateFlow<QualityChoiceRequest?>(null)
+    val qualityChoice: StateFlow<QualityChoiceRequest?> = _qualityChoice.asStateFlow()
+
+    private fun qualityRank(quality: String?): Int = when (quality) {
+        "2160p" -> 5
+        "1080p" -> 4
+        "720p" -> 3
+        "480p" -> 2
+        "360p" -> 1
+        "CAM" -> 0
+        else -> 3
+    }
+
+    fun pickFileFor(files: List<CatalogFile>, pick: QualityPick): CatalogFile = when (pick) {
+        QualityPick.BEST -> files.maxByOrNull { it.sizeBytes } ?: files.first()
+        QualityPick.SMALLEST -> files.minByOrNull { it.sizeBytes } ?: files.first()
+        QualityPick.BALANCED -> {
+            val capped = files.filter { qualityRank(it.quality) <= qualityRank("1080p") }
+            capped.maxByOrNull { it.sizeBytes } ?: files.minByOrNull { it.sizeBytes } ?: files.first()
+        }
+    }
+
+    fun chooseQuality(pick: QualityPick) {
+        val request = _qualityChoice.value ?: return
+        _qualityChoice.value = null
+        val chosen = pickFileFor(request.files, pick)
+        viewModelScope.launch {
+            downloads.enqueue(chosen, request.title.title)
+            container.message("Added to Downloads queue: ${chosen.fileName}")
+        }
+    }
+
+    fun dismissQualityChoice() {
+        _qualityChoice.value = null
+    }
+
     fun downloadTitle(title: LiveTitle) {
         viewModelScope.launch {
             val files = if (title.filesLoaded && title.cachedFiles.isNotEmpty()) {
@@ -886,10 +927,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     if (count > 0) "Added $count files for ${title.title}. Track progress in Downloads."
                     else "${title.title} already queued or saved",
                 )
-            } else {
-                val chosen = files.maxByOrNull { it.sizeBytes } ?: files.first()
+            } else if (files.size == 1) {
+                val chosen = files.first()
                 downloads.enqueue(chosen, title.title)
                 container.message("Added to Downloads queue: ${chosen.fileName}")
+            } else {
+                // Audit B12: never silently queue the largest file (a 2160p
+                // remux can be tens of GB) — ask, with sizes shown.
+                _qualityChoice.value = QualityChoiceRequest(title, files)
             }
         }
     }

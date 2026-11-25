@@ -79,13 +79,14 @@ interface DownloadDao {
     @Query("UPDATE downloads SET state = 'QUEUED' WHERE state = 'RUNNING'")
     suspend fun requeueAllRunning()
 
-    @Query("UPDATE downloads SET state = 'PAUSED', error = :reason, updatedAt = :now WHERE state IN ('QUEUED', 'RUNNING')")
-    suspend fun pauseAllActive(reason: String?, now: Long)
+    @Query("UPDATE downloads SET state = 'PAUSED', error = :reason, pauseReason = :code, updatedAt = :now WHERE state IN ('QUEUED', 'RUNNING')")
+    suspend fun pauseAllActive(reason: String?, code: String?, now: Long)
 
-    @Query("UPDATE downloads SET state = 'PAUSED', error = NULL, updatedAt = :now WHERE id = :id AND state IN ('QUEUED', 'RUNNING')")
+    @Query("UPDATE downloads SET state = 'PAUSED', error = NULL, pauseReason = 'USER', updatedAt = :now WHERE id = :id AND state IN ('QUEUED', 'RUNNING')")
     suspend fun pauseIfActive(id: Long, now: Long)
 
-    @Query("UPDATE downloads SET state = 'QUEUED', error = NULL, updatedAt = :now WHERE state = 'PAUSED' AND error LIKE 'Waiting for %'")
+    // Audit B10: match the pauseReason code, never the (translatable) display text.
+    @Query("UPDATE downloads SET state = 'QUEUED', error = NULL, pauseReason = NULL, updatedAt = :now WHERE state = 'PAUSED' AND pauseReason IN ('WAITING_WIFI', 'WAITING_NETWORK')")
     suspend fun requeueWaiting(now: Long): Int
 
     @Query("UPDATE downloads SET state = :state, error = :error, updatedAt = :now WHERE id = :id")
@@ -163,7 +164,7 @@ interface LiveCacheDao {
         CachedCategoryEntity::class,
         CachedFeedItemEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDb : RoomDatabase() {
@@ -175,8 +176,15 @@ abstract class AppDb : RoomDatabase() {
     companion object {
         fun build(context: Context): AppDb =
             Room.databaseBuilder(context.applicationContext, AppDb::class.java, "lanfetch.db")
-                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
+
+        /** Audit B10: machine-readable pauseReason column (see DownloadEntity). */
+        val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `downloads` ADD COLUMN `pauseReason` TEXT")
+            }
+        }
 
         val MIGRATION_7_8: Migration = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
