@@ -41,3 +41,11 @@ compose.desktop {
         }
     }
 }
+
+// The Compose Gradle plugin auto-adds the JetBrains Space compose-dev repo
+// to the project. Its DNS failure on GitHub runners fatally breaks
+// runtimeClasspath resolution, so remove it wherever it appears; Compose
+// 1.7.3 release artifacts are all on Maven Central + Google.
+repositories.removeIf {
+    it is MavenArtifactRepository && it.url.toString().contains("maven.pkg.jetbrains.space")
+}
