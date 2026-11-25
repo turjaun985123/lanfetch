@@ -10,9 +10,23 @@ import com.lanfetch.app.data.CatalogItem
 object MetaParser {
 
     private val yearRe = Regex("""\b(19\d\d|20\d\d)\b""")
+    private val bracketYearRe = Regex("""[\[(]((?:19|20)\d{2})[\])]""")
     private val seRe = Regex("""[Ss](\d{1,2})[Ee](\d{1,3})""")
-    private val seasonDirRe = Regex("""[Ss]eason\s*(\d{1,2})""")
+    private val epOnlyRe = Regex("""(?i)\b(?:ep(?:isode)?|e)[ ._-]?(\d{1,3})\b""")
+    private val seasonDirRe = Regex("""(?:season|s)\s*(\d{1,2})\b""", RegexOption.IGNORE_CASE)
     private val bracketRe = Regex("""\[[^\]]*\]|\([^)]*\)""")
+
+    /**
+     * Release tags that end the title. Word boundaries matter: "Isaac" must
+     * not be cut at "aac", and "Improper" must not be cut at "proper".
+     */
+    private val cutMarkerRe = Regex(
+        """(?i)\b(?:2160p|1080p|720p|480p|360p|hdcam|hdts|bluray|bdrip|brrip|web[ ._-]?dl|webrip|hdrip|dvdrip|remux|hdtv|x264|x265|h[ .]?264|h[ .]?265|hevc|av1|dual[ ._-]?audio|multi[ ._-]?audio|dubbed|aac|ac3|eac3|dts|proper|repack)\b"""
+    )
+
+    private val seasonSuffixRe = Regex(
+        """(?i)\b(?:season\s*\d{1,2}|s\d{1,2}|complete\s+series|disc\s*\d{1,2}|vol(?:ume)?\s*\d{1,2})\b.*$"""
+    )
 
     val videoExtensions = setOf(
         "mp4", "mkv", "avi", "mov", "wmv", "webm", "m4v", "ts", "flv", "mpg", "mpeg", "3gp"
@@ -81,75 +95,93 @@ object MetaParser {
         return known.firstOrNull { it.lowercase() in hay }
     }
 
+    /** Bracketed year wins; otherwise the last year in the name ("Wonder Woman 1984 (2020)"). */
+    fun parseYear(text: String): Int? {
+        bracketYearRe.find(text)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        return yearRe.findAll(text).lastOrNull()?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    fun parseSeason(text: String): Int? =
+        seasonDirRe.find(text)?.groupValues?.get(1)?.toIntOrNull()
+
     fun cleanTitle(raw: String): String {
-        var t = raw.substringBeforeLast('.', raw) // drop extension if present
+        var t = if (isVideoFile(raw)) raw.substringBeforeLast('.') else raw
         t = t.replace(bracketRe, " ")
         t = t.replace('.', ' ').replace('_', ' ').replace('-', ' ')
-        // cut everything from the first release tag onward
-        val cutMarkers = listOf(
-            "2160p", "1080p", "720p", "480p", "360p", "bluray", "bdrip", "brrip", "web dl",
-            "webrip", "hdrip", "dvdrip", "remux", "hdtv", "x264", "x265", "hevc", "h 264",
-            "h 265", "dual audio", "multi audio", "aac", "ac3", "dts", "proper", "repack",
-        )
-        val lower = t.lowercase()
-        var cut = t.length
-        for (m in cutMarkers) {
-            val i = lower.indexOf(m)
-            if (i in 1 until cut) cut = i
-        }
-        t = t.substring(0, cut)
-        // drop a trailing year (kept separately)
+
+        cutMarkerRe.find(t)?.let { t = t.substring(0, it.range.first) }
+        t = t.replace(seasonSuffixRe, " ")
         t = t.replace(Regex("""\b(19\d\d|20\d\d)\s*$"""), "")
-        return t.replace(Regex("""\s+"""), " ").trim().ifEmpty { raw }
+        return t.replace(Regex("""\s+"""), " ").trim().ifEmpty { raw.trim() }
     }
 
     fun parseSize(text: String): Long {
         val m = Regex("""([\d.]+)\s*([KMGT])i?B?\b""", RegexOption.IGNORE_CASE).find(text) ?: return -1
         val value = m.groupValues[1].toDoubleOrNull() ?: return -1
         val mult = when (m.groupValues[2].uppercase()) {
-            "K" -> 1_000L
-            "M" -> 1_000_000L
-            "G" -> 1_000_000_000L
-            "T" -> 1_000_000_000_000L
+            "K" -> 1_024L
+            "M" -> 1_024L * 1_024
+            "G" -> 1_024L * 1_024 * 1_024
+            "T" -> 1_024L * 1_024 * 1_024 * 1_024
             else -> 1L
         }
         return (value * mult).toLong()
     }
 
+    /** nginx autoindex prints raw byte counts with no unit. */
+    fun parseRawSize(text: String): Long {
+        val cleaned = text.replace(
+            Regex("""\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?|\d{2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}(?::\d{2})?"""),
+            " ",
+        )
+        return Regex("""(?<!:)\b(\d{2,})\b""").findAll(cleaned).lastOrNull()?.groupValues?.get(1)?.toLongOrNull() ?: -1
+    }
+
     /** Build a catalog item from a crawled file entry. */
-    fun toItem(
+    fun buildItem(
         sourceId: Long,
         sourceName: String,
         category: String,
-        folderUrl: String,
-        folderName: String,
+        titleFolderUrl: String,
+        dirUrl: String,
+        titleName: String,
         fileName: String,
         fileUrl: String,
         sizeBytes: Long,
         modified: String?,
         addedAt: Long,
         posterUrl: String? = null,
+        isSeries: Boolean = false,
+        folderSeason: Int? = null,
     ): CatalogItem {
-        val haystack = "$folderName $fileName"
-        val se = seRe.find(fileName) ?: seRe.find(folderName)
-        val seasonDir = seasonDirRe.find(folderName)
+        val haystack = "$titleName $fileName"
+        val se = seRe.find(fileName) ?: seRe.find(titleName)
+        val season = folderSeason ?: se?.groupValues?.get(1)?.toIntOrNull()
+            ?: if (isSeries) parseSeason(titleName) else null
+        val episode = se?.groupValues?.get(2)?.toIntOrNull()
+            ?: if (isSeries || season != null) {
+                epOnlyRe.find(fileName)?.groupValues?.get(1)?.toIntOrNull()
+            } else null
+        val kind = if (se != null || season != null || episode != null) "episode" else "movie"
         return CatalogItem(
             sourceId = sourceId,
             sourceName = sourceName,
             category = category,
-            folderUrl = folderUrl,
-            fileUrl = fileUrl,
+            folderUrl = titleFolderUrl,
+            dirUrl = dirUrl,
             fileName = fileName,
-            title = cleanTitle(folderName.ifBlank { fileName }),
-            year = yearRe.find(haystack)?.groupValues?.get(1)?.toIntOrNull(),
+            fileUrl = fileUrl,
+            title = cleanTitle(titleName),
+            titleKind = if (isSeries || kind == "episode") "series" else "movie",
+            year = parseYear(haystack),
             quality = parseQuality(haystack),
             sourceTag = parseSourceTag(haystack),
             codec = parseCodec(haystack),
             audio = parseAudio(haystack),
             language = parseLanguage(category),
-            kind = if (se != null || seasonDir != null) "episode" else "movie",
-            season = se?.groupValues?.get(1)?.toIntOrNull() ?: seasonDir?.groupValues?.get(1)?.toIntOrNull(),
-            episode = se?.groupValues?.get(2)?.toIntOrNull(),
+            kind = kind,
+            season = season,
+            episode = episode,
             posterUrl = posterUrl,
             sizeBytes = sizeBytes,
             modified = modified,

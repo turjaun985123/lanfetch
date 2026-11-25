@@ -22,22 +22,29 @@ class CrawlRulesTest {
     }
 
     @Test fun titleFolderOnlyDescendsIntoSeasons() {
-        // folder with videos: only season-like children
         assertTrue(CrawlRules.shouldDescend(2, true, "Season 2", 4))
         assertFalse(CrawlRules.shouldDescend(2, true, "Sample", 4))
         assertFalse(CrawlRules.shouldDescend(2, true, "Behind the Scenes", 4))
-        // folder without videos: descend normally, but never into junk
         assertTrue(CrawlRules.shouldDescend(1, false, "A - F", 4))
         assertFalse(CrawlRules.shouldDescend(1, false, "Trailers", 4))
-        // depth cap
         assertFalse(CrawlRules.shouldDescend(4, false, "Season 1", 4))
     }
 
-    @Test fun pruneOnlyWhenUnchangedAndKnown() {
-        assertTrue(CrawlRules.shouldPrune(false, "2024-01-01 10:00", "2024-01-01 10:00"))
-        assertFalse(CrawlRules.shouldPrune(false, "2024-01-01 10:00", "2024-02-01 10:00"))
-        assertFalse(CrawlRules.shouldPrune(true, "x", "x"))
-        assertFalse(CrawlRules.shouldPrune(false, null, "x"))
-        assertFalse(CrawlRules.shouldPrune(false, "x", null))
+    @Test fun pruneOnlyKnownUnchangedLeaves() {
+        val leaf = FolderMeta(modified = "2024-01-01 10:00", isLeaf = true, hasVideos = true)
+        assertTrue(CrawlRules.shouldPrune(false, leaf, "2024-01-01 10:00"))
+        assertFalse(CrawlRules.shouldPrune(false, leaf, "2024-02-01 10:00"))
+        assertFalse(CrawlRules.shouldPrune(true, leaf, "2024-01-01 10:00"))
+        assertFalse(CrawlRules.shouldPrune(false, null, "2024-01-01 10:00"))
+        assertFalse(CrawlRules.shouldPrune(false, leaf, null))
+        // A folder that had subfolders last time must be rescanned: its own
+        // mtime does not change when a grandchild gains an episode.
+        assertFalse(
+            CrawlRules.shouldPrune(
+                false,
+                FolderMeta(modified = "2024-01-01 10:00", isLeaf = false, hasVideos = false),
+                "2024-01-01 10:00",
+            )
+        )
     }
 }

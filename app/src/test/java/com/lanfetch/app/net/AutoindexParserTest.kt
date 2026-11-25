@@ -33,7 +33,8 @@ class AutoindexParserTest {
         assertTrue(dir.isDir)
         val file = entries.first { it.name.startsWith("Dune") }
         assertTrue(!file.isDir)
-        assertEquals(2_100_000_000L, file.sizeBytes)
+        assertEquals(2_254_857_830L, file.sizeBytes)
+        assertEquals("2024-03-01 09:12", file.modified)
         assertEquals("http://172.16.50.14/movies/Dune.Part.Two.2024.1080p.mkv", file.url)
     }
 
@@ -41,7 +42,50 @@ class AutoindexParserTest {
         val entries = AutoindexParser.parse(nginx, "http://172.16.50.12/shows/")
         assertEquals(2, entries.size)
         assertTrue(entries.first { it.name == "Dark" }.isDir)
-        val ep = entries.first { it.name.contains("S01E01") }
-        assertTrue(!ep.isDir)
+        val episode = entries.first { it.name.contains("S01E01") }
+        assertTrue(!episode.isDir)
+        assertEquals(734_003_200L, episode.sizeBytes)
+        assertEquals("01-Jan-2024 10:00", episode.modified)
+    }
+
+    @Test fun preRowsDoNotInheritTheFirstSize() {
+        val html = """
+            <html><body><pre>
+            <a href="one.mkv">one.mkv</a>  01-Jan-2024 10:00  1048576
+            <a href="two.mkv">two.mkv</a>  02-Jan-2024 11:00  2097152
+            </pre></body></html>
+        """.trimIndent()
+        val entries = AutoindexParser.parse(html, "http://x/")
+        assertEquals(1_048_576L, entries.first { it.name == "one.mkv" }.sizeBytes)
+        assertEquals(2_097_152L, entries.first { it.name == "two.mkv" }.sizeBytes)
+    }
+
+    @Test fun stripsQueryFromDisplayNameButKeepsItInUrl() {
+        val html = """<a href="movie.mkv?token=abc">movie.mkv?token=abc</a>"""
+        val entry = AutoindexParser.parse(html, "http://x/").single()
+        assertEquals("movie.mkv", entry.name)
+        assertEquals("http://x/movie.mkv?token=abc", entry.url)
+    }
+
+    @Test fun tableFilenameContaining4kDoesNotOverrideSizeColumn() {
+        val html = """
+            <table>
+            <tr><td><a href="Dune.4K.2024.mkv">Dune.4K.2024.mkv</a></td><td>2024-03-01 09:12</td><td>2.1G</td></tr>
+            </table>
+        """.trimIndent()
+        val entry = AutoindexParser.parse(html, "http://x/").single()
+        assertEquals(2_254_857_830L, entry.sizeBytes)
+        assertEquals("2024-03-01 09:12", entry.modified)
+    }
+
+    @Test fun nginxPreWithSecondsParsesRawSize() {
+        val html = """
+            <pre>
+            <a href="ep1.mkv">ep1.mkv</a> 01-Jan-2024 10:00:59 734003200
+            </pre>
+        """.trimIndent()
+        val entry = AutoindexParser.parse(html, "http://x/").single()
+        assertEquals(734_003_200L, entry.sizeBytes)
+        assertEquals("01-Jan-2024 10:00", entry.modified)
     }
 }

@@ -1,22 +1,23 @@
 package com.lanfetch.app.download
 
-/** One byte range of a file. [end] is inclusive, like HTTP Range. */
+/** One byte range of a file. [end] is inclusive, like HTTP Range. Immutable by design. */
 data class Segment(
     val index: Int,
     val start: Long,
     val end: Long,
-    var downloaded: Long = 0,
+    val downloaded: Long = 0,
 ) {
     val length: Long get() = end - start + 1
     val remaining: Long get() = length - downloaded
     val done: Boolean get() = downloaded >= length
+
+    fun withDownloaded(bytes: Long): Segment = copy(downloaded = bytes.coerceIn(0, length))
 }
 
 /**
- * Pure segment planning + state encoding for resumable segmented downloads.
- * The plan splits a file into near-equal ranges; the encoded form
- * ("start-end-downloaded;...") is persisted so a download can resume
- * exactly where it stopped, even after the app is killed.
+ * Pure segment planning + state encoding for resumable downloads. The plan is
+ * persisted ("start-end-downloaded;...") so a pause, process death or reboot
+ * resumes byte-exactly.
  */
 object SegmentPlanner {
 
@@ -45,7 +46,8 @@ object SegmentPlanner {
         if (text.isBlank()) return emptyList()
         return text.split(";").mapIndexedNotNull { i, part ->
             val nums = part.split("-").mapNotNull { it.toLongOrNull() }
-            if (nums.size != 3) null else Segment(i, nums[0], nums[1], nums[2])
+            if (nums.size != 3) null
+            else Segment(i, nums[0], nums[1], nums[2].coerceIn(0, nums[1] - nums[0] + 1))
         }
     }
 

@@ -7,90 +7,216 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import androidx.core.app.NotificationCompat
+import com.lanfetch.app.LanFetchApp
 import com.lanfetch.app.MainActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
-/** Foreground service that keeps downloads alive and shows aggregate progress. */
+/**
+ * Foreground service that keeps the download queue alive.
+ *
+ * The service owns no queue state: it observes the coordinator, aggregates all
+ * active transfers into one notification, holds the wake/Wi-Fi locks while
+ * work exists and stops itself as soon as the queue is idle. Android 14/15
+ * dataSync timeouts pause the queue instead of being killed silently.
+ */
 class DownloadService : Service() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var collector: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var stopping = false
+
+    private val coordinator: DownloadCoordinator
+        get() = (application as LanFetchApp).container.downloadCoordinator
+
+    override fun onCreate() {
+        super.onCreate()
+        createChannel()
+        enterForeground()
+        acquireLocks()
+        startCollector()
+    }
+
+    private fun enterForeground() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(emptyList()),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification(emptyList()))
+        }
+    }
+
+    private fun startCollector() {
+        if (collector?.isActive == true) return
+        var lastNotifyAt = 0L
+        var lastCount = -1
+        collector = scope.launch {
+            coordinator.observeActive().collectLatest { active ->
+                if (active.isEmpty()) {
+                    stopIfIdle()
+                } else {
+                    val now = System.currentTimeMillis()
+                    if (active.size != lastCount || now - lastNotifyAt >= 900) {
+                        lastCount = active.size
+                        lastNotifyAt = now
+                        val nm = getSystemService(NotificationManager::class.java)
+                        nm.notify(NOTIFICATION_ID, buildNotification(active))
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_PAUSE_ALL) {
+            coordinator.pauseAll("Paused from notification")
+            return START_NOT_STICKY
+        }
+        if (stopping) {
+            stopping = false
+            enterForeground()
+            startCollector()
+        }
+        return START_NOT_STICKY
+    }
+
+    /** Android 15+ dataSync timeout. */
+    override fun onTimeout(startId: Int) {
+        coordinator.pauseAll("Foreground time limit reached — tap Resume")
+        stopIfIdle()
+    }
+
+    /** Android 14 per-type timeout. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        onTimeout(startId)
+    }
+
+    override fun onDestroy() {
+        collector?.cancel()
+        scope.cancel()
+        releaseLocks()
+        super.onDestroy()
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val title = intent?.getStringExtra(EXTRA_TITLE) ?: "LanFetch"
-        val downloaded = intent?.getLongExtra(EXTRA_DOWNLOADED, 0) ?: 0
-        val total = intent?.getLongExtra(EXTRA_TOTAL, -1) ?: -1
-        val speed = intent?.getDoubleExtra(EXTRA_SPEED, 0.0) ?: 0.0
-        startForeground(NOTIF_ID, buildNotification(title, downloaded, total, speed))
-        return START_STICKY
+    private fun stopIfIdle() {
+        if (stopping) return
+        stopping = true
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
-    private fun buildNotification(title: String, downloaded: Long, total: Long, speed: Double): Notification {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW)
-        )
+    private fun buildNotification(active: List<DownloadUi>): Notification {
+        val total = active.sumOf { if (it.totalBytes > 0) it.totalBytes else 0 }
+        val done = active.sumOf { it.downloadedBytes }
+        val speed = active.sumOf { it.speedBps }
+        val indeterminate = active.isEmpty() || total <= 0
+        val pct = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
+
+        val text = buildString {
+            if (active.isEmpty()) {
+                append("Preparing download…")
+            } else {
+                append(active.size).append(if (active.size == 1) " file" else " files")
+                if (total > 0) append("  •  ").append(Format.bytes(done)).append(" / ").append(Format.bytes(total))
+                if (speed > 1) {
+                    append("  •  ").append(Format.speed(speed))
+                    if (total > done) {
+                        val eta = Format.eta(((total - done) / speed).toLong())
+                        if (eta.isNotEmpty()) append("  •  ").append(eta)
+                    }
+                }
+            }
+        }
+
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val pct = if (total > 0) (downloaded * 100 / total).toInt() else 0
-        val text = buildString {
-            append(Format.bytes(downloaded))
-            if (total > 0) append(" / ").append(Format.bytes(total)).append("  •  ").append(pct).append("%")
-            if (speed > 1) append("  •  ").append(Format.speed(speed))
-        }
-        val builder = Notification.Builder(this, CHANNEL)
+        val pause = PendingIntent.getService(
+            this, 1,
+            Intent(this, DownloadService::class.java).setAction(ACTION_PAUSE_ALL),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val builder = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Downloading $title")
+            .setContentTitle(if (active.size > 1) "Downloading ${active.size} files" else "Downloading")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
-        if (total > 0) builder.setProgress(100, pct, false) else builder.setProgress(0, 0, true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        if (indeterminate) {
+            builder.setProgress(0, 0, true)
+        } else {
+            builder.setProgress(100, pct, false)
+        }
+        if (active.isNotEmpty()) {
+            builder.addAction(android.R.drawable.ic_media_pause, "Pause all", pause)
+        }
         return builder.build()
+    }
+
+    private fun createChannel() {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
+                setShowBadge(false)
+            }
+        )
+    }
+
+    private fun acquireLocks() {
+        val pm = getSystemService(PowerManager::class.java)
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LanFetch:downloads").apply {
+            setReferenceCounted(false)
+            acquire(10 * 60 * 60 * 1000L)
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val wm = applicationContext.getSystemService(WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            wifiLock = wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "LanFetch:wifi")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching { if (wakeLock?.isHeld == true) wakeLock?.release() }
+        runCatching { if (wifiLock?.isHeld == true) wifiLock?.release() }
+        wakeLock = null
+        wifiLock = null
     }
 
     companion object {
         private const val CHANNEL = "downloads"
-        private const val NOTIF_ID = 42
-        private const val EXTRA_TITLE = "title"
-        private const val EXTRA_DOWNLOADED = "downloaded"
-        private const val EXTRA_TOTAL = "total"
-        private const val EXTRA_SPEED = "speed"
+        private const val NOTIFICATION_ID = 42
+        private const val ACTION_PAUSE_ALL = "com.lanfetch.app.action.PAUSE_ALL"
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, DownloadService::class.java))
+            val intent = Intent(context, DownloadService::class.java)
+            runCatching { context.startForegroundService(intent) }
         }
-
-        fun update(context: Context, title: String, downloaded: Long, total: Long, speed: Double) {
-            val intent = Intent(context, DownloadService::class.java).apply {
-                putExtra(EXTRA_TITLE, title)
-                putExtra(EXTRA_DOWNLOADED, downloaded)
-                putExtra(EXTRA_TOTAL, total)
-                putExtra(EXTRA_SPEED, speed)
-            }
-            context.startForegroundService(intent)
-        }
-    }
-}
-
-/** Small formatting helpers shared by UI + notifications. */
-object Format {
-    fun bytes(n: Long): String {
-        if (n < 0) return "—"
-        val units = listOf("B", "KB", "MB", "GB", "TB")
-        var v = n.toDouble()
-        var i = 0
-        while (v >= 1000 && i < units.lastIndex) { v /= 1000; i++ }
-        return if (i == 0) "${n} B" else String.format("%.2f %s", v, units[i])
-    }
-
-    fun speed(bps: Double): String = if (bps <= 0) "" else "${bytes(bps.toLong())}/s"
-
-    fun eta(seconds: Long): String = when {
-        seconds < 0 -> ""
-        seconds < 60 -> "${seconds}s left"
-        seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s left"
-        else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m left"
     }
 }

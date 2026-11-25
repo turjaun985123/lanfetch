@@ -13,15 +13,32 @@ android {
         applicationId = "com.lanfetch.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("release") {
+            val storePath = System.getenv("RELEASE_STORE_FILE")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = file(storePath)
+                storePassword = System.getenv("RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            val releaseConfig = signingConfigs.getByName("release")
+            if (releaseConfig.storeFile != null) {
+                signingConfig = releaseConfig
+            }
         }
     }
     compileOptions {
@@ -41,6 +58,11 @@ android {
     }
 }
 
+ksp {
+    // Export the schema so future migrations can be diffed against the real one.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -51,11 +73,15 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons)
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.room.paging)
     ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
+    implementation(libs.androidx.work.runtime)
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.jsoup)

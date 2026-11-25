@@ -1,0 +1,16 @@
+Lcom/lanfetch/app/LanFetchApp;
+Lcom/lanfetch/app/AppContainer;
+Lcom/lanfetch/app/MainActivity;
+Lcom/lanfetch/app/data/AppDb;
+Lcom/lanfetch/app/data/AppDb_Impl;
+Lcom/lanfetch/app/data/CatalogRepository;
+Lcom/lanfetch/app/data/SourceRepository;
+Lcom/lanfetch/app/data/SettingsStore;
+Lcom/lanfetch/app/filter/CatalogFilter;
+Lcom/lanfetch/app/filter/CatalogQuery;
+Lcom/lanfetch/app/ui/LibraryViewModel;
+Lcom/lanfetch/app/ui/DownloadsViewModel;
+Lcom/lanfetch/app/ui/SourcesViewModel;
+Lcom/lanfetch/app/ui/SettingsViewModel;
+Lcom/lanfetch/app/download/DownloadCoordinator;
+Lcom/lanfetch/app/download/DownloadEngine;

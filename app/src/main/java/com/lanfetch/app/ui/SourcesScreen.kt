@@ -17,11 +17,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.ui.res.painterResource
+import com.lanfetch.app.R
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -42,15 +44,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.lanfetch.app.data.Source
+import com.lanfetch.app.net.SyncProgress
 import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun SourcesScreen(vm: MainViewModel) {
-    val sources by vm.sources.collectAsState()
+fun SourcesScreen(vm: SourcesViewModel) {
+    val sources by vm.all.collectAsState()
     val syncing by vm.syncing.collectAsState()
-    val message by vm.syncMessage.collectAsState()
     var showAdd by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf<Source?>(null) }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -63,7 +66,7 @@ fun SourcesScreen(vm: MainViewModel) {
                 )
             }
             Button(onClick = { vm.syncAll() }, enabled = syncing.isEmpty()) {
-                Icon(Icons.Filled.Sync, contentDescription = null, Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.ic_sync), contentDescription = null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp)); Text("Sync all")
             }
             Spacer(Modifier.width(8.dp))
@@ -71,16 +74,6 @@ fun SourcesScreen(vm: MainViewModel) {
                 Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp)); Text("Add")
             }
-        }
-
-        if (message != null) {
-            Text(
-                message!!,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Spacer(Modifier.height(8.dp))
         }
 
         LazyColumn(
@@ -93,7 +86,8 @@ fun SourcesScreen(vm: MainViewModel) {
                     source = source,
                     syncProgress = syncing[source.id],
                     onSync = { vm.syncSource(source) },
-                    onDelete = { vm.deleteSource(source) },
+                    onCancelSync = { vm.cancelSync(source) },
+                    onDelete = { confirmDelete = source },
                     onEnabled = { vm.setSourceEnabled(source, it) },
                     onCategories = { vm.openCategoryPicker(source) },
                 )
@@ -101,8 +95,7 @@ fun SourcesScreen(vm: MainViewModel) {
         }
     }
 
-    val picker by vm.categoryPicker.collectAsState()
-    val pickerLoading by vm.categoryPickerLoading.collectAsState()
+    val pickerLoading by vm.pickerLoading.collectAsState()
     if (pickerLoading) {
         AlertDialog(
             onDismissRequest = { },
@@ -111,18 +104,19 @@ fun SourcesScreen(vm: MainViewModel) {
             confirmButton = { },
         )
     }
+
+    val picker by vm.picker.collectAsState()
     val pickerData = picker
     if (pickerData != null) {
-        val (pickerSource, allCategories) = pickerData
-        var selected by remember(pickerSource.id) {
+        var selected by remember(pickerData.source.id) {
             mutableStateOf(
-                if (pickerSource.selectedCategories.isEmpty()) allCategories.toSet()
-                else pickerSource.selectedCategories
+                if (pickerData.source.selectedCategories.isEmpty()) pickerData.categories.toSet()
+                else pickerData.source.selectedCategories
             )
         }
         AlertDialog(
             onDismissRequest = { vm.closeCategoryPicker() },
-            title = { Text("Categories — ${pickerSource.name}") },
+            title = { Text("Categories — ${pickerData.source.name}") },
             text = {
                 Column {
                     Text(
@@ -132,25 +126,26 @@ fun SourcesScreen(vm: MainViewModel) {
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { selected = allCategories.toSet() }) { Text("All") }
+                        OutlinedButton(onClick = { selected = pickerData.categories.toSet() }) { Text("All") }
                         OutlinedButton(onClick = { selected = emptySet() }) { Text("None") }
                     }
                     Spacer(Modifier.height(8.dp))
                     LazyColumn(Modifier.fillMaxWidth().height(320.dp)) {
-                        items(allCategories) { cat ->
+                        items(pickerData.categories) { category ->
                             Row(
                                 Modifier.fillMaxWidth().clickable {
-                                    selected = if (cat in selected) selected - cat else selected + cat
+                                    selected = if (category in selected) selected - category
+                                    else selected + category
                                 }.padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                androidx.compose.material3.Checkbox(
-                                    checked = cat in selected,
+                                Checkbox(
+                                    checked = category in selected,
                                     onCheckedChange = { checked ->
-                                        selected = if (checked) selected + cat else selected - cat
+                                        selected = if (checked) selected + category else selected - category
                                     },
                                 )
-                                Text(cat, style = MaterialTheme.typography.bodyMedium)
+                                Text(category, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }
@@ -158,11 +153,26 @@ fun SourcesScreen(vm: MainViewModel) {
             },
             confirmButton = {
                 Button(onClick = {
-                    // "All ticked" is stored as empty selection = crawl everything.
-                    vm.saveCategories(pickerSource, if (selected.size == allCategories.size) emptySet() else selected)
+                    vm.saveCategories(pickerData.source, selected, pickerData.categories)
                 }) { Text("Save (${selected.size})") }
             },
             dismissButton = { TextButton(onClick = { vm.closeCategoryPicker() }) { Text("Cancel") } },
+        )
+    }
+
+    val deleting = confirmDelete
+    if (deleting != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("Remove ${deleting.name}?") },
+            text = { Text("This deletes the server and the catalog entries it contributed. Downloaded files are kept.") },
+            confirmButton = {
+                Button(onClick = {
+                    vm.deleteSource(deleting)
+                    confirmDelete = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
         )
     }
 
@@ -174,8 +184,14 @@ fun SourcesScreen(vm: MainViewModel) {
             title = { Text("Add directory server") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
-                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Root URL (ends with /)") }, singleLine = true)
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it },
+                        label = { Text("Name") }, singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = url, onValueChange = { url = it },
+                        label = { Text("Root URL (ends with /)") }, singleLine = true,
+                    )
                     Text(
                         "Any HTTP server with directory listing enabled (Apache / nginx autoindex).",
                         style = MaterialTheme.typography.bodySmall,
@@ -184,9 +200,13 @@ fun SourcesScreen(vm: MainViewModel) {
                 }
             },
             confirmButton = {
-                Button(onClick = { vm.addSource(name, url.trim()); showAdd = false }, enabled = url.startsWith("http")) {
-                    Text("Add server")
-                }
+                Button(
+                    onClick = {
+                        vm.addSource(name, url.trim())
+                        showAdd = false
+                    },
+                    enabled = url.startsWith("http"),
+                ) { Text("Add server") }
             },
             dismissButton = { TextButton(onClick = { showAdd = false }) { Text("Cancel") } },
         )
@@ -196,8 +216,9 @@ fun SourcesScreen(vm: MainViewModel) {
 @Composable
 private fun SourceCard(
     source: Source,
-    syncProgress: com.lanfetch.app.net.SyncProgress?,
+    syncProgress: SyncProgress?,
     onSync: () -> Unit,
+    onCancelSync: () -> Unit,
     onDelete: () -> Unit,
     onEnabled: (Boolean) -> Unit,
     onCategories: () -> Unit,
@@ -210,14 +231,20 @@ private fun SourceCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(source.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(source.rootUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        source.rootUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Switch(checked = source.enabled, onCheckedChange = onEnabled)
             }
             Text(
                 when {
                     source.itemCount > 0 && source.lastSynced > 0 ->
-                        "${source.itemCount} files • last synced ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(source.lastSynced))}"
+                        "${source.itemCount} files • last synced " +
+                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                                .format(Date(source.lastSynced))
                     source.lastSynced > 0 -> "Synced, no video files found"
                     else -> "Never synced"
                 },
@@ -245,16 +272,20 @@ private fun SourceCard(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSync, enabled = syncProgress == null) {
-                    Icon(Icons.Filled.Sync, contentDescription = null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp)); Text("Sync")
+                if (syncProgress == null) {
+                    Button(onClick = onSync, enabled = source.enabled) {
+                        Icon(painterResource(R.drawable.ic_sync), contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp)); Text("Sync")
+                    }
+                } else {
+                    OutlinedButton(onClick = onCancelSync) {
+                        Icon(painterResource(R.drawable.ic_cancel), contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp)); Text("Cancel sync")
+                    }
                 }
-                OutlinedButton(onClick = onCategories) {
-                    Text("Categories")
-                }
-                OutlinedButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp)); Text("Remove")
+                OutlinedButton(onClick = onCategories) { Text("Categories") }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Remove server")
                 }
             }
         }

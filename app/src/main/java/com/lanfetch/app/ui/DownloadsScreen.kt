@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -17,14 +18,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.res.painterResource
+import com.lanfetch.app.R
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,15 +42,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.lanfetch.app.download.DlState
+import com.lanfetch.app.data.DownloadState
 import com.lanfetch.app.download.DownloadUi
 import com.lanfetch.app.download.Format
 import com.lanfetch.app.download.Segment
 
 @Composable
-fun DownloadsScreen(vm: MainViewModel) {
+fun DownloadsScreen(vm: DownloadsViewModel) {
     val downloads by vm.downloads.collectAsState()
-    val active = downloads.count { it.state == DlState.RUNNING || it.state == DlState.QUEUED }
+    val active = downloads.count {
+        it.state == DownloadState.RUNNING || it.state == DownloadState.QUEUED
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -62,14 +63,14 @@ fun DownloadsScreen(vm: MainViewModel) {
                 Text("Downloads", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
                     if (downloads.isEmpty()) "Nothing downloaded yet"
-                    else "$active active • ${downloads.count { it.state == DlState.COMPLETED }} completed",
+                    else "$active active • ${downloads.count { it.state == DownloadState.COMPLETED }} completed",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (active > 0) {
-                OutlinedButton(onClick = { vm.pauseAllDownloads() }) {
-                    Icon(Icons.Filled.Pause, contentDescription = null, Modifier.size(18.dp))
+                OutlinedButton(onClick = { vm.pauseAll() }) {
+                    Icon(painterResource(R.drawable.ic_pause), contentDescription = null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Pause all")
                 }
@@ -79,7 +80,10 @@ fun DownloadsScreen(vm: MainViewModel) {
         if (downloads.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(
+                        painterResource(R.drawable.ic_download), contentDescription = null,
+                        Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(Modifier.height(12.dp))
                     Text("Downloads you start will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -87,17 +91,17 @@ fun DownloadsScreen(vm: MainViewModel) {
         } else {
             LazyColumn(
                 Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(downloads, key = { it.id }) { dl ->
+                items(downloads, key = { it.id }) { download ->
                     DownloadCard(
-                        dl = dl,
-                        onPause = { vm.pauseDownload(dl.id) },
-                        onResume = { vm.resumeDownload(dl.id) },
-                        onRetry = { vm.retryDownload(dl.id) },
-                        onCancel = { vm.cancelDownload(dl.id) },
-                        onRemove = { vm.removeDownloadRecord(dl.id) },
+                        download = download,
+                        onPause = { vm.pause(download.id) },
+                        onResume = { vm.resume(download.id) },
+                        onRetry = { vm.retry(download.id) },
+                        onCancel = { vm.cancel(download.id) },
+                        onRemove = { vm.remove(download.id) },
                     )
                 }
             }
@@ -107,7 +111,7 @@ fun DownloadsScreen(vm: MainViewModel) {
 
 @Composable
 private fun DownloadCard(
-    dl: DownloadUi,
+    download: DownloadUi,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
@@ -120,18 +124,18 @@ private fun DownloadCard(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StateIcon(dl.state)
+                StateIcon(download.state)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        dl.title,
+                        download.title,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        dl.fileName,
+                        download.fileName,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -139,36 +143,35 @@ private fun DownloadCard(
                     )
                 }
                 Text(
-                    dl.state.name.lowercase().replaceFirstChar { it.uppercase() },
+                    download.state.name.lowercase().replaceFirstChar { it.uppercase() },
                     style = MaterialTheme.typography.labelMedium,
-                    color = when (dl.state) {
-                        DlState.RUNNING -> MaterialTheme.colorScheme.primary
-                        DlState.COMPLETED -> MaterialTheme.colorScheme.primary
-                        DlState.FAILED -> MaterialTheme.colorScheme.error
+                    color = when (download.state) {
+                        DownloadState.RUNNING, DownloadState.COMPLETED -> MaterialTheme.colorScheme.primary
+                        DownloadState.FAILED -> MaterialTheme.colorScheme.error
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
             }
 
-            if (dl.segments.size > 1) {
-                SegmentBar(dl.segments)
+            if (download.segments.size > 1) {
+                SegmentBar(download.segments)
             } else {
                 LinearProgressIndicator(
-                    progress = { dl.fraction },
+                    progress = { download.fraction },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
 
             Text(
                 buildString {
-                    append(Format.bytes(dl.downloadedBytes))
-                    if (dl.totalBytes > 0) {
-                        append(" / ").append(Format.bytes(dl.totalBytes))
-                        append("  •  ").append((dl.fraction * 100).toInt()).append("%")
+                    append(Format.bytes(download.downloadedBytes))
+                    if (download.totalBytes > 0) {
+                        append(" / ").append(Format.bytes(download.totalBytes))
+                        append("  •  ").append((download.fraction * 100).toInt()).append("%")
                     }
-                    if (dl.state == DlState.RUNNING && dl.speedBps > 1) {
-                        append("  •  ").append(Format.speed(dl.speedBps))
-                        val eta = Format.eta(dl.etaSeconds)
+                    if (download.state == DownloadState.RUNNING && download.speedBps > 1) {
+                        append("  •  ").append(Format.speed(download.speedBps))
+                        val eta = Format.eta(download.etaSeconds)
                         if (eta.isNotEmpty()) append("  •  ").append(eta)
                     }
                 },
@@ -176,51 +179,58 @@ private fun DownloadCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            if (dl.state == DlState.FAILED && !dl.error.isNullOrBlank()) {
-                Text(dl.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (download.state == DownloadState.FAILED && !download.error.isNullOrBlank()) {
+                Text(
+                    download.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
-            if (dl.state == DlState.PAUSED && !dl.error.isNullOrBlank()) {
-                Text(dl.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (download.state == DownloadState.PAUSED && !download.error.isNullOrBlank()) {
+                Text(
+                    download.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            if (dl.state == DlState.COMPLETED) {
-                if (!dl.savedPath.isNullOrBlank()) {
-                    Text("Saved to ${dl.savedPath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                }
-                if (!dl.sha256.isNullOrBlank()) {
-                    Text("SHA-256 ${dl.sha256.take(16)}…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            if (download.state == DownloadState.COMPLETED && !download.savedPath.isNullOrBlank()) {
+                Text(
+                    "Saved to ${download.savedPath}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (dl.state) {
-                    DlState.RUNNING -> {
+                when (download.state) {
+                    DownloadState.RUNNING -> {
                         Button(onClick = onPause) {
-                            Icon(Icons.Filled.Pause, contentDescription = null, Modifier.size(18.dp))
+                            Icon(painterResource(R.drawable.ic_pause), contentDescription = null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp)); Text("Pause")
                         }
                         OutlinedButton(onClick = onCancel) { Text("Cancel") }
                     }
-                    DlState.PAUSED -> {
+                    DownloadState.PAUSED -> {
                         Button(onClick = onResume) {
                             Icon(Icons.Filled.PlayArrow, contentDescription = null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp)); Text("Resume")
                         }
                         OutlinedButton(onClick = onCancel) { Text("Remove") }
                     }
-                    DlState.FAILED -> {
+                    DownloadState.FAILED -> {
                         Button(onClick = onRetry) {
                             Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp)); Text("Retry")
                         }
                         OutlinedButton(onClick = onCancel) { Text("Remove") }
                     }
-                    DlState.QUEUED -> {
+                    DownloadState.QUEUED -> {
                         OutlinedButton(onClick = onCancel) {
-                            Icon(Icons.Filled.Cancel, contentDescription = null, Modifier.size(18.dp))
+                            Icon(painterResource(R.drawable.ic_cancel), contentDescription = null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp)); Text("Cancel")
                         }
                     }
-                    DlState.COMPLETED -> {
+                    DownloadState.COMPLETED -> {
                         OutlinedButton(onClick = onRemove) {
                             Icon(Icons.Filled.Delete, contentDescription = null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp)); Text("Clear")
@@ -233,28 +243,45 @@ private fun DownloadCard(
 }
 
 @Composable
-private fun StateIcon(state: DlState) {
-    val (icon, tint) = when (state) {
-        DlState.COMPLETED -> Icons.Filled.CheckCircle to MaterialTheme.colorScheme.primary
-        DlState.FAILED -> Icons.Filled.Error to MaterialTheme.colorScheme.error
-        DlState.RUNNING -> Icons.Filled.Download to MaterialTheme.colorScheme.primary
-        else -> Icons.Filled.Pause to MaterialTheme.colorScheme.onSurfaceVariant
+private fun StateIcon(state: DownloadState) {
+    when (state) {
+        DownloadState.COMPLETED -> Icon(
+            Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        DownloadState.FAILED -> Icon(
+            painterResource(R.drawable.ic_error),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+        )
+        DownloadState.RUNNING -> Icon(
+            painterResource(R.drawable.ic_download),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        else -> Icon(
+            painterResource(R.drawable.ic_pause),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
-    Icon(icon, contentDescription = null, tint = tint)
 }
 
 /** Per-segment progress: every block is one parallel connection's byte range. */
 @Composable
 private fun SegmentBar(segments: List<Segment>) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        segments.forEach { seg ->
-            val frac = if (seg.length > 0) (seg.downloaded.toDouble() / seg.length).toFloat() else 0f
+        segments.forEach { segment ->
+            val fraction = if (segment.length > 0) {
+                (segment.downloaded.toDouble() / segment.length).toFloat()
+            } else 0f
             Box(
                 Modifier.weight(1f).height(10.dp).clip(RoundedCornerShape(3.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Box(
-                    Modifier.fillMaxWidth(frac).fillMaxHeight()
+                    Modifier.fillMaxWidth(fraction).fillMaxHeight()
                         .background(MaterialTheme.colorScheme.primary)
                 )
             }

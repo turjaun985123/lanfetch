@@ -23,9 +23,9 @@ with no resume. LanFetch fixes that.
 - **Per-segment retry** with exponential backoff; servers that ignore Range
   fall back to a single resumable stream automatically.
 - **Queue** with configurable concurrency (1–5), foreground-service progress
-  notifications with live speed + ETA.
-- **Integrity** — completed files are SHA-256 hashed and saved to
-  `Downloads/LanFetch` via MediaStore.
+  notifications with live speed + ETA, and automatic Wi-Fi/network resume.
+- **Direct-to-MediaStore** — completed downloads write straight into a pending
+  `Downloads/LanFetch` entry (API 29+) without a second copy step.
 - **Wi-Fi only** mode, speed smoothing (EMA), per-segment progress map in the UI.
 
 **Catalog**
@@ -52,15 +52,13 @@ Settings (engine tuning).
 
 ## Build
 
-Requires JDK 17 + Android SDK 35. CI (GitHub Actions) builds on every push:
+Requires JDK 17 + Android SDK 35. CI (GitHub Actions) runs tests, lint, and builds both debug and release APKs:
 
 ```
-gradle testDebugUnitTest   # JVM unit tests: parser, metadata, filters, segments
-gradle assembleDebug       # debug APK (uploaded as a CI artifact)
+./gradlew testDebugUnitTest   # JVM unit tests: parser, metadata, crawler, query, engine, segments
+./gradlew lintDebug           # Android Lint checks
+./gradlew assembleRelease     # R8-minified release APK
 ```
-
-To use the Gradle wrapper locally, run `gradle wrapper --gradle-version 8.9`
-once with any Gradle 8.9 install; the wrapper properties are already pinned.
 
 ## Notes
 

@@ -29,8 +29,9 @@ class SegmentPlannerTest {
     }
 
     @Test fun encodeDecodeRoundTrip() {
-        val segs = SegmentPlanner.plan(5_000_000, 4)
-        segs[1].downloaded = 12345
+        val segs = SegmentPlanner.plan(5_000_000, 4).mapIndexed { index, segment ->
+            if (index == 1) segment.withDownloaded(12345) else segment
+        }
         val decoded = SegmentPlanner.decode(SegmentPlanner.encode(segs))
         assertEquals(segs.size, decoded.size)
         assertEquals(12345L, decoded[1].downloaded)

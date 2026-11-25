@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -23,11 +25,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun SettingsScreen(vm: MainViewModel) {
+fun SettingsScreen(vm: SettingsViewModel) {
     val settings by vm.settings.collectAsState()
 
     Column(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -46,7 +48,8 @@ fun SettingsScreen(vm: MainViewModel) {
                     steps = 14,
                 )
                 Text(
-                    "Each file is split into this many byte-range segments downloaded in parallel. More connections = faster on LAN servers, up to what the server allows.",
+                    "Each file is split into this many byte-range segments downloaded in parallel. " +
+                        "More connections = faster on LAN servers, up to what the server allows.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -62,7 +65,7 @@ fun SettingsScreen(vm: MainViewModel) {
                     Column(Modifier.weight(1f)) {
                         Text("Wi-Fi only", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Downloads pause instead of using mobile data.",
+                            "Downloads pause instead of using mobile data, and resume when Wi-Fi returns.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -77,13 +80,13 @@ fun SettingsScreen(vm: MainViewModel) {
                 Text("About LanFetch", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
                     "Download-only companion for LAN media servers (DhakaFlix-style directory servers). " +
-                        "No streaming, no player — just a fast, resumable download engine: segmented parallel " +
-                        "downloads with per-segment retry, byte-exact resume after pause or app restart, " +
-                        "SHA-256 verification, and finished files saved to Downloads/LanFetch.",
+                        "No streaming, no player — just a resumable download engine: segmented parallel " +
+                        "transfers, byte-exact resume after pause, process death or reboot, and files " +
+                        "written straight into Downloads/LanFetch.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("Version 1.2.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Version 1.3.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
