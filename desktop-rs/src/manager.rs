@@ -207,6 +207,14 @@ impl Manager {
         self.stamp.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// The task tracking a file URL, with its live fraction —
+    /// drives the Library card notes and detail-row badges
+    /// (Wave 14: the Library used to show no download state).
+    pub fn task_by_url(&self, url: &str) -> Option<(DlState, f64)> {
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        tasks.iter().find(|t| t.url == url).map(|t| (t.state, t.fraction()))
+    }
+
     pub fn save(&self) {
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<PersistedTask> = tasks

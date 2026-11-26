@@ -761,6 +761,19 @@ fn poster_el(s: &State, p: &Palette, t: &Title, w: f32, h: f32) -> El {
 
 // ------------------------------------------------------------------ library
 
+/// Badge for one file's live download state (Wave 14).
+fn dl_badge_for(s: &State, p: &Palette, url: &str) -> Option<El> {
+    let (st, fr) = s.manager.task_by_url(url)?;
+    let pct = (fr * 100.0) as u32;
+    Some(match st {
+        DlState::Running => badge(format!("↓ {pct}%"), p.raised, p.accent),
+        DlState::Queued => badge("Queued".to_string(), p.raised, p.ink2),
+        DlState::Paused => badge(format!("▶ {pct}%"), p.raised, p.paused),
+        DlState::Completed => badge("✓ Downloaded".to_string(), p.raised, p.done),
+        DlState::Failed => badge("↻ Failed".to_string(), p.raised, p.failed),
+    })
+}
+
 fn title_card(s: &State, p: &Palette, t: &Title) -> El {
     let u = ui(s);
     let fav = s.favorites.contains(&t.folder_url);
@@ -782,6 +795,30 @@ fn title_card(s: &State, p: &Palette, t: &Title) -> El {
     }
     if meta.is_empty() {
         meta = t.source_name.clone();
+    }
+    // Live download state rides on the meta line (Wave 14): the
+    // most active task among this title's files.
+    let mut dl_note: Option<(u8, String)> = None;
+    for f in &t.files {
+        if let Some((st, fr)) = s.manager.task_by_url(&f.url) {
+            let pct = (fr * 100.0) as u32;
+            let (rank, txt) = match st {
+                DlState::Running => (5, format!("↓ {pct}%")),
+                DlState::Queued => (4, "↓ queued".to_string()),
+                DlState::Paused => (3, format!("▶ {pct}%")),
+                DlState::Failed => (2, "↻ failed".to_string()),
+                DlState::Completed => (1, "✓ downloaded".to_string()),
+            };
+            if dl_note.as_ref().map(|(r, _)| rank > *r).unwrap_or(true) {
+                dl_note = Some((rank, txt));
+            }
+        }
+    }
+    if let Some((_, txt)) = &dl_note {
+        if !meta.is_empty() {
+            meta += " · ";
+        }
+        meta += txt;
     }
     let open = t.clone();
     let dl = t.clone();
@@ -953,6 +990,7 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
             label = format!("S{sn:02}E{ep:02} · {label}");
         }
         let file = f.clone();
+        let state_badge = dl_badge_for(s, p, &f.url).unwrap_or_else(|| el());
         list = list.child(
             card(p).w_full().padding(10.0).child(
                 row()
@@ -969,6 +1007,7 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
                         p.raised,
                         p.ink2,
                     ))
+                    .child(state_badge)
                     .child(btn_primary(u.download, p, move |s: &mut State| {
                         enqueue_file(s, &file);
                         s.tab = Tab::Transfers;
