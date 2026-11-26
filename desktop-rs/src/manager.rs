@@ -78,6 +78,13 @@ pub struct Manager {
     next_id: AtomicU64,
     waker: Mutex<Option<Waker>>,
     settings: Mutex<Settings>,
+    /// Monotonic counter of everything the Transfers UI renders:
+    /// byte progress (via tick_speed) and every state transition.
+    /// poll() compares it against the last frame's value — before
+    /// this existed (50-wave program, Wave 4) download wakes never
+    /// produced a repaint, so progress looked frozen even though
+    /// the engine and the 4 Hz ticker were both live.
+    stamp: AtomicU64,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -113,6 +120,7 @@ impl Manager {
             next_id: AtomicU64::new(1),
             waker: Mutex::new(None),
             settings: Mutex::new(load_settings()),
+            stamp: AtomicU64::new(0),
         });
         // A torn previous save falls back to the .bak snapshot rather
         // than silently dropping the whole queue (see store::write_atomic).
@@ -181,6 +189,15 @@ impl Manager {
         }
     }
 
+    /// The UI stamp described on the field: read by poll().
+    pub fn stamp(&self) -> u64 {
+        self.stamp.load(Ordering::SeqCst)
+    }
+
+    fn bump(&self) {
+        self.stamp.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub fn save(&self) {
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<PersistedTask> = tasks
@@ -239,6 +256,7 @@ impl Manager {
             });
         }
         self.save();
+        self.bump();
         self.wake();
         let mgr = Arc::clone(self);
         std::thread::spawn(move || match probe_url(&url) {
@@ -263,6 +281,7 @@ impl Manager {
                     }
                 }
                 mgr.save();
+                mgr.bump();
                 mgr.pump();
                 mgr.wake();
             }
@@ -277,6 +296,7 @@ impl Manager {
                     }
                 }
                 mgr.save();
+                mgr.bump();
                 mgr.wake();
                 if !failed_name.is_empty() {
                     notify("Download failed", &format!("{failed_name}: {e}"));
@@ -297,6 +317,7 @@ impl Manager {
             t.state = DlState::Queued;
             t.error = None;
         }
+        self.bump();
         self.pump();
         self.wake();
     }
@@ -321,6 +342,9 @@ impl Manager {
                     to_launch.push(t.id);
                 }
             }
+        }
+        if !to_launch.is_empty() {
+            self.bump();
         }
         for id in to_launch {
             self.launch(id);
@@ -388,6 +412,7 @@ impl Manager {
                 let err = progress.message.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
                 notify("Download failed", &format!("{name}: {err}"));
             }
+            mgr.bump();
             mgr.save();
             mgr.pump();
             mgr.wake();
@@ -395,10 +420,16 @@ impl Manager {
     }
 
     pub fn pause(&self, id: u64) {
-        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
-            t.pause_flag.store(true, Ordering::SeqCst);
+        {
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                t.pause_flag.store(true, Ordering::SeqCst);
+            }
         }
+        // Feedback now, not whenever the engine thread unwinds
+        // (audit F4: pause used to neither bump nor wake).
+        self.bump();
+        self.wake();
     }
 
     /// Drop all completed tasks (the Transfers header's Clear action).
@@ -408,6 +439,7 @@ impl Manager {
             tasks.retain(|t| t.state != DlState::Completed);
         }
         self.save();
+        self.bump();
         self.wake();
     }
 
@@ -428,20 +460,50 @@ impl Manager {
             }
         }
         self.save();
+        self.bump();
         self.wake();
     }
 
     fn tick_speed(&self, id: u64) {
-        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
-            let now = std::time::Instant::now();
-            let dt = now.duration_since(t.last_tick_at).as_secs_f64();
-            if dt >= 0.2 {
-                let bytes = t.downloaded();
-                t.speed_bps = (bytes.saturating_sub(t.last_tick_bytes) as f64) / dt;
-                t.last_tick_bytes = bytes;
-                t.last_tick_at = now;
+        let mut moved = false;
+        {
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                let now = std::time::Instant::now();
+                let dt = now.duration_since(t.last_tick_at).as_secs_f64();
+                if dt >= 0.2 {
+                    let bytes = t.downloaded();
+                    t.speed_bps = (bytes.saturating_sub(t.last_tick_bytes) as f64) / dt;
+                    moved = bytes != t.last_tick_bytes;
+                    t.last_tick_bytes = bytes;
+                    t.last_tick_at = now;
+                }
             }
         }
+        // Only real byte movement earns a repaint: a paused task's
+        // ticker (which outlives the pause until the lifecycle wave)
+        // must not keep the UI redrawing forever.
+        if moved {
+            self.bump();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stamp_advances_on_transitions() {
+        // The regression shape for the frozen-Transfers bug: state
+        // transitions must move the stamp poll() watches, or the UI
+        // never repaints for download activity.
+        let m = Manager::load();
+        let s0 = m.stamp();
+        m.clear_completed();
+        assert!(m.stamp() > s0, "clear_completed must bump the UI stamp");
+        let s1 = m.stamp();
+        m.pause(999_999); // unknown id: still user-visible feedback path
+        assert!(m.stamp() > s1, "pause must bump the UI stamp");
     }
 }

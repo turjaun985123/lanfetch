@@ -199,6 +199,8 @@ struct State {
     update_msg: Option<String>,
     update_latest: Latest<Result<Option<String>, String>>,
     selected_transfer: Option<u64>,
+    /// Last download stamp poll() repainted for (see Manager::stamp).
+    last_dl_stamp: u64,
     manager: Arc<Manager>,
 }
 
@@ -570,6 +572,16 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
             Ok(None) => "You're on the latest desktop version".to_string(),
             Err(e) => format!("Update check failed: {e}"),
         });
+        changed = true;
+    }
+    // Download progress arrives via the manager's waker, not
+    // through a Latest: compare its stamp so running transfers
+    // repaint at the ticker's cadence (50-wave program, Wave 4 —
+    // before this, wakes during a download never set `changed`
+    // and the Transfers screen looked frozen).
+    let stamp = s.manager.stamp();
+    if stamp != s.last_dl_stamp {
+        s.last_dl_stamp = stamp;
         changed = true;
     }
     changed
@@ -1899,6 +1911,7 @@ fn main() {
             update_msg: None,
             update_latest: Latest::default(),
             selected_transfer: None,
+            last_dl_stamp: 0,
             manager: Manager::load(),
         }
     })
