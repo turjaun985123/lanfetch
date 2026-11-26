@@ -78,7 +78,12 @@ pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
     let mut reader = http_agent()
         .get(url)
         .call()
-        .map_err(|e| format!("request failed: {e}"))?
+        .map_err(|e| match e {
+            // An HTTP status means the server IS reachable — callers
+            // (the failure cooldown) must not treat it as an outage.
+            ureq::Error::Status(code, _) => format!("http status {code}"),
+            other => format!("request failed: {other}"),
+        })?
         .into_reader()
         .take(MAX_LISTING_BYTES + 1);
     let mut raw = Vec::new();

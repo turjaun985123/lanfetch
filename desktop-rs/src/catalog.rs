@@ -79,6 +79,34 @@ static LISTING_FAILURES: LazyLock<Mutex<HashMap<String, Instant>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 const FAILURE_TTL: Duration = Duration::from_secs(45);
 
+/// Cooldowns are keyed by host (scheme + authority), not by full
+/// URL: when a server is down, every folder on it is down, and
+/// paying one connect timeout per folder URL made a single dead
+/// server stall the feed for minutes (Performance audit). One
+/// failure cools the whole host for FAILURE_TTL — the Android
+/// client's per-server behaviour.
+fn host_key(url: &str) -> String {
+    match url.find("://") {
+        Some(i) => {
+            let rest = &url[i + 3..];
+            match rest.find('/') {
+                Some(j) => url[..i + 3 + j].to_string(),
+                None => url.to_string(),
+            }
+        }
+        None => url.to_string(),
+    }
+}
+
+/// Only transport-level failures cool a host down: the request never
+/// completed (connect/timeout) or the body read broke midway. An
+/// HTTP status (404 for one deleted folder) or an oversize listing
+/// says nothing about the server's health and must not take every
+/// other folder on that host offline for 45 s.
+fn is_transport_failure(err: &str) -> bool {
+    err.starts_with("request failed") || err.starts_with("read failed")
+}
+
 pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
     {
         let cache = LISTING_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -88,9 +116,10 @@ pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
             }
         }
     }
+    let host = host_key(url);
     {
         let failures = LISTING_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(at) = failures.get(url) {
+        if let Some(at) = failures.get(&host) {
             if at.elapsed() < FAILURE_TTL {
                 return Err("server unreachable (cooldown)".to_string());
             }
@@ -99,14 +128,16 @@ pub fn fetch_cached(url: &str) -> Result<Vec<DirEntry>, String> {
     let entries = match fetch_listing(url) {
         Ok(entries) => entries,
         Err(e) => {
-            LISTING_FAILURES
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(url.to_string(), Instant::now());
+            if is_transport_failure(&e) {
+                LISTING_FAILURES
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(host, Instant::now());
+            }
             return Err(e);
         }
     };
-    LISTING_FAILURES.lock().unwrap_or_else(|e| e.into_inner()).remove(url);
+    LISTING_FAILURES.lock().unwrap_or_else(|e| e.into_inner()).remove(&host);
     let mut cache = LISTING_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if cache.len() >= LISTING_CACHE_MAX {
         // Crude eviction: drop the oldest half (fine for a TTL cache).
@@ -1128,6 +1159,32 @@ mod tests {
         assert!(is_image_bytes(b"GIF89a"));
         assert!(is_image_bytes(b"BMxxxx"));
         assert!(is_image_bytes(b"RIFF\x00\x00\x00\x00WEBP"));
+    }
+
+    #[test]
+    fn host_key_extracts_scheme_and_authority() {
+        assert_eq!(host_key("http://172.16.50.7/DHAKA-FLIX-7/English/"), "http://172.16.50.7");
+        assert_eq!(host_key("http://172.16.50.10:8080/a/b"), "http://172.16.50.10:8080");
+        assert_eq!(host_key("http://172.16.50.7"), "http://172.16.50.7");
+        assert_eq!(host_key("http://172.16.50.7/"), "http://172.16.50.7");
+        // Two folders on one server share a cooldown; two servers don't.
+        assert_eq!(
+            host_key("http://172.16.50.7/a/"),
+            host_key("http://172.16.50.7/b/c/")
+        );
+        assert_ne!(
+            host_key("http://172.16.50.7/a/"),
+            host_key("http://172.16.50.8/a/")
+        );
+    }
+
+    #[test]
+    fn transport_failure_classification() {
+        assert!(is_transport_failure("request failed: Connection refused"));
+        assert!(is_transport_failure("read failed: reset by peer"));
+        assert!(!is_transport_failure("http status 404"));
+        assert!(!is_transport_failure("http status 500"));
+        assert!(!is_transport_failure("listing too large"));
     }
 
     #[test]
