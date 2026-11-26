@@ -157,9 +157,13 @@ pub fn badge(s: String, bg: Color, fg: Color) -> El {
 }
 
 /// Accent-filled pill button (primary action).
+/// Control heights are a system (Wave 19): action buttons are
+/// 40 pt — exactly the text-input height, so a button beside an
+/// input (Search, Add server) aligns — while chips stay 30 pt as
+/// a distinct pill class that never pairs with inputs.
 pub fn btn_primary<S: 'static>(label: &str, p: &Palette, f: impl Fn(&mut S) + 'static) -> El {
     el()
-        .h(30.0)
+        .h(40.0)
         .px(14.0)
         .center()
         .radius(999.0)
