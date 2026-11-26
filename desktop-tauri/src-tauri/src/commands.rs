@@ -383,3 +383,34 @@ pub fn clear_completed_downloads(state: State<'_, AppState>) -> DownloadListDto 
     state.manager.clear_completed();
     download_list(&state.manager)
 }
+
+// ------------------------------------------------------------ search
+
+/// Search every enabled source (the engine fans out per source with
+/// a hard deadline and returns partial results rather than hanging
+/// on a dead server). Results join the session title cache, so the
+/// detail screen works from search exactly as from the feed.
+#[tauri::command]
+pub async fn search_titles(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<TitleDto>, String> {
+    let sources = enabled_sources(&state);
+    let favorites = favorites_set(&state);
+    let catalog_state = state.catalog.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let results = crate::catalog::search(&sources, &query);
+        {
+            let mut catalog = lock(&catalog_state);
+            for t in &results {
+                catalog.titles.insert(t.folder_url.clone(), t.clone());
+            }
+        }
+        results
+            .iter()
+            .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}

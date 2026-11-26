@@ -58,14 +58,23 @@ import '../styles/global.css';
         <!-- Library -->
         <section data-screen="library">
           <header class="border-b border-hairline px-6 py-3">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-3">
               <h1 class="text-[17px] font-semibold">Library</h1>
-              <button
-                id="lib-refresh"
-                class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-              >
-                Refresh
-              </button>
+              <div class="flex items-center gap-2">
+                <input
+                  id="lib-search"
+                  type="text"
+                  placeholder="Search titles…"
+                  autocomplete="off"
+                  class="w-56 rounded-full border border-hairline bg-raised px-3.5 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
+                />
+                <button
+                  id="lib-refresh"
+                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
             <p class="text-[12px] text-ink-2" id="lib-status">…</p>
             <div
@@ -232,6 +241,7 @@ import '../styles/global.css';
         probeSources,
         removeDownload,
         resumeDownload,
+        searchTitles,
         startDownload,
         toggleFavorite,
       } from '../lib/api';
@@ -276,6 +286,11 @@ import '../styles/global.css';
         else if (e.key === '2') show('transfers');
         else if (e.key === '3') show('servers');
         else if (e.key === ',') show('settings');
+        else if (e.key === 'k' || e.key === 'f') {
+          e.preventDefault();
+          show('library');
+          document.getElementById('lib-search')!.focus();
+        }
       });
       show('library');
 
@@ -590,28 +605,40 @@ import '../styles/global.css';
         return card;
       }
 
+      /** Paint titles into the grid (poster batch first). Returns
+       * false when the generation was superseded mid-paint — the
+       * caller then drops everything. */
+      async function paintTitles(
+        titles: TitleDto[],
+        gen: number,
+        first: boolean,
+      ): Promise<boolean> {
+        const grid = status('grid');
+        if (first) grid.replaceChildren();
+        const withPosters = titles.filter((t) => t.posterUrl);
+        const srcByUrl = new Map<string, string>();
+        if (withPosters.length > 0) {
+          const srcs = await posterSrcs(
+            withPosters.map((t) => t.posterUrl!),
+          );
+          if (gen !== libGen) return false; // superseded while registering
+          withPosters.forEach((t, i) => srcByUrl.set(t.posterUrl!, srcs[i]!));
+        }
+        for (const t of titles) {
+          grid.append(
+            makeCard(t, t.posterUrl ? (srcByUrl.get(t.posterUrl) ?? null) : null),
+          );
+        }
+        return true;
+      }
+
       async function appendPage(
         page: FeedPageDto,
         gen: number,
         first: boolean,
       ): Promise<void> {
         feedHasMore = page.hasMore;
-        const grid = status('grid');
-        if (first) grid.replaceChildren();
-        const withPosters = page.titles.filter((t) => t.posterUrl);
-        const srcByUrl = new Map<string, string>();
-        if (withPosters.length > 0) {
-          const srcs = await posterSrcs(
-            withPosters.map((t) => t.posterUrl!),
-          );
-          if (gen !== libGen) return; // superseded while registering
-          withPosters.forEach((t, i) => srcByUrl.set(t.posterUrl!, srcs[i]!));
-        }
-        for (const t of page.titles) {
-          grid.append(
-            makeCard(t, t.posterUrl ? (srcByUrl.get(t.posterUrl) ?? null) : null),
-          );
-        }
+        if (!(await paintTitles(page.titles, gen, first))) return;
         titleCount += page.titles.length;
         status('lib-status').textContent =
           titleCount + ' titles' + (feedHasMore ? ' · scroll for more' : '');
@@ -623,6 +650,7 @@ import '../styles/global.css';
 
       async function openFeed(): Promise<void> {
         const gen = ++libGen;
+        activeQuery = '';
         titleCount = 0;
         pageLoading = true;
         const grid = status('grid');
@@ -715,6 +743,68 @@ import '../styles/global.css';
         },
         { rootMargin: '600px' },
       ).observe(status('sentinel'));
+
+      // ---- search ---------------------------------------------------------------
+      // Search and the feed share one generation counter: whichever
+      // starts last owns the grid, and the loser's results are
+      // dropped even if they arrive later.
+      let searchTimer: number | undefined;
+      let activeQuery = '';
+      async function runSearch(q: string): Promise<void> {
+        const gen = ++libGen;
+        activeQuery = q;
+        feedHasMore = false;
+        titleCount = 0;
+        pageLoading = true;
+        const grid = status('grid');
+        grid.replaceChildren();
+        for (let i = 0; i < 12; i++) {
+          const sk = document.createElement('div');
+          sk.className =
+            'aspect-[2/3] animate-pulse rounded-xl border border-hairline bg-raised';
+          grid.append(sk);
+        }
+        status('lib-empty').classList.add('hidden');
+        status('lib-status').textContent = 'Searching…';
+        try {
+          const results = await searchTitles(q);
+          if (gen !== libGen) return;
+          if (!(await paintTitles(results, gen, true))) return;
+          titleCount = results.length;
+          status('lib-status').textContent =
+            results.length + ' results for “' + q + '”';
+          status('lib-empty').classList.toggle('hidden', results.length !== 0);
+        } catch {
+          if (gen === libGen) {
+            status('lib-status').textContent =
+              'Search failed — are the servers reachable?';
+          }
+        } finally {
+          if (gen === libGen) pageLoading = false;
+        }
+      }
+      const searchInput = document.getElementById(
+        'lib-search',
+      ) as HTMLInputElement;
+      searchInput.addEventListener('input', () => {
+        const q = searchInput.value.trim();
+        window.clearTimeout(searchTimer);
+        if (q.length === 0) {
+          if (activeQuery !== '') void openFeed();
+          return;
+        }
+        searchTimer = window.setTimeout(() => void runSearch(q), 300);
+      });
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const q = searchInput.value.trim();
+          window.clearTimeout(searchTimer);
+          if (q) void runSearch(q);
+        } else if (e.key === 'Escape') {
+          searchInput.value = '';
+          if (activeQuery !== '') void openFeed();
+        }
+      });
 
       // ---- title detail ---------------------------------------------------------
       let detailGen = 0;

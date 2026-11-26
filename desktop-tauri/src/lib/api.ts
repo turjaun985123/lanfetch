@@ -177,3 +177,7 @@ export function removeDownload(id: number): Promise<DownloadListDto> {
 export function clearCompletedDownloads(): Promise<DownloadListDto> {
   return invoke<DownloadListDto>('clear_completed_downloads');
 }
+
+export function searchTitles(query: string): Promise<TitleDto[]> {
+  return invoke<TitleDto[]>('search_titles', { query });
+}
