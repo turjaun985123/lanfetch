@@ -135,7 +135,15 @@ import '../styles/global.css';
         <!-- Transfers -->
         <section data-screen="transfers" class="hidden">
           <header class="border-b border-hairline px-6 py-3">
-            <h1 class="text-[17px] font-semibold">Transfers</h1>
+            <div class="flex items-center justify-between">
+              <h1 class="text-[17px] font-semibold">Transfers</h1>
+              <button
+                id="tr-clear"
+                class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+              >
+                Clear completed
+              </button>
+            </div>
             <p class="text-[12px] text-ink-2" id="tr-status">…</p>
           </header>
           <div class="flex flex-col gap-2.5 px-6 py-5" id="tasks"></div>
@@ -210,14 +218,20 @@ import '../styles/global.css';
     </style>
 
     <script>
+      import { listen } from '@tauri-apps/api/event';
       import {
+        clearCompletedDownloads,
         feedNext,
         feedOpen,
         getBootstrap,
         getCategories,
+        getDownloads,
         getTitleDetail,
+        pauseDownload,
         posterSrcs,
         probeSources,
+        removeDownload,
+        resumeDownload,
         startDownload,
         toggleFavorite,
       } from '../lib/api';
@@ -284,8 +298,19 @@ import '../styles/global.css';
         completed: 'Completed',
         failed: 'Failed',
       };
+      function fmtSpeed(bps: number): string {
+        return bps > 0 ? fmtBytes(Math.round(bps)) + '/s' : '';
+      }
+      function fmtEta(secs: number | null): string {
+        if (secs == null || !isFinite(secs) || secs < 0) return '';
+        const s = Math.round(secs);
+        if (s < 60) return s + 's left';
+        if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's left';
+        return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm left';
+      }
 
       function renderDownloads(list: DownloadListDto) {
+        if (list.stamp > lastStamp) lastStamp = list.stamp;
         const wrap = status('tasks');
         const tasks = list.tasks;
         status('tr-status').textContent =
@@ -344,11 +369,83 @@ import '../styles/global.css';
           meta.textContent =
             fmtBytes(t.downloaded) +
             (t.total > 0 ? ' of ' + fmtBytes(t.total) : '') +
+            (t.state === 'running' && t.speedBps > 0
+              ? ' · ' + fmtSpeed(t.speedBps)
+              : '') +
+            (t.state === 'running' && fmtEta(t.etaSecs)
+              ? ' · ' + fmtEta(t.etaSecs)
+              : '') +
             (t.error ? ' · ' + t.error : '');
           card.append(top, bar, meta);
+          const actions = document.createElement('div');
+          actions.className = 'mt-2.5 flex gap-1.5';
+          const mkBtn = (label: string, fn: () => Promise<DownloadListDto>) => {
+            const b = document.createElement('button');
+            b.className =
+              'rounded-full border border-hairline px-3 py-1 text-[11.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised';
+            b.textContent = label;
+            b.addEventListener('click', async () => {
+              b.disabled = true;
+              try {
+                renderDownloads(await fn());
+              } catch {
+                b.disabled = false;
+              }
+            });
+            return b;
+          };
+          if (t.state === 'running' || t.state === 'queued') {
+            actions.append(mkBtn('Pause', () => pauseDownload(t.id)));
+          }
+          if (t.state === 'paused') {
+            actions.append(mkBtn('Resume', () => resumeDownload(t.id)));
+          }
+          if (t.state === 'failed') {
+            actions.append(mkBtn('Retry', () => resumeDownload(t.id)));
+          }
+          actions.append(mkBtn('Remove', () => removeDownload(t.id)));
+          card.append(actions);
           wrap.append(card);
         }
       }
+
+      // ---- live transfers: pushed, never polled --------------------------------
+      let lastStamp = 0;
+      let dlFetching = false;
+      let dlDirty = false;
+      async function refreshDownloads(): Promise<void> {
+        if (dlFetching) {
+          dlDirty = true;
+          return;
+        }
+        dlFetching = true;
+        try {
+          const list = await getDownloads();
+          if (list.stamp >= lastStamp) {
+            lastStamp = list.stamp;
+            renderDownloads(list);
+          }
+        } catch {
+          // Not in Tauri (browser preview) or a transient IPC error:
+          // the next event retries.
+        } finally {
+          dlFetching = false;
+          if (dlDirty) {
+            dlDirty = false;
+            void refreshDownloads();
+          }
+        }
+      }
+      void listen<number>('downloads-changed', (e) => {
+        if (e.payload > lastStamp) void refreshDownloads();
+      });
+      document
+        .getElementById('tr-clear')!
+        .addEventListener('click', async () => {
+          try {
+            renderDownloads(await clearCompletedDownloads());
+          } catch {}
+        });
 
       // ---- servers ----------------------------------------------------------
       function dotClass(s: string): string {

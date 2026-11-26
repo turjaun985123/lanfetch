@@ -339,3 +339,47 @@ pub fn toggle_favorite(state: State<'_, AppState>, folder_url: String) -> bool {
     crate::store::save_favorites(&favorites);
     now_favorite
 }
+
+// ------------------------------------------------------------ transfers control
+
+/// The current download list (the event bridge's refetch target).
+#[tauri::command]
+pub fn get_downloads(state: State<'_, AppState>) -> DownloadListDto {
+    download_list(&state.manager)
+}
+
+#[tauri::command]
+pub fn pause_download(state: State<'_, AppState>, id: u64) -> DownloadListDto {
+    state.manager.pause(id);
+    download_list(&state.manager)
+}
+
+/// Resume a paused task, or retry a failed one — Manager::start
+/// covers both.
+#[tauri::command]
+pub fn resume_download(state: State<'_, AppState>, id: u64) -> DownloadListDto {
+    state.manager.start(id);
+    download_list(&state.manager)
+}
+
+/// Remove a task. The partial file is deleted too, except for
+/// completed downloads whose finished file is never touched.
+#[tauri::command]
+pub fn remove_download(state: State<'_, AppState>, id: u64) -> DownloadListDto {
+    let delete_part = {
+        let tasks = lock(&state.manager.tasks);
+        tasks
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.state != DlState::Completed)
+            .unwrap_or(false)
+    };
+    state.manager.remove(id, delete_part);
+    download_list(&state.manager)
+}
+
+#[tauri::command]
+pub fn clear_completed_downloads(state: State<'_, AppState>) -> DownloadListDto {
+    state.manager.clear_completed();
+    download_list(&state.manager)
+}

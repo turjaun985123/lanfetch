@@ -157,3 +157,23 @@ export function startDownload(
 export function toggleFavorite(folderUrl: string): Promise<boolean> {
   return invoke<boolean>('toggle_favorite', { folderUrl });
 }
+
+export function getDownloads(): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('get_downloads');
+}
+
+export function pauseDownload(id: number): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('pause_download', { id });
+}
+
+export function resumeDownload(id: number): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('resume_download', { id });
+}
+
+export function removeDownload(id: number): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('remove_download', { id });
+}
+
+export function clearCompletedDownloads(): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('clear_completed_downloads');
+}

@@ -17,14 +17,12 @@ pub mod store;
 
 use commands::AppState;
 use std::sync::{Arc, Mutex};
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = manager::Manager::load();
-    // The downloads event bridge (manager stamp watcher -> Tauri
-    // events) lands with the Transfers wave. Until then a no-op
-    // notifier absorbs state-change signals.
-    manager.set_notifier(Arc::new(|| {}));
+    let manager_bridge = manager.clone();
     let posters = Arc::new(poster_service::PosterService::new());
     let state = AppState {
         manager,
@@ -35,6 +33,22 @@ pub fn run() {
     };
     tauri::Builder::default()
         .manage(state)
+        .setup(move |app| {
+            // Downloads event bridge: the manager's framework-neutral
+            // notifier becomes a Tauri event carrying the change
+            // stamp. The frontend refetches the download list on the
+            // event and discards anything stamped older than what it
+            // already rendered — push, never polling. The Weak keeps
+            // the closure from owning the manager that owns it.
+            let handle = app.handle().clone();
+            let weak = Arc::downgrade(&manager_bridge);
+            manager_bridge.set_notifier(Arc::new(move || {
+                if let Some(m) = weak.upgrade() {
+                    let _ = handle.emit("downloads-changed", m.stamp());
+                }
+            }));
+            Ok(())
+        })
         .register_asynchronous_uri_scheme_protocol(
             "lanfetch-poster",
             move |_ctx, request, responder| {
@@ -77,7 +91,12 @@ pub fn run() {
             commands::feed_next,
             commands::get_title_detail,
             commands::start_download,
-            commands::toggle_favorite
+            commands::toggle_favorite,
+            commands::get_downloads,
+            commands::pause_download,
+            commands::resume_download,
+            commands::remove_download,
+            commands::clear_completed_downloads
         ])
         .run(tauri::generate_context!())
         .expect("error while running LanFetch");
