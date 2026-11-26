@@ -574,6 +574,25 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         });
         changed = true;
     }
+    // Decode is async: bytes Rune cannot decode sit in Ready
+    // painting nothing forever. Demote finished-but-failed decodes
+    // to Failed so the fallback tile comes back (Wave 6). The
+    // magic-byte sniff in fetch_poster_bytes (Wave 3) makes this
+    // rare; this catches what slips through.
+    let decode_failed: Vec<String> = s
+        .posters
+        .iter()
+        .filter_map(|(url, st)| match st {
+            PosterState::Ready(img) if img.is_ready() && img.error().is_some() => Some(url.clone()),
+            _ => None,
+        })
+        .collect();
+    if !decode_failed.is_empty() {
+        for url in decode_failed {
+            s.posters.insert(url, PosterState::Failed);
+        }
+        changed = true;
+    }
     // Download progress arrives via the manager's waker, not
     // through a Latest: compare its stamp so running transfers
     // repaint at the ticker's cadence (50-wave program, Wave 4 —
@@ -683,13 +702,24 @@ fn poster_el(s: &State, p: &Palette, t: &Title, w: f32, h: f32) -> El {
     } else {
         el().w(w).h(h).radius(14.0).clip_rounded(14.0).fill(poster_tone(&t.title))
     };
-    if let Some(url) = &t.poster_url {
-        if let Some(PosterState::Ready(img)) = s.posters.get(url) {
-            return base.pixels_fit(img.pixels(), SurfaceFit::Fill);
-        }
+    let state = t.poster_url.as_ref().and_then(|url| s.posters.get(url));
+    if let Some(PosterState::Ready(img)) = state {
+        return base.pixels_fit(img.pixels(), SurfaceFit::Fill);
     }
-    let _ = p;
-    base.center().child(text(initials(&t.title)).font(TITLE).color(c_white()))
+    // Hairline border so a dark fallback tile reads as a tile, not
+    // a hole in the canvas (design audit C3).
+    let tile = base
+        .border(1.0, p.hairline)
+        .center()
+        .child(text(initials(&t.title)).font(TITLE).color(c_white()));
+    if matches!(state, Some(PosterState::Loading)) {
+        // Still fetching: a slow pulse says "coming" — Loading,
+        // failed and no-art used to render identically, which is
+        // why a dead pipeline read as "no photos exist" (Wave 6).
+        tile.looping(rune::LoopSpec::opacity(1.6, 0.0, 0.55, 1.0))
+    } else {
+        tile
+    }
 }
 
 // ------------------------------------------------------------------ library
