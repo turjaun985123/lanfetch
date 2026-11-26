@@ -161,6 +161,9 @@ struct State {
     lib_search: TextEdit,
     search_mode: bool,
     search_results: Vec<Title>,
+    /// Category scope for search: empty = every catalog (the old
+    /// behaviour); otherwise results are filtered to these categories.
+    search_cats: HashSet<String>,
     search_loading: bool,
     search_latest: Latest<Vec<Title>>,
     detail: Option<Title>,
@@ -298,8 +301,17 @@ fn submit_search(s: &mut State) {
 fn clear_search(s: &mut State) {
     s.search_mode = false;
     s.search_results.clear();
+    s.search_cats.clear();
     s.lib_gen += 1;
     s.lib_search = TextEdit::new("");
+}
+
+/// Toggle one category in the search scope (multi-select).
+fn toggle_search_cat(s: &mut State, name: &str) {
+    if !s.search_cats.remove(name) {
+        s.search_cats.insert(name.to_string());
+    }
+    s.lib_gen += 1;
 }
 
 fn enqueue_posters(s: &mut State, titles: &[Title]) {
@@ -424,6 +436,7 @@ fn compute_visible_titles(s: &State) -> Vec<Title> {
             (s.kind_filter.is_none() || s.kind_filter.as_deref() == Some(t.kind.as_str()))
                 && (s.quality_filter.is_none() || s.quality_filter == t.best_quality)
                 && (!s.fav_only || s.favorites.contains(&t.folder_url))
+                && (!s.search_mode || catalog::in_categories(&t.category, &s.search_cats))
         })
         .cloned()
         .collect();
@@ -900,7 +913,12 @@ fn skeleton_card(p: &Palette) -> El {
 fn empty_state(s: &State, p: &Palette) -> El {
     let u = ui(s);
     let online = s.probes.iter().filter(|x| matches!(x, ProbeState::Up(_))).count();
-    let (head, hint) = if s.search_mode {
+    let (head, hint) = if s.search_mode && !s.search_cats.is_empty() {
+        (
+            "No results in the selected categories",
+            "Clear the category scope above, or pick more categories to widen the search.",
+        )
+    } else if s.search_mode {
         (
             "No results",
             "Try another title, or check the Servers tab — the servers answer only from inside the ISP network.",
@@ -978,7 +996,15 @@ fn library_view(s: &State, p: &Palette) -> El {
     let subtitle = if s.cats_loading {
         "Discovering categories…".to_string()
     } else if s.search_mode {
-        format!("{pool_count} results · {online} servers online")
+        if s.search_cats.is_empty() {
+            format!("{pool_count} results · {online} servers online")
+        } else {
+            format!(
+                "{} of {pool_count} results · {} categories",
+                visible_titles(s).len(),
+                s.search_cats.len()
+            )
+        }
     } else {
         format!("{pool_count} titles · {} categories · {online} online", s.categories.len())
     };
@@ -1036,6 +1062,32 @@ fn library_view(s: &State, p: &Palette) -> El {
                 let target = name.clone();
                 row_el = row_el.child(chip(&label, selected, p, move |s: &mut State| {
                     select_category(s, target.clone())
+                }));
+            }
+            body = body.child(row_el);
+        }
+    } else if !s.categories.is_empty() {
+        // Search scope: the global search covers every catalog by
+        // default — pick one or more categories to search inside
+        // just those (empty selection = all, shown by the All chip).
+        body = body.child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .child(section_label(p, "Search in"))
+                .child(chip(u.all, s.search_cats.is_empty(), p, |s: &mut State| {
+                    s.search_cats.clear();
+                    s.lib_gen += 1;
+                })),
+        );
+        let names: Vec<String> = s.categories.iter().map(|c| c.name.clone()).collect();
+        for chunk in names.chunks(7) {
+            let mut row_el = row().w_full().gap(8.0);
+            for name in chunk {
+                let selected = s.search_cats.contains(name);
+                let target = name.clone();
+                row_el = row_el.child(chip(name, selected, p, move |s: &mut State| {
+                    toggle_search_cat(s, &target)
                 }));
             }
             body = body.child(row_el);
@@ -1814,6 +1866,7 @@ fn main() {
             lib_search: TextEdit::new(""),
             search_mode: false,
             search_results: Vec::new(),
+            search_cats: HashSet::new(),
             search_loading: false,
             search_latest: Latest::default(),
             detail: None,

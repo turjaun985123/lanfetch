@@ -758,6 +758,14 @@ fn breadth_search(source_name: &str, root_url: &str, query: &str) -> Vec<Title> 
     results
 }
 
+/// Search-scope filter: an empty selection means "all categories";
+/// otherwise a title passes only when its category is selected.
+/// Search results carry their real category (see `extract_category`),
+/// so scoping is exact rather than a name match.
+pub fn in_categories(category: &str, selected: &std::collections::HashSet<String>) -> bool {
+    selected.is_empty() || selected.contains(category)
+}
+
 fn rank_results(mut items: Vec<Title>, query: &str) -> Vec<Title> {
     let q = query.to_lowercase();
     /// Whole-phrase match on word boundaries (Kotlin's `\b<query>\b`):
@@ -1094,5 +1102,21 @@ mod tests {
         assert!(version_gt("1.10.0", "1.9.0"));
         assert!(!version_gt("1.9.0", "1.10.0"));
         assert!(!version_gt("1.2.0", "1.2.0"));
+    }
+
+    #[test]
+    fn category_scope_empty_means_all() {
+        let none: std::collections::HashSet<String> = Default::default();
+        assert!(in_categories("Hindi Movies", &none));
+        assert!(in_categories("Anything", &none));
+    }
+
+    #[test]
+    fn category_scope_filters_to_selected() {
+        let sel: std::collections::HashSet<String> =
+            ["Bangla Movies".to_string(), "Animation".to_string()].into_iter().collect();
+        assert!(in_categories("Bangla Movies", &sel));
+        assert!(in_categories("Animation", &sel));
+        assert!(!in_categories("Hindi Movies", &sel));
     }
 }
