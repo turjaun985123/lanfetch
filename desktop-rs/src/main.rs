@@ -13,17 +13,19 @@ mod core;
 mod lanes;
 mod manager;
 mod meta;
+mod posters;
 mod store;
 
 use catalog::{CatalogFile, Category, FeedSession, Title};
 use core::*;
 use lanes::*;
 use manager::{DlState, Manager};
+use posters::PosterQueue;
 use rune::{
     col, el, row, text, text_input, App, AppSpec, Cx, El, ImageCache, Latest, ScrollSpec,
     SurfaceFit, TextEdit, Tx,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use store::{load_favorites, load_settings, load_sources, save_favorites, save_sources, Settings, SourceItem};
 
@@ -178,7 +180,7 @@ struct State {
     sort_mode: u8, // 0 newest (feed order) · 1 title · 2 year · 3 size desc · 4 size asc
     // Posters
     posters: HashMap<String, PosterState>,
-    poster_queue: VecDeque<String>,
+    poster_queue: PosterQueue,
     /// Four parallel poster workers — the old single-flight queue
     /// needed 18 serial round trips to paint one page of cards.
     poster_latest: [Latest<(String, Result<Vec<u8>, String>)>; 4],
@@ -317,9 +319,10 @@ fn toggle_search_cat(s: &mut State, name: &str) {
 fn enqueue_posters(s: &mut State, titles: &[Title]) {
     for t in titles {
         if let Some(u) = &t.poster_url {
-            if !s.posters.contains_key(u) && !s.poster_queue.iter().any(|q| q == u) {
+            // The queue owns the fetch lifecycle (see posters.rs):
+            // it returns true exactly once per URL, ever.
+            if s.poster_queue.enqueue(u) {
                 s.posters.insert(u.clone(), PosterState::Loading);
-                s.poster_queue.push_back(u.clone());
             }
         }
     }
@@ -529,12 +532,15 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
                             // full-size costs ~6 MB of RAM; at card
                             // size roughly 25× less (Perf audit #4).
                             let img = cache.load_scaled(bytes, 240.0, 2.0);
+                            s.poster_queue.resolve(&url, true);
                             s.posters.insert(url, PosterState::Ready(img));
                         } else {
+                            s.poster_queue.resolve(&url, false);
                             s.posters.insert(url, PosterState::Failed);
                         }
                     }
                     Err(_) => {
+                        s.poster_queue.resolve(&url, false);
                         s.posters.insert(url, PosterState::Failed);
                     }
                 }
@@ -546,16 +552,16 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         if s.poster_busy[slot] {
             continue;
         }
-        while let Some(url) = s.poster_queue.pop_front() {
-            if s.posters.contains_key(&url) {
-                continue; // already resolved via another path
-            }
+        // The queue hands out each enqueued URL exactly once (see
+        // posters.rs). The old loop skipped any URL present in the
+        // posters map — which enqueue had just inserted as Loading —
+        // so no fetch was ever dispatched.
+        if let Some(url) = s.poster_queue.next_dispatch() {
             s.poster_busy[slot] = true;
             s.poster_latest[slot].request(url, |u| {
                 let res = catalog::fetch_poster_cached(&u);
                 (u, res)
             });
-            break;
         }
     }
     if let Some(res) = s.update_latest.take() {
@@ -1880,7 +1886,7 @@ fn main() {
             fav_only: false,
             sort_mode: 0,
             posters: HashMap::new(),
-            poster_queue: VecDeque::new(),
+            poster_queue: PosterQueue::new(),
             poster_latest: std::array::from_fn(|_| Latest::default()),
             poster_busy: [false; 4],
             lib_gen: 0,
