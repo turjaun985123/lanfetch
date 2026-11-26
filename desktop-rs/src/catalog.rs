@@ -830,7 +830,7 @@ pub fn merge_copies(titles: Vec<Title>, favorites: &std::collections::HashSet<St
                 rep.fav_any = true;
             }
             for f in t.files {
-                if !rep.files.iter().any(|x| x.url == f.url) {
+                if !rep.files.iter().any(|x| x.file_url == f.file_url) {
                     rep.files.push(f);
                 }
             }
