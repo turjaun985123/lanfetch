@@ -1135,7 +1135,12 @@ pub fn search(sources: &[(String, String)], query: &str) -> Vec<Title> {
         return Vec::new();
     }
     let (tx, rx) = std::sync::mpsc::channel::<Vec<Title>>();
-    for (name, root) in sources.iter().cloned() {
+    // Explicit per-item clones: the spawned threads need owned Strings
+    // ('static), but only borrow them inside — the shape that makes
+    // clippy call both to_vec() and iter().cloned() "unnecessary".
+    for (name, root) in sources {
+        let name = name.clone();
+        let root = root.clone();
         let q = query.clone();
         let tx = tx.clone();
         std::thread::spawn(move || {
