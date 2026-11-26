@@ -212,6 +212,9 @@ struct State {
     selected_transfer: Option<u64>,
     /// Last download stamp poll() repainted for (see Manager::stamp).
     last_dl_stamp: u64,
+    /// Measured grid width from the grid's on_layout (Wave 16);
+    /// 0 until the first layout lands.
+    grid_w: f32,
     manager: Arc<Manager>,
 }
 
@@ -777,7 +780,7 @@ fn dl_badge_for(s: &State, p: &Palette, url: &str) -> Option<El> {
     })
 }
 
-fn title_card(s: &State, p: &Palette, t: &Title) -> El {
+fn title_card(s: &State, p: &Palette, t: &Title, poster_h: f32) -> El {
     let u = ui(s);
     let fav = s.favorites.contains(&t.folder_url);
     let mut meta = String::new();
@@ -832,7 +835,7 @@ fn title_card(s: &State, p: &Palette, t: &Title) -> El {
     col()
         .grow(1.0)
         .gap(8.0)
-        .child(poster_el(s, p, t, 0.0, 248.0))
+        .child(poster_el(s, p, t, 0.0, poster_h))
         .child(text(t.title.clone()).font(LABEL).color(p.ink).w_full().wrap())
         .child(text(meta).font(SMALL).color(p.ink2).w_full().wrap())
         .child(
@@ -1030,11 +1033,11 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
 /// Loading placeholder shaped like a title card (poster block + two
 /// text bars) — the grid keeps its shape while pages stream in instead
 /// of collapsing to a bare "Loading…" line.
-fn skeleton_card(p: &Palette) -> El {
+fn skeleton_card(p: &Palette, poster_h: f32) -> El {
     col()
         .grow(1.0)
         .gap(8.0)
-        .child(el().w_full().h(248.0).radius(14.0).fill(p.raised))
+        .child(el().w_full().h(poster_h).radius(14.0).fill(p.raised))
         .child(el().w(120.0).h(12.0).radius(6.0).fill(p.raised))
         .child(el().w(80.0).h(10.0).radius(5.0).fill(p.raised))
 }
@@ -1267,14 +1270,34 @@ fn library_view(s: &State, p: &Palette) -> El {
         body = body.child(qrow);
     }
 
-    // Title grid, five portrait cards per row (Netflix density).
+    // Title grid. Responsive since Wave 16: the column count
+    // follows the measured grid width (on_layout below), and the
+    // poster height is card width x 1.5 — a true 2:3 at EVERY
+    // window size, where the old fixed 5-across / 248 pt was 2:3
+    // only at exactly 1180 pt wide.
     let visible = visible_titles(s);
+    let cols = if s.grid_w > 0.0 {
+        (((s.grid_w + 14.0) / 210.0).round() as usize).clamp(3, 7)
+    } else {
+        5
+    };
+    let card_w = if s.grid_w > 0.0 {
+        (s.grid_w - (cols as f32 - 1.0) * 14.0) / cols as f32
+    } else {
+        172.0
+    };
+    let poster_h = card_w * 1.5;
     let mut grid = col()
         .w_full()
         .grow(1.0)
         .shrink()
         .gap(14.0)
         .scroll(ScrollSpec { stick_bottom: false })
+        .on_layout(|s: &mut State, r: [f32; 4]| {
+            if (r[2] - s.grid_w).abs() > 1.0 {
+                s.grid_w = r[2];
+            }
+        })
         // Infinite scroll (50-wave program, Wave 7): Rune reports
         // at-bottom changes and far-from-bottom crossings, never
         // per frame — both hooks just call drive_feed, which
@@ -1295,8 +1318,8 @@ fn library_view(s: &State, p: &Palette) -> El {
         if s.feed_loading || s.search_loading || s.cats_loading {
             for _ in 0..2 {
                 let mut row_el = row().w_full().gap(14.0);
-                for _ in 0..5 {
-                    row_el = row_el.child(skeleton_card(p));
+                for _ in 0..cols {
+                    row_el = row_el.child(skeleton_card(p, poster_h));
                 }
                 grid = grid.child(row_el);
             }
@@ -1304,12 +1327,12 @@ fn library_view(s: &State, p: &Palette) -> El {
             grid = grid.child(empty_state(s, p));
         }
     }
-    for chunk in visible.chunks(5) {
+    for chunk in visible.chunks(cols) {
         let mut row_el = row().w_full().gap(14.0);
         for t in chunk {
-            row_el = row_el.child(title_card(s, p, t));
+            row_el = row_el.child(title_card(s, p, t, poster_h));
         }
-        for _ in chunk.len()..5 {
+        for _ in chunk.len()..cols {
             row_el = row_el.child(el().grow(1.0));
         }
         grid = grid.child(row_el);
@@ -1318,8 +1341,8 @@ fn library_view(s: &State, p: &Palette) -> El {
         // A page is in flight: show the fetch at the tail instead
         // of a dead bottom (Wave 7).
         let mut row_el = row().w_full().gap(14.0);
-        for _ in 0..5 {
-            row_el = row_el.child(skeleton_card(p));
+        for _ in 0..cols {
+            row_el = row_el.child(skeleton_card(p, poster_h));
         }
         grid = grid.child(row_el);
     }
@@ -2118,6 +2141,7 @@ fn main() {
             update_latest: Latest::default(),
             selected_transfer: None,
             last_dl_stamp: 0,
+            grid_w: 0.0,
             manager: Manager::load(),
         }
     })
