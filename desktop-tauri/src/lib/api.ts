@@ -181,3 +181,31 @@ export function clearCompletedDownloads(): Promise<DownloadListDto> {
 export function searchTitles(query: string): Promise<TitleDto[]> {
   return invoke<TitleDto[]>('search_titles', { query });
 }
+
+export function updateSettings(s: SettingsDto): Promise<SettingsDto> {
+  return invoke<SettingsDto>('update_settings', {
+    connections: s.connections,
+    maxConcurrent: s.maxConcurrent,
+    theme: s.theme,
+    language: s.language,
+    onboardingDone: s.onboardingDone,
+  });
+}
+
+export function addSource(
+  name: string,
+  rootUrl: string,
+): Promise<SourceDto[]> {
+  return invoke<SourceDto[]>('add_source', { name, rootUrl });
+}
+
+export function removeSource(name: string): Promise<SourceDto[]> {
+  return invoke<SourceDto[]>('remove_source', { name });
+}
+
+export function setSourceEnabled(
+  name: string,
+  enabled: boolean,
+): Promise<SourceDto[]> {
+  return invoke<SourceDto[]>('set_source_enabled', { name, enabled });
+}

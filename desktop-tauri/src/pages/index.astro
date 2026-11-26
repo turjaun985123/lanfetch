@@ -82,6 +82,31 @@ import '../styles/global.css';
               class="mt-3 flex gap-1.5 overflow-x-auto pb-1"
             ></div>
           </header>
+          <div id="onboarding" class="hidden px-6 pt-5">
+            <div class="rounded-2xl border border-hairline bg-surface px-5 py-4">
+              <p class="text-[15px] font-semibold">Welcome to LanFetch</p>
+              <p class="mt-1 max-w-[560px] text-[12.5px] leading-relaxed text-ink-2">
+                Your DhakaFlix servers are already set up — no configuration
+                needed. Browse the Library, open a title, and download with
+                byte-exact resume: pause anything, close the app, and it
+                continues where it left off.
+              </p>
+              <div class="mt-3 flex gap-2">
+                <button
+                  id="ob-done"
+                  class="rounded-full bg-accent px-4 py-1.5 text-[12.5px] font-semibold text-white"
+                >
+                  Start browsing
+                </button>
+                <button
+                  id="ob-check"
+                  class="rounded-full border border-hairline px-4 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+                >
+                  Check servers first
+                </button>
+              </div>
+            </div>
+          </div>
           <div
             id="grid"
             class="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-x-4 gap-y-5 px-6 py-5"
@@ -164,6 +189,33 @@ import '../styles/global.css';
             <h1 class="text-[17px] font-semibold">Servers</h1>
             <p class="text-[12px] text-ink-2" id="srv-status">…</p>
           </header>
+          <div class="px-6 pt-5">
+            <div
+              class="flex flex-wrap items-center gap-2 rounded-2xl border border-hairline bg-surface px-4 py-3"
+            >
+              <input
+                id="srv-name"
+                type="text"
+                placeholder="Server name"
+                autocomplete="off"
+                class="w-40 rounded-full border border-hairline bg-raised px-3 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
+              />
+              <input
+                id="srv-url"
+                type="text"
+                placeholder="http://192.168.1.10/movies/"
+                autocomplete="off"
+                class="min-w-56 flex-1 rounded-full border border-hairline bg-raised px-3 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
+              />
+              <button
+                id="srv-add"
+                class="rounded-full bg-accent px-4 py-1.5 text-[12.5px] font-semibold text-white"
+              >
+                Add server
+              </button>
+              <p id="srv-error" class="w-full text-[12px] text-failed"></p>
+            </div>
+          </div>
           <div class="flex flex-col gap-2 px-6 py-5" id="probes"></div>
         </section>
 
@@ -183,16 +235,44 @@ import '../styles/global.css';
               </div>
             </div>
             <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Download engine</p>
+              <div class="mt-2 flex flex-col gap-2.5 text-[13px]">
+                <label class="flex items-center gap-3">
+                  <span class="w-44 shrink-0 text-ink-2">Connections per file</span>
+                  <select id="set-connections" class="rounded-lg border border-hairline bg-raised px-2 py-1.5 text-ink">
+                    <option>1</option><option>2</option><option>4</option><option>6</option>
+                    <option>8</option><option>12</option><option>16</option><option>24</option><option>32</option>
+                  </select>
+                </label>
+                <label class="flex items-center gap-3">
+                  <span class="w-44 shrink-0 text-ink-2">Downloads at once</span>
+                  <select id="set-concurrent" class="rounded-lg border border-hairline bg-raised px-2 py-1.5 text-ink">
+                    <option>1</option><option>2</option><option>3</option><option>4</option>
+                    <option>6</option><option>8</option><option>12</option><option>16</option>
+                  </select>
+                </label>
+                <label class="flex items-center gap-3">
+                  <span class="w-44 shrink-0 text-ink-2">Language</span>
+                  <select id="set-language" class="rounded-lg border border-hairline bg-raised px-2 py-1.5 text-ink">
+                    <option value="system">System</option>
+                    <option value="en">English</option>
+                    <option value="bn">বাংলা</option>
+                  </select>
+                </label>
+                <p class="text-[12px] text-ink-3">
+                  Engine values apply to new downloads immediately. The
+                  language choice is saved now and translates the whole
+                  interface in the polish update.
+                </p>
+              </div>
+            </div>
+            <div>
               <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Storage</p>
               <dl class="mt-2 flex flex-col gap-1.5 text-[13px]">
                 <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">Downloads</dt><dd class="min-w-0 truncate" id="set-dl-dir">…</dd></div>
                 <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">App data</dt><dd class="min-w-0 truncate" id="set-data-dir">…</dd></div>
               </dl>
             </div>
-            <p class="text-[12px] text-ink-3">
-              Transfer-engine settings (connections, concurrency) and language
-              arrive with the Settings wave; this screen grows section by section.
-            </p>
           </div>
         </section>
       </main>
@@ -229,6 +309,7 @@ import '../styles/global.css';
     <script>
       import { listen } from '@tauri-apps/api/event';
       import {
+        addSource,
         clearCompletedDownloads,
         feedNext,
         feedOpen,
@@ -240,10 +321,13 @@ import '../styles/global.css';
         posterSrcs,
         probeSources,
         removeDownload,
+        removeSource,
         resumeDownload,
         searchTitles,
+        setSourceEnabled,
         startDownload,
         toggleFavorite,
+        updateSettings,
       } from '../lib/api';
       import type {
         BootstrapDto,
@@ -251,6 +335,9 @@ import '../styles/global.css';
         DownloadListDto,
         FeedPageDto,
         FileDto,
+        SettingsDto,
+        SourceDto,
+        SourceProbeDto,
         TaskDto,
         TitleDetailDto,
         TitleDto,
@@ -463,45 +550,104 @@ import '../styles/global.css';
         });
 
       // ---- servers ----------------------------------------------------------
-      function dotClass(s: string): string {
+      let sourcesList: SourceDto[] = [];
+      const probeMap = new Map<string, SourceProbeDto>();
+      function dotClass(s: string | undefined): string {
         return s === 'up' ? 'bg-done' : s === 'down' ? 'bg-failed' : 'bg-ink-3';
       }
-      async function loadProbes() {
-        const results = await probeSources();
+      function renderServers(): void {
         const wrap = status('probes');
         wrap.replaceChildren();
-        for (const p of results) {
+        for (const s of sourcesList) {
+          const p = probeMap.get(s.name);
           const row = document.createElement('div');
           row.className =
             'flex items-center gap-3 rounded-2xl border border-hairline bg-surface px-4 py-3';
           const dot = document.createElement('span');
-          dot.className = 'h-2 w-2 shrink-0 rounded-full ' + dotClass(p.status);
+          dot.className =
+            'h-2 w-2 shrink-0 rounded-full ' + dotClass(p?.status);
           const name = document.createElement('span');
           name.className = 'text-[13.5px] font-medium';
-          name.textContent = p.name;
+          name.textContent = s.name;
           const url = document.createElement('span');
           url.className = 'min-w-0 flex-1 truncate text-[12px] text-ink-3';
-          url.textContent = p.rootUrl;
+          url.textContent = s.rootUrl;
           const state = document.createElement('span');
           state.className = 'text-[12px] tabular-nums text-ink-2';
-          state.textContent =
-            p.status === 'up'
+          state.textContent = !s.enabled
+            ? 'Disabled'
+            : p?.status === 'up'
               ? 'Online · ' + p.latencyMs + ' ms'
-              : p.status === 'down'
+              : p?.status === 'down'
                 ? 'Unreachable'
-                : 'Disabled';
-          row.append(dot, name, url, state);
+                : '…';
+          const toggle = document.createElement('input');
+          toggle.type = 'checkbox';
+          toggle.checked = s.enabled;
+          toggle.className = 'h-4 w-4 shrink-0 accent-[var(--color-accent)]';
+          toggle.title = s.enabled ? 'Disable server' : 'Enable server';
+          toggle.addEventListener('change', async () => {
+            try {
+              sourcesList = await setSourceEnabled(s.name, toggle.checked);
+              renderServers();
+              void loadProbes();
+            } catch {
+              toggle.checked = !toggle.checked;
+            }
+          });
+          row.append(dot, name, url, state, toggle);
+          if (s.custom) {
+            const rm = document.createElement('button');
+            rm.className =
+              'shrink-0 rounded-full border border-hairline px-2.5 py-1 text-[11.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised';
+            rm.textContent = 'Remove';
+            rm.addEventListener('click', async () => {
+              try {
+                sourcesList = await removeSource(s.name);
+                probeMap.delete(s.name);
+                renderServers();
+                void loadProbes();
+              } catch (e) {
+                status('srv-error').textContent = String(e);
+              }
+            });
+            row.append(rm);
+          }
           wrap.append(row);
         }
+      }
+      async function loadProbes() {
+        const results = await probeSources();
+        probeMap.clear();
+        for (const p of results) probeMap.set(p.name, p);
+        renderServers();
         const up = results.filter((r) => r.status === 'up').length;
         status('srv-status').textContent =
           up + ' of ' + results.length + ' servers online';
         status('rail-servers').textContent = up + ' online';
-        status('lib-status').textContent =
-          up > 0
-            ? up + ' servers online'
-            : 'No servers reachable — check the Servers tab';
+        if (titleCount === 0 && activeQuery === '') {
+          status('lib-status').textContent =
+            up > 0
+              ? up + ' servers online'
+              : 'No servers reachable — check the Servers tab';
+        }
       }
+      document
+        .getElementById('srv-add')!
+        .addEventListener('click', async () => {
+          const nameEl = document.getElementById('srv-name') as HTMLInputElement;
+          const urlEl = document.getElementById('srv-url') as HTMLInputElement;
+          status('srv-error').textContent = '';
+          try {
+            sourcesList = await addSource(nameEl.value, urlEl.value);
+            nameEl.value = '';
+            urlEl.value = '';
+            renderServers();
+            void loadProbes();
+          } catch (e) {
+            status('srv-error').textContent = String(e);
+          }
+        });
 
       // ---- theme -------------------------------------------------------------
       function applyTheme(choice: string) {
@@ -519,11 +665,45 @@ import '../styles/global.css';
         });
       }
       document.querySelectorAll('.theme-btn').forEach((el) => {
-        el.addEventListener('click', () =>
-          applyTheme((el as HTMLElement).dataset.themeChoice!),
-        );
+        el.addEventListener('click', () => {
+          const choice = (el as HTMLElement).dataset.themeChoice!;
+          applyTheme(choice);
+          void persistSettings({ theme: choice });
+        });
       });
       applyTheme(localStorage.getItem('lanfetch-theme') ?? 'system');
+
+      // ---- settings ---------------------------------------------------------------
+      let currentSettings: SettingsDto | null = null;
+      async function persistSettings(
+        patch: Partial<SettingsDto>,
+      ): Promise<void> {
+        if (!currentSettings) return;
+        try {
+          currentSettings = await updateSettings({
+            ...currentSettings,
+            ...patch,
+          });
+        } catch {
+          // Browser preview or IPC failure: the local UI state the
+          // user just set stays as they left it.
+        }
+      }
+      const sel = (id: string) =>
+        document.getElementById(id) as HTMLSelectElement;
+      sel('set-connections').addEventListener('change', () =>
+        void persistSettings({
+          connections: parseInt(sel('set-connections').value, 10),
+        }),
+      );
+      sel('set-concurrent').addEventListener('change', () =>
+        void persistSettings({
+          maxConcurrent: parseInt(sel('set-concurrent').value, 10),
+        }),
+      );
+      sel('set-language').addEventListener('change', () =>
+        void persistSettings({ language: sel('set-language').value }),
+      );
 
       // ---- library feed -------------------------------------------------------
       // The UX laws this implements (the Rune build broke all three):
@@ -981,6 +1161,31 @@ import '../styles/global.css';
         status('version').textContent = 'v' + boot.appVersion;
         status('set-dl-dir').textContent = boot.downloadsDir;
         status('set-data-dir').textContent = boot.dataDir;
+        currentSettings = boot.settings;
+        sourcesList = boot.sources;
+        renderServers();
+        sel('set-connections').value = String(boot.settings.connections);
+        sel('set-concurrent').value = String(boot.settings.maxConcurrent);
+        sel('set-language').value = boot.settings.language;
+        // settings.json is the theme's source of truth; localStorage
+        // is only the pre-paint cache that mirrors it.
+        applyTheme(boot.settings.theme);
+        if (!boot.settings.onboardingDone) {
+          status('onboarding').classList.remove('hidden');
+          const finishOnboarding = async () => {
+            status('onboarding').classList.add('hidden');
+            await persistSettings({ onboardingDone: true });
+          };
+          document
+            .getElementById('ob-done')!
+            .addEventListener('click', () => void finishOnboarding());
+          document
+            .getElementById('ob-check')!
+            .addEventListener('click', () => {
+              void finishOnboarding();
+              show('servers');
+            });
+        }
         renderDownloads(boot.downloads);
         void loadProbes();
         void loadLibrary(false);

@@ -414,3 +414,109 @@ pub async fn search_titles(
     .await
     .map_err(|e| e.to_string())
 }
+
+// ------------------------------------------------------------ sources + settings
+
+fn sources_dto(state: &AppState) -> Vec<SourceDto> {
+    lock(&state.sources).iter().map(SourceDto::from).collect()
+}
+
+/// Source changes make the discovered catalog stale: drop it so the
+/// next Library visit rediscovers against the new server set.
+fn invalidate_catalog(state: &AppState) {
+    let mut catalog = lock(&state.catalog);
+    catalog.categories.clear();
+    catalog.feed = None;
+    catalog.generation += 1;
+}
+
+/// Apply engine settings (persisted by the manager, effective
+/// immediately — running downloads keep their lanes, new ones use
+/// the new values). Out-of-range numbers are clamped to the
+/// engine's supported span rather than rejected.
+#[tauri::command]
+pub fn update_settings(
+    state: State<'_, AppState>,
+    connections: u32,
+    max_concurrent: u32,
+    theme: String,
+    language: String,
+    onboarding_done: bool,
+) -> SettingsDto {
+    let settings = crate::store::Settings {
+        connections: connections.clamp(1, 32),
+        max_concurrent: max_concurrent.clamp(1, 16),
+        theme,
+        language,
+        onboarding_done,
+    };
+    state.manager.apply_settings(settings.clone());
+    SettingsDto::from(&settings)
+}
+
+#[tauri::command]
+pub fn add_source(
+    state: State<'_, AppState>,
+    name: String,
+    root_url: String,
+) -> Result<Vec<SourceDto>, String> {
+    let name = name.trim().to_string();
+    let mut root_url = root_url.trim().to_string();
+    if name.is_empty() {
+        return Err("Give the server a name.".to_string());
+    }
+    if !(root_url.starts_with("http://") || root_url.starts_with("https://")) {
+        return Err("The URL must start with http:// or https://".to_string());
+    }
+    if !root_url.ends_with('/') {
+        root_url.push('/');
+    }
+    let mut sources = lock(&state.sources);
+    if sources.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+        return Err("A server with this name already exists.".to_string());
+    }
+    sources.push(SourceItem {
+        name,
+        root_url,
+        enabled: true,
+        custom: true,
+    });
+    crate::store::save_sources(&sources);
+    drop(sources);
+    invalidate_catalog(&state);
+    Ok(sources_dto(&state))
+}
+
+#[tauri::command]
+pub fn remove_source(state: State<'_, AppState>, name: String) -> Result<Vec<SourceDto>, String> {
+    let mut sources = lock(&state.sources);
+    match sources.iter().find(|s| s.name == name) {
+        None => return Err("No such server.".to_string()),
+        Some(s) if !s.custom => {
+            return Err("Built-in servers can be disabled, not removed.".to_string());
+        }
+        _ => {}
+    }
+    sources.retain(|s| s.name != name);
+    crate::store::save_sources(&sources);
+    drop(sources);
+    invalidate_catalog(&state);
+    Ok(sources_dto(&state))
+}
+
+#[tauri::command]
+pub fn set_source_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<Vec<SourceDto>, String> {
+    let mut sources = lock(&state.sources);
+    match sources.iter_mut().find(|s| s.name == name) {
+        None => return Err("No such server.".to_string()),
+        Some(s) => s.enabled = enabled,
+    }
+    crate::store::save_sources(&sources);
+    drop(sources);
+    invalidate_catalog(&state);
+    Ok(sources_dto(&state))
+}
