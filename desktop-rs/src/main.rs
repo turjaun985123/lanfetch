@@ -1104,50 +1104,43 @@ fn library_view(s: &State, p: &Palette) -> El {
     }
     body = body.child(search_row);
 
-    // Category chips, chunked into rows (All + discovered categories).
+    // Category strip: ONE horizontally scrolling row serves both
+    // modes (50-wave program, Wave 10). This replaces the
+    // chunks-of-7 chip wall — up to four ragged rows, ~150 pt of
+    // chrome before the first poster, in browse AND again in
+    // search: the user's "jot pakano sob ekjaygay" complaint.
     if !s.search_mode {
+        let mut strip = row().gap(8.0);
         let mut names: Vec<Option<String>> = vec![None];
         for c in &s.categories {
             names.push(Some(c.name.clone()));
         }
-        for chunk in names.chunks(7) {
-            let mut row_el = row().w_full().gap(8.0);
-            for name in chunk {
-                let selected = s.selected_category == *name;
-                let label = name.clone().unwrap_or_else(|| u.all.to_string());
-                let target = name.clone();
-                row_el = row_el.child(chip(&label, selected, p, move |s: &mut State| {
-                    select_category(s, target.clone())
-                }));
-            }
-            body = body.child(row_el);
+        for name in &names {
+            let selected = s.selected_category == *name;
+            let label = name.clone().unwrap_or_else(|| u.all.to_string());
+            let target = name.clone();
+            strip = strip.child(chip(&label, selected, p, move |s: &mut State| {
+                select_category(s, target.clone())
+            }));
         }
+        body = body.child(row().w_full().scroll_x().scroll_edge_fade(24.0).child(strip));
     } else if !s.categories.is_empty() {
-        // Search scope: the global search covers every catalog by
-        // default — pick one or more categories to search inside
-        // just those (empty selection = all, shown by the All chip).
-        body = body.child(
-            row()
-                .w_full()
-                .gap(8.0)
-                .child(section_label(p, "Search in"))
-                .child(chip(u.all, s.search_cats.is_empty(), p, |s: &mut State| {
-                    s.search_cats.clear();
-                    s.lib_gen += 1;
-                })),
-        );
-        let names: Vec<String> = s.categories.iter().map(|c| c.name.clone()).collect();
-        for chunk in names.chunks(7) {
-            let mut row_el = row().w_full().gap(8.0);
-            for name in chunk {
-                let selected = s.search_cats.contains(name);
-                let target = name.clone();
-                row_el = row_el.child(chip(name, selected, p, move |s: &mut State| {
-                    toggle_search_cat(s, &target)
-                }));
-            }
-            body = body.child(row_el);
+        // Search scope: the SAME strip in the SAME place flips to
+        // multi-select — a leading IN: label, chips toggle the
+        // scope, All clears it (empty = search everywhere).
+        let mut strip = row().gap(8.0).child(section_label(p, "IN:"));
+        strip = strip.child(chip(u.all, s.search_cats.is_empty(), p, |s: &mut State| {
+            s.search_cats.clear();
+            s.lib_gen += 1;
+        }));
+        for c in &s.categories {
+            let selected = s.search_cats.contains(&c.name);
+            let target = c.name.clone();
+            strip = strip.child(chip(&c.name, selected, p, move |s: &mut State| {
+                toggle_search_cat(s, &target)
+            }));
         }
+        body = body.child(row().w_full().scroll_x().scroll_edge_fade(24.0).child(strip));
     }
 
     // Filter row: kind, favorites, sort.
