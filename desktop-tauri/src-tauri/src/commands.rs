@@ -325,19 +325,97 @@ pub fn start_download(
 }
 
 /// Flip a title's favorite state and persist it. Returns the new
-/// state (true = now a favorite).
+/// state (true = now a favorite). The display snapshot store is
+/// maintained alongside the URL list: favoriting captures the
+/// session title (the toggle lives on the detail screen, where the
+/// full Title is always in the session cache), unfavoriting drops
+/// the snapshot again.
 #[tauri::command]
 pub fn toggle_favorite(state: State<'_, AppState>, folder_url: String) -> bool {
-    let mut favorites = lock(&state.favorites);
-    let now_favorite = if let Some(pos) = favorites.iter().position(|u| u == &folder_url) {
-        favorites.remove(pos);
-        false
-    } else {
-        favorites.push(folder_url);
-        true
+    let now_favorite = {
+        let mut favorites = lock(&state.favorites);
+        if let Some(pos) = favorites.iter().position(|u| u == &folder_url) {
+            favorites.remove(pos);
+            false
+        } else {
+            favorites.push(folder_url.clone());
+            true
+        }
     };
-    crate::store::save_favorites(&favorites);
+    {
+        let favorites = lock(&state.favorites);
+        crate::store::save_favorites(&favorites);
+    }
+    let mut snapshots = crate::store::load_favorite_titles();
+    snapshots.retain(|s| s.folder_url != folder_url);
+    if now_favorite {
+        let catalog = lock(&state.catalog);
+        if let Some(title) = catalog.titles.get(&folder_url) {
+            snapshots.push(crate::store::FavTitle::from(title));
+        }
+    }
+    crate::store::save_favorite_titles(&snapshots);
     now_favorite
+}
+
+/// The Favorites view's titles, from the persisted snapshots
+/// (sorted by name). Each is also re-registered into the session
+/// title cache as a minimal Title, so opening its detail hydrates
+/// files from the server exactly like a feed card.
+#[tauri::command]
+pub fn get_favorites(state: State<'_, AppState>) -> Vec<TitleDto> {
+    let favorites = favorites_set(&state);
+    let mut snapshots: Vec<crate::store::FavTitle> = crate::store::load_favorite_titles()
+        .into_iter()
+        .filter(|s| favorites.contains(&s.folder_url))
+        .collect();
+    snapshots.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    {
+        let mut catalog = lock(&state.catalog);
+        for s in &snapshots {
+            catalog
+                .titles
+                .entry(s.folder_url.clone())
+                .or_insert_with(|| crate::catalog::Title {
+                    folder_url: s.folder_url.clone(),
+                    source_name: s.source_name.clone(),
+                    category: s.category.clone(),
+                    title: s.title.clone(),
+                    raw_name: s.raw_name.clone(),
+                    year: s.year,
+                    kind: s.kind.clone(),
+                    poster_url: s.poster_url.clone(),
+                    language: s.language.clone(),
+                    files: Vec::new(),
+                    files_loaded: false,
+                    season_count: s.season_count,
+                    max_size: 0,
+                    best_quality: s.best_quality.clone(),
+                    best_source_tag: None,
+                    best_codec: None,
+                    dual_audio: false,
+                    copies: 1,
+                    fav_any: true,
+                });
+        }
+    }
+    snapshots
+        .iter()
+        .map(|s| TitleDto {
+            folder_url: s.folder_url.clone(),
+            source_name: s.source_name.clone(),
+            category: s.category.clone(),
+            title: s.title.clone(),
+            year: s.year,
+            kind: s.kind.clone(),
+            poster_url: s.poster_url.clone(),
+            language: s.language.clone(),
+            season_count: s.season_count,
+            best_quality: s.best_quality.clone(),
+            copies: 1,
+            is_favorite: true,
+        })
+        .collect()
 }
 
 // ------------------------------------------------------------ transfers control
@@ -519,4 +597,74 @@ pub fn set_source_enabled(
     drop(sources);
     invalidate_catalog(&state);
     Ok(sources_dto(&state))
+}
+
+#[tauri::command]
+pub fn pause_all_downloads(state: State<'_, AppState>) -> DownloadListDto {
+    let ids: Vec<u64> = {
+        let tasks = lock(&state.manager.tasks);
+        tasks
+            .iter()
+            .filter(|t| matches!(t.state, DlState::Running | DlState::Queued))
+            .map(|t| t.id)
+            .collect()
+    };
+    for id in ids {
+        state.manager.pause(id);
+    }
+    download_list(&state.manager)
+}
+
+#[tauri::command]
+pub fn resume_all_downloads(state: State<'_, AppState>) -> DownloadListDto {
+    let ids: Vec<u64> = {
+        let tasks = lock(&state.manager.tasks);
+        tasks
+            .iter()
+            .filter(|t| t.state == DlState::Paused)
+            .map(|t| t.id)
+            .collect()
+    };
+    for id in ids {
+        state.manager.start(id);
+    }
+    download_list(&state.manager)
+}
+
+/// Redownload a completed task whose file has left the downloads
+/// folder: the stale task is dropped and the same URL is enqueued
+/// fresh. Refuses (as an error the UI shows) when the file is still
+/// there — redownloading over an existing file is never implicit.
+#[tauri::command]
+pub fn redownload_download(state: State<'_, AppState>, id: u64) -> Result<DownloadListDto, String> {
+    let (url, name) = {
+        let tasks = lock(&state.manager.tasks);
+        let task = tasks
+            .iter()
+            .find(|t| t.id == id)
+            .ok_or("no such download")?;
+        if task.state != DlState::Completed {
+            return Err("only a completed download can be redownloaded".to_string());
+        }
+        if crate::manager::downloads_dir().join(&task.name).exists() {
+            return Err("the file is still in the downloads folder".to_string());
+        }
+        (task.url.clone(), task.name.clone())
+    };
+    state.manager.remove(id, false);
+    state.manager.enqueue(url, name);
+    Ok(download_list(&state.manager))
+}
+
+/// The newer desktop release's version string, if one exists
+/// (engine checks the project's GitHub releases for the
+/// desktop-tauri-v prefix). Errors collapse to None: an offline
+/// check is silent, never a nag.
+#[tauri::command]
+pub async fn check_update() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(crate::catalog::check_desktop_update)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten()
 }

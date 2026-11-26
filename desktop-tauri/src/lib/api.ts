@@ -36,6 +36,8 @@ export interface TaskDto {
   etaSecs: number | null;
   error: string | null;
   ready: boolean;
+  /** Completed, but the file is gone from the downloads folder. */
+  fileMissing: boolean;
   segments: SegmentDto[];
 }
 
@@ -208,4 +210,25 @@ export function setSourceEnabled(
   enabled: boolean,
 ): Promise<SourceDto[]> {
   return invoke<SourceDto[]>('set_source_enabled', { name, enabled });
+}
+
+export function getFavorites(): Promise<TitleDto[]> {
+  return invoke<TitleDto[]>('get_favorites');
+}
+
+export function pauseAllDownloads(): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('pause_all_downloads');
+}
+
+export function resumeAllDownloads(): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('resume_all_downloads');
+}
+
+export function redownloadDownload(id: number): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('redownload_download', { id });
+}
+
+/** Newer desktop version string, or null when up to date / offline. */
+export function checkUpdate(): Promise<string | null> {
+  return invoke<string | null>('check_update');
 }

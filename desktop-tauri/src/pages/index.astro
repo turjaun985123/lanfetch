@@ -171,12 +171,26 @@ import '../styles/global.css';
           <header class="border-b border-hairline px-6 py-3">
             <div class="flex items-center justify-between">
               <h1 class="text-[17px] font-semibold">Transfers</h1>
-              <button
-                id="tr-clear"
-                class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-              >
-                Clear completed
-              </button>
+              <div class="flex gap-1.5">
+                <button
+                  id="tr-pause-all"
+                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+                >
+                  Pause all
+                </button>
+                <button
+                  id="tr-resume-all"
+                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+                >
+                  Resume all
+                </button>
+                <button
+                  id="tr-clear"
+                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+                >
+                  Clear completed
+                </button>
+              </div>
             </div>
             <p class="text-[12px] text-ink-2" id="tr-status">…</p>
           </header>
@@ -273,6 +287,10 @@ import '../styles/global.css';
                 <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">App data</dt><dd class="min-w-0 truncate" id="set-data-dir">…</dd></div>
               </dl>
             </div>
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Updates</p>
+              <p id="set-update" class="mt-2 text-[13px] text-ink-2">Checking…</p>
+            </div>
           </div>
         </section>
       </main>
@@ -320,8 +338,13 @@ import '../styles/global.css';
         pauseDownload,
         posterSrcs,
         probeSources,
+        checkUpdate,
+        getFavorites,
+        pauseAllDownloads,
+        redownloadDownload,
         removeDownload,
         removeSource,
+        resumeAllDownloads,
         resumeDownload,
         searchTitles,
         setSourceEnabled,
@@ -505,6 +528,15 @@ import '../styles/global.css';
           if (t.state === 'failed') {
             actions.append(mkBtn('Retry', () => resumeDownload(t.id)));
           }
+          if (t.state === 'completed' && t.fileMissing) {
+            const note = document.createElement('span');
+            note.className = 'self-center text-[11.5px] text-paused';
+            note.textContent = 'File missing';
+            actions.append(
+              note,
+              mkBtn('Redownload', () => redownloadDownload(t.id)),
+            );
+          }
           actions.append(mkBtn('Remove', () => removeDownload(t.id)));
           card.append(actions);
           wrap.append(card);
@@ -546,6 +578,20 @@ import '../styles/global.css';
         .addEventListener('click', async () => {
           try {
             renderDownloads(await clearCompletedDownloads());
+          } catch {}
+        });
+      document
+        .getElementById('tr-pause-all')!
+        .addEventListener('click', async () => {
+          try {
+            renderDownloads(await pauseAllDownloads());
+          } catch {}
+        });
+      document
+        .getElementById('tr-resume-all')!
+        .addEventListener('click', async () => {
+          try {
+            renderDownloads(await resumeAllDownloads());
           } catch {}
         });
 
@@ -831,6 +877,7 @@ import '../styles/global.css';
       async function openFeed(): Promise<void> {
         const gen = ++libGen;
         activeQuery = '';
+        favoritesActive = false;
         titleCount = 0;
         pageLoading = true;
         const grid = status('grid');
@@ -875,25 +922,66 @@ import '../styles/global.css';
         }
       }
 
+      let favoritesActive = false;
+      async function openFavorites(): Promise<void> {
+        const gen = ++libGen;
+        favoritesActive = true;
+        activeQuery = '';
+        feedHasMore = false;
+        titleCount = 0;
+        pageLoading = true;
+        status('grid').replaceChildren();
+        status('lib-empty').classList.add('hidden');
+        status('lib-status').textContent = 'Loading favorites…';
+        try {
+          const favs = await getFavorites();
+          if (gen !== libGen) return;
+          if (!(await paintTitles(favs, gen, true))) return;
+          titleCount = favs.length;
+          status('lib-status').textContent = favs.length + ' favorites';
+          status('lib-empty').classList.toggle('hidden', favs.length !== 0);
+        } catch {
+          if (gen === libGen) {
+            status('lib-status').textContent = 'Could not load favorites.';
+          }
+        } finally {
+          if (gen === libGen) pageLoading = false;
+        }
+      }
+
       function renderChips(categories: CategoryDto[]): void {
         const wrap = status('chips');
         wrap.replaceChildren();
+        const activate = (b: HTMLElement) => {
+          wrap.querySelectorAll('.chip').forEach((el) => {
+            el.classList.toggle('is-active', el === b);
+          });
+        };
         const mk = (label: string, value: string | null) => {
           const b = document.createElement('button');
           b.className =
-            'chip' + (currentCategory === value ? ' is-active' : '');
+            'chip' +
+            (currentCategory === value && !favoritesActive ? ' is-active' : '');
           b.textContent = label;
           b.addEventListener('click', () => {
-            if (currentCategory === value) return;
+            if (currentCategory === value && !favoritesActive) return;
             currentCategory = value;
-            wrap.querySelectorAll('.chip').forEach((el) => {
-              el.classList.toggle('is-active', el === b);
-            });
+            favoritesActive = false;
+            activate(b);
             void openFeed();
           });
           return b;
         };
         wrap.append(mk('All', null));
+        const favChip = document.createElement('button');
+        favChip.className = 'chip' + (favoritesActive ? ' is-active' : '');
+        favChip.textContent = '★ Favorites';
+        favChip.addEventListener('click', () => {
+          if (favoritesActive) return;
+          activate(favChip);
+          void openFavorites();
+        });
+        wrap.append(favChip);
         for (const c of categories) wrap.append(mk(c.name, c.name));
       }
 
@@ -933,6 +1021,7 @@ import '../styles/global.css';
       async function runSearch(q: string): Promise<void> {
         const gen = ++libGen;
         activeQuery = q;
+        favoritesActive = false;
         feedHasMore = false;
         titleCount = 0;
         pageLoading = true;
@@ -1141,6 +1230,11 @@ import '../styles/global.css';
       document
         .getElementById('detail-back')!
         .addEventListener('click', () => show('library'));
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const detail = document.querySelector('[data-screen="detail"]')!;
+        if (!detail.classList.contains('hidden')) show('library');
+      });
       status('detail-fav').addEventListener('click', async () => {
         if (!detailTitle) return;
         const now = await toggleFavorite(detailTitle.folderUrl);
@@ -1189,6 +1283,13 @@ import '../styles/global.css';
         renderDownloads(boot.downloads);
         void loadProbes();
         void loadLibrary(false);
+        void checkUpdate().then((v) => {
+          status('set-update').textContent = v
+            ? 'LanFetch ' +
+              v +
+              ' is available — download it from the project’s Releases page. Your settings and downloads carry over.'
+            : 'You are on the latest version.';
+        });
       }
       void main();
     </script>

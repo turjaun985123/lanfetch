@@ -196,3 +196,52 @@ mod tests {
         let _ = std::fs::remove_file(bak_path(&path));
     }
 }
+
+/// A favorited title's display snapshot, persisted next to the
+/// favorites URL list so the Favorites view can render after a
+/// restart — the URL list alone cannot paint a poster grid.
+/// Snapshots are taken when the favorite is toggled (always from
+/// the detail screen, where the full Title is at hand).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FavTitle {
+    pub folder_url: String,
+    pub source_name: String,
+    pub category: String,
+    pub title: String,
+    pub raw_name: String,
+    pub year: Option<i32>,
+    pub kind: String,
+    pub poster_url: Option<String>,
+    pub language: Option<String>,
+    pub season_count: usize,
+    pub best_quality: Option<String>,
+}
+
+impl From<&crate::catalog::Title> for FavTitle {
+    fn from(t: &crate::catalog::Title) -> Self {
+        FavTitle {
+            folder_url: t.folder_url.clone(),
+            source_name: t.source_name.clone(),
+            category: t.category.clone(),
+            title: t.title.clone(),
+            raw_name: t.raw_name.clone(),
+            year: t.year,
+            kind: t.kind.clone(),
+            poster_url: t.poster_url.clone(),
+            language: t.language.clone(),
+            season_count: t.season_count,
+            best_quality: t.best_quality.clone(),
+        }
+    }
+}
+
+pub fn load_favorite_titles() -> Vec<FavTitle> {
+    read_json(&dir().join("favorite_titles.json")).unwrap_or_default()
+}
+
+pub fn save_favorite_titles(titles: &[FavTitle]) {
+    let _ = std::fs::create_dir_all(dir());
+    if let Ok(json) = serde_json::to_string_pretty(titles) {
+        write_atomic(&dir().join("favorite_titles.json"), &json);
+    }
+}

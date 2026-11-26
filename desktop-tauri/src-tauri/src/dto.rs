@@ -87,6 +87,10 @@ pub struct TaskDto {
     pub eta_secs: Option<f64>,
     pub error: Option<String>,
     pub ready: bool,
+    /// A completed task whose file is no longer in the downloads
+    /// folder (the user moved or deleted it) — drives the
+    /// Redownload action, the Android-parity gap closer.
+    pub file_missing: bool,
     pub segments: Vec<SegmentDto>,
 }
 
@@ -111,6 +115,8 @@ impl From<&Task> for TaskDto {
             eta_secs: t.eta_secs(),
             error: t.error.clone(),
             ready: t.ready,
+            file_missing: t.state == DlState::Completed
+                && !crate::manager::downloads_dir().join(&t.name).exists(),
             segments: t.live_segments().iter().map(SegmentDto::from).collect(),
         }
     }

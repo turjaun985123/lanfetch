@@ -101,7 +101,12 @@ pub fn run() {
             commands::update_settings,
             commands::add_source,
             commands::remove_source,
-            commands::set_source_enabled
+            commands::set_source_enabled,
+            commands::get_favorites,
+            commands::pause_all_downloads,
+            commands::resume_all_downloads,
+            commands::redownload_download,
+            commands::check_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running LanFetch");
