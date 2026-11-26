@@ -218,3 +218,66 @@ pub struct FeedPageDto {
     pub has_more: bool,
     pub superseded: bool,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDto {
+    pub file_name: String,
+    pub file_url: String,
+    /// Bytes; -1 when the server did not report a size.
+    pub size: i64,
+    pub quality: Option<String>,
+    pub source_tag: Option<String>,
+    pub codec: Option<String>,
+    pub audio: Option<String>,
+    pub season: Option<i32>,
+    pub episode: Option<i32>,
+    /// Download state for this exact file URL when a task exists:
+    /// "queued" | "running" | "paused" | "completed" | "failed".
+    pub download_state: Option<String>,
+    pub download_fraction: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TitleDetailDto {
+    pub title: TitleDto,
+    pub files: Vec<FileDto>,
+}
+
+impl FileDto {
+    pub fn new(
+        f: &crate::catalog::CatalogFile,
+        task: Option<(crate::manager::DlState, f64)>,
+    ) -> Self {
+        let (download_state, download_fraction) = match task {
+            Some((state, fraction)) => (
+                Some(
+                    match state {
+                        crate::manager::DlState::Queued => "queued",
+                        crate::manager::DlState::Running => "running",
+                        crate::manager::DlState::Paused => "paused",
+                        crate::manager::DlState::Completed => "completed",
+                        crate::manager::DlState::Failed => "failed",
+                    }
+                    .to_string(),
+                ),
+                Some(fraction),
+            ),
+            None => (None, None),
+        };
+        FileDto {
+            file_name: f.file_name.clone(),
+            file_url: f.file_url.clone(),
+            size: f.size,
+            quality: f.quality.clone(),
+            source_tag: f.source_tag.clone(),
+            codec: f.codec.clone(),
+            audio: f.audio.clone(),
+            season: f.season,
+            episode: f.episode,
+            download_state,
+            download_fraction,
+        }
+    }
+}

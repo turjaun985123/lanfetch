@@ -74,7 +74,10 @@ pub fn run() {
             commands::poster_srcs,
             commands::get_categories,
             commands::feed_open,
-            commands::feed_next
+            commands::feed_next,
+            commands::get_title_detail,
+            commands::start_download,
+            commands::toggle_favorite
         ])
         .run(tauri::generate_context!())
         .expect("error while running LanFetch");

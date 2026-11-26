@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::core;
 use crate::dto::{
-    BootstrapDto, CategoryDto, DownloadListDto, FeedPageDto, SettingsDto, SourceDto,
-    SourceProbeDto, TaskDto, TitleDto,
+    BootstrapDto, CategoryDto, DownloadListDto, FeedPageDto, FileDto, SettingsDto, SourceDto,
+    SourceProbeDto, TaskDto, TitleDetailDto, TitleDto,
 };
 use crate::manager::{DlState, Manager};
 use crate::store::SourceItem;
@@ -32,6 +32,10 @@ pub struct CatalogState {
     pub categories: Vec<crate::catalog::Category>,
     pub feed: Option<crate::catalog::FeedSession>,
     pub generation: u64,
+    /// Every title the feed has emitted, by folder URL — the detail
+    /// command hydrates from here instead of making the frontend
+    /// round-trip a whole Title it only knows as a DTO.
+    pub titles: std::collections::HashMap<String, crate::catalog::Title>,
 }
 
 const FEED_PAGE_SIZE: usize = 48;
@@ -204,8 +208,11 @@ pub async fn feed_open(
         catalog.generation += 1;
         let generation = catalog.generation;
         let mut feed = crate::catalog::FeedSession::new(&catalog.categories, category.as_deref());
-        let titles = feed
-            .next_page(FEED_PAGE_SIZE)
+        let page = feed.next_page(FEED_PAGE_SIZE);
+        for t in &page {
+            catalog.titles.insert(t.folder_url.clone(), t.clone());
+        }
+        let titles = page
             .iter()
             .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
             .collect();
@@ -239,19 +246,96 @@ pub async fn feed_next(state: State<'_, AppState>, generation: u64) -> Result<Fe
                 superseded: true,
             };
         }
-        let feed = catalog.feed.as_mut().expect("checked above");
-        let titles = feed
-            .next_page(FEED_PAGE_SIZE)
+        let page = {
+            let feed = catalog.feed.as_mut().expect("checked above");
+            feed.next_page(FEED_PAGE_SIZE)
+        };
+        for t in &page {
+            catalog.titles.insert(t.folder_url.clone(), t.clone());
+        }
+        let has_more = catalog.feed.as_ref().map(|f| f.has_more).unwrap_or(false);
+        let titles = page
             .iter()
             .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
             .collect();
         FeedPageDto {
             generation,
             titles,
-            has_more: feed.has_more,
+            has_more,
             superseded: false,
         }
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------------ detail + downloads
+
+/// Hydrate one title (poster resolution + full file list) from the
+/// session title cache the feed maintains. The hydrated title is
+/// written back, so reopening the same title is cheap.
+#[tauri::command]
+pub async fn get_title_detail(
+    state: State<'_, AppState>,
+    folder_url: String,
+) -> Result<TitleDetailDto, String> {
+    let catalog_state = state.catalog.clone();
+    let manager = state.manager.clone();
+    let favorites = favorites_set(&state);
+    let title = {
+        let catalog = lock(&catalog_state);
+        catalog
+            .titles
+            .get(&folder_url)
+            .cloned()
+            .ok_or_else(|| "title is not in the current session".to_string())?
+    };
+    let hydrated =
+        tauri::async_runtime::spawn_blocking(move || crate::catalog::hydrate_and_load_files(title))
+            .await
+            .map_err(|e| e.to_string())?;
+    {
+        let mut catalog = lock(&catalog_state);
+        catalog
+            .titles
+            .insert(hydrated.folder_url.clone(), hydrated.clone());
+    }
+    let files = hydrated
+        .files
+        .iter()
+        .map(|f| FileDto::new(f, manager.task_by_url(&f.file_url)))
+        .collect();
+    Ok(TitleDetailDto {
+        title: TitleDto::new(&hydrated, favorites.contains(&hydrated.folder_url)),
+        files,
+    })
+}
+
+/// Enqueue a file for download and return the fresh download list,
+/// so the caller can update Transfers and the nav badge from the
+/// same round trip.
+#[tauri::command]
+pub fn start_download(
+    state: State<'_, AppState>,
+    url: String,
+    name: String,
+) -> Result<DownloadListDto, String> {
+    state.manager.enqueue(url, name);
+    Ok(download_list(&state.manager))
+}
+
+/// Flip a title's favorite state and persist it. Returns the new
+/// state (true = now a favorite).
+#[tauri::command]
+pub fn toggle_favorite(state: State<'_, AppState>, folder_url: String) -> bool {
+    let mut favorites = lock(&state.favorites);
+    let now_favorite = if let Some(pos) = favorites.iter().position(|u| u == &folder_url) {
+        favorites.remove(pos);
+        false
+    } else {
+        favorites.push(folder_url);
+        true
+    };
+    crate::store::save_favorites(&favorites);
+    now_favorite
 }

@@ -117,3 +117,43 @@ export function feedOpen(category: string | null): Promise<FeedPageDto> {
 export function feedNext(generation: number): Promise<FeedPageDto> {
   return invoke<FeedPageDto>('feed_next', { generation });
 }
+
+export interface FileDto {
+  fileName: string;
+  fileUrl: string;
+  size: number; // -1 = unknown
+  quality: string | null;
+  sourceTag: string | null;
+  codec: string | null;
+  audio: string | null;
+  season: number | null;
+  episode: number | null;
+  downloadState:
+    | 'queued'
+    | 'running'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+    | null;
+  downloadFraction: number | null;
+}
+
+export interface TitleDetailDto {
+  title: TitleDto;
+  files: FileDto[];
+}
+
+export function getTitleDetail(folderUrl: string): Promise<TitleDetailDto> {
+  return invoke<TitleDetailDto>('get_title_detail', { folderUrl });
+}
+
+export function startDownload(
+  url: string,
+  name: string,
+): Promise<DownloadListDto> {
+  return invoke<DownloadListDto>('start_download', { url, name });
+}
+
+export function toggleFavorite(folderUrl: string): Promise<boolean> {
+  return invoke<boolean>('toggle_favorite', { folderUrl });
+}
