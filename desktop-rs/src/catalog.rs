@@ -896,7 +896,21 @@ pub fn check_desktop_update() -> Result<Option<String>, String> {
 
 // ------------------------------------------------------------------ posters
 
+/// Magic-byte sniff for the image formats Rune decodes. The LAN
+/// servers answer missing files with 200 + an HTML error page, and
+/// before this check (50-wave program, Wave 3) those bytes were
+/// cached forever and failed decode on every launch.
+pub fn is_image_bytes(b: &[u8]) -> bool {
+    b.starts_with(&[0xFF, 0xD8]) // JPEG
+        || b.starts_with(&[0x89, 0x50, 0x4E, 0x47]) // PNG
+        || b.starts_with(b"GIF8")
+        || b.starts_with(b"BM") // BMP
+        || (b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP")
+}
+
 /// Fetch poster bytes (bounded to ~2 MB) for the UI's ImageCache.
+/// Rejects any body that is not actually an image, with the first
+/// bytes named in the error so a failure is diagnosable.
 pub fn fetch_poster_bytes(url: &str) -> Result<Vec<u8>, String> {
     let resp = http_agent().get(url).call().map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
@@ -907,6 +921,10 @@ pub fn fetch_poster_bytes(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())?;
     if buf.len() > 2_000_000 {
         return Err("poster too large".into());
+    }
+    if !is_image_bytes(&buf) {
+        let head: String = buf.iter().take(4).map(|x| format!("{x:02X}")).collect::<Vec<_>>().join(" ");
+        return Err(format!("not an image (first bytes {head})"));
     }
     Ok(buf)
 }
@@ -935,7 +953,13 @@ pub fn fetch_poster_cached(url: &str) -> Result<Vec<u8>, String> {
     let path = dir.join(format!("{:016x}.img", fnv1a(url.as_bytes())));
     if let Ok(bytes) = std::fs::read(&path) {
         if !bytes.is_empty() && bytes.len() <= 2_000_000 {
-            return Ok(bytes);
+            if is_image_bytes(&bytes) {
+                return Ok(bytes);
+            }
+            // Poisoned entry (e.g. an HTML error page cached by an
+            // older build): drop it and fall through to a refetch
+            // instead of serving undecodable bytes forever.
+            let _ = std::fs::remove_file(&path);
         }
     }
     let bytes = fetch_poster_bytes(url)?;
@@ -952,6 +976,25 @@ pub fn fetch_poster_cached(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_sniff_accepts_real_formats() {
+        assert!(is_image_bytes(&[0xFF, 0xD8, 0xFF, 0xE0])); // JPEG
+        assert!(is_image_bytes(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])); // PNG
+        assert!(is_image_bytes(b"GIF89a"));
+        assert!(is_image_bytes(b"BMxxxx"));
+        assert!(is_image_bytes(b"RIFF\x00\x00\x00\x00WEBP"));
+    }
+
+    #[test]
+    fn image_sniff_rejects_html_and_empty() {
+        // The exact poison the LAN servers serve for missing files.
+        assert!(!is_image_bytes(b"<!DOCTYPE html><html>"));
+        assert!(!is_image_bytes(b"<html><head>"));
+        assert!(!is_image_bytes(b""));
+        assert!(!is_image_bytes(&[0xFF])); // truncated JPEG magic
+        assert!(!is_image_bytes(b"RIFF\x00\x00\x00\x00WAVE")); // RIFF but not WebP
+    }
 
     fn entry(name: &str, is_dir: bool) -> DirEntry {
         DirEntry {
