@@ -866,7 +866,7 @@ fn title_card(s: &State, p: &Palette, t: &Title, poster_h: f32) -> El {
         .grow(1.0)
         .gap(8.0)
         .child(poster_el(s, p, t, 0.0, poster_h))
-        .child(text(t.title.clone()).font(LABEL).color(p.ink).w_full().wrap())
+        .child(text(t.title.clone()).font(HEADLINE).color(p.ink).w_full().wrap().max_lines(2))
         .child(text(meta).font(SMALL).color(p.ink2).w_full().wrap())
         .child(
             row()
@@ -1038,11 +1038,12 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
                     .w_full()
                     .gap(10.0)
                     .child(text(label).font(SMALL).color(p.ink).grow(1.0).wrap())
-                    .child(badge(
-                        f.quality.clone().unwrap_or_default(),
-                        p.raised,
-                        p.ink2,
-                    ))
+                    .child(match &f.quality {
+                        // An empty quality rendered an empty pill
+                        // (design audit bug); no badge at all now.
+                        Some(q) if !q.is_empty() => badge(q.clone(), p.raised, p.ink2),
+                        _ => el(),
+                    })
                     .child(badge(
                         if f.size >= 0 { fmt_bytes(f.size as u64) } else { "—".into() },
                         p.raised,
@@ -1144,10 +1145,13 @@ fn library_view(s: &State, p: &Palette) -> El {
             );
     }
     if let Some(t) = &s.detail {
+        // Header carries the section + Back only: the title lives
+        // once, as the DISPLAY hero inside detail_view (it used to
+        // render in both — design audit P7).
         let header = screen_header(
             p,
-            text(t.title.clone()).font(TITLE).color(p.ink),
-            Some(format!("{} · {}", t.category, t.source_name)),
+            text(u.library).font(TITLE).color(p.ink),
+            None,
             Some(row().gap(8.0).child(btn_tonal(u.back, p, |s: &mut State| {
                 s.detail = None;
                 s.quality_choice = None;
