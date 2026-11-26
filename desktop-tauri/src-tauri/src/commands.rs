@@ -369,7 +369,7 @@ pub fn get_favorites(state: State<'_, AppState>) -> Vec<TitleDto> {
         .into_iter()
         .filter(|s| favorites.contains(&s.folder_url))
         .collect();
-    snapshots.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    snapshots.sort_by_key(|a| a.title.to_lowercase());
     {
         let mut catalog = lock(&state.catalog);
         for s in &snapshots {
