@@ -740,7 +740,10 @@ fn breadth_search(source_name: &str, root_url: &str, query: &str) -> Vec<Title> 
                         raw_name: parent_name,
                         year: parse_year(&haystack),
                         kind: if is_series { "series".into() } else { "movie".into() },
-                        poster_url: None,
+                        // The folder listing being scanned IS this
+                        // title's folder: its poster (the lone image
+                        // beside the video) is already in hand.
+                        poster_url: pick_poster(&entries),
                         language: parse_language(&cat),
                         files_loaded: false,
                         season_count: 0,
@@ -756,6 +759,22 @@ fn breadth_search(source_name: &str, root_url: &str, query: &str) -> Vec<Title> 
         }
     }
     results
+}
+
+/// Search-constructed titles are built from file hits, so the h5ai
+/// path never passes through build_title/pick_poster and shipped
+/// with poster_url: None — search cards could only ever show
+/// initials tiles (50-wave program, Wave 5). Resolve each missing
+/// poster from the title's own folder listing: a cache hit in the
+/// breadth path, one fetch per folder in the h5ai path.
+fn enrich_posters(titles: &mut [Title]) {
+    for t in titles.iter_mut() {
+        if t.poster_url.is_none() {
+            if let Ok(entries) = fetch_cached(&t.folder_url) {
+                t.poster_url = pick_poster(&entries);
+            }
+        }
+    }
 }
 
 /// Search-scope filter: an empty selection means "all categories";
@@ -821,10 +840,12 @@ pub fn search(sources: &[(String, String)], query: &str) -> Vec<Title> {
     for (name, root) in sources.to_vec() {
         let q = query.clone();
         handles.push(std::thread::spawn(move || {
-            match h5ai_search(&root, &q) {
+            let mut titles = match h5ai_search(&root, &q) {
                 Some(items) => group_h5ai_hits(&name, &root, items),
                 None => breadth_search(&name, &root, &q),
-            }
+            };
+            enrich_posters(&mut titles);
+            titles
         }));
     }
     let mut merged: Vec<Title> = Vec::new();
@@ -1080,6 +1101,22 @@ mod tests {
         assert_eq!(t.kind, "movie");
         assert_eq!(t.poster_url.as_deref(), Some("http://h/poster.jpg"));
         assert_eq!(t.year, Some(2023));
+    }
+
+    #[test]
+    fn build_title_poster_from_real_dhakaflix_layout() {
+        // Captured from the user's LAN (2026-11-26, DHAKA-FLIX-7,
+        // h5ai v0.29.0): a movie folder holds exactly the .mkv and
+        // ONE image with a meaningless name — no poster.jpg, no
+        // cover, no siblings, no subfolders. The picker must still
+        // find it: any-image is the lowest score, and a lone image
+        // wins by default.
+        let entries = vec![
+            entry("The Mosquito Bowl (2026) 720p NF-WEB x264.mkv", false),
+            entry("a_AL_.jpg", false),
+        ];
+        let t = build_title("S", "English Movies", "http://h/M/", "The Mosquito Bowl (2026) 720p", &entries).unwrap();
+        assert_eq!(t.poster_url.as_deref(), Some("http://h/a_AL_.jpg"));
     }
 
     #[test]
