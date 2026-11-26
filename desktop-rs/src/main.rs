@@ -47,6 +47,7 @@ struct Ui {
     movies: &'static str,
     series: &'static str,
     favorites: &'static str,
+    filters: &'static str,
     newest: &'static str,
     by_title: &'static str,
     by_year: &'static str,
@@ -74,6 +75,7 @@ const UI_EN: Ui = Ui {
     movies: "Movies",
     series: "Series",
     favorites: "Favorites",
+    filters: "Filters",
     newest: "Newest",
     by_title: "Title",
     by_year: "Year",
@@ -101,6 +103,7 @@ const UI_BN: Ui = Ui {
     movies: "মুভি",
     series: "সিরিজ",
     favorites: "পছন্দের",
+    filters: "ফিল্টার",
     newest: "নতুন",
     by_title: "নাম",
     by_year: "বছর",
@@ -178,6 +181,9 @@ struct State {
     quality_filter: Option<String>,
     fav_only: bool,
     sort_mode: u8, // 0 newest (feed order) · 1 title · 2 year · 3 size desc · 4 size asc
+    /// Quality facets live behind a Filters toggle, closed by
+    /// default (Wave 11) — they used to occupy a permanent row.
+    filters_open: bool,
     // Posters
     posters: HashMap<String, PosterState>,
     poster_queue: PosterQueue,
@@ -1143,7 +1149,11 @@ fn library_view(s: &State, p: &Palette) -> El {
         body = body.child(row().w_full().scroll_x().scroll_edge_fade(24.0).child(strip));
     }
 
-    // Filter row: kind, favorites, sort.
+    // Toolbar (Wave 11): kind trio + Favorites on the left; on the
+    // right, a Filters toggle and ONE cycling Sort chip. Five sort
+    // chips plus an always-open quality row were the rest of the
+    // chip sprawl — quality now lives behind Filters, closed by
+    // default, its active count riding on the toggle.
     let mut filters = row().w_full().gap(8.0);
     for (kind, label) in [(None, u.all), (Some("movie".to_string()), u.movies), (Some("series".to_string()), u.series)] {
         let selected = s.kind_filter == kind;
@@ -1153,17 +1163,25 @@ fn library_view(s: &State, p: &Palette) -> El {
     }
     filters = filters.child(chip(u.favorites, s.fav_only, p, |s: &mut State| s.fav_only = !s.fav_only));
     filters = filters.child(el().grow(1.0));
-    for (mode, label) in
-        [(0u8, u.newest), (1, u.by_title), (2, u.by_year), (3, u.size_big), (4, u.size_small)]
-    {
-        let selected = s.sort_mode == mode;
-        filters = filters.child(chip(label, selected, p, move |s: &mut State| s.sort_mode = mode));
-    }
+    let active_filters = usize::from(s.quality_filter.is_some());
+    let filters_label = if active_filters > 0 {
+        format!("{} ·{active_filters}", u.filters)
+    } else {
+        u.filters.to_string()
+    };
+    filters = filters.child(chip(&filters_label, s.filters_open || active_filters > 0, p, |s: &mut State| {
+        s.filters_open = !s.filters_open
+    }));
+    let sort_labels = [u.newest, u.by_title, u.by_year, u.size_big, u.size_small];
+    let sort_label = format!("⇅ {}", sort_labels[(s.sort_mode as usize) % sort_labels.len()]);
+    filters = filters.child(chip(&sort_label, false, p, |s: &mut State| {
+        s.sort_mode = (s.sort_mode + 1) % 5;
+    }));
     body = body.child(filters);
 
-    // Quality facet chips from the loaded pool.
+    // Quality facet chips from the loaded pool — behind Filters now.
     let qualities = pool_qualities(s);
-    if qualities.len() > 1 {
+    if s.filters_open && qualities.len() > 1 {
         let mut qrow = row().w_full().gap(8.0);
         for q in qualities {
             let selected = s.quality_filter.as_deref() == Some(q.as_str());
@@ -1973,6 +1991,7 @@ fn main() {
             quality_filter: None,
             fav_only: false,
             sort_mode: 0,
+            filters_open: false,
             posters: HashMap::new(),
             poster_queue: PosterQueue::new(),
             poster_latest: std::array::from_fn(|_| Latest::default()),
