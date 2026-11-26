@@ -1,5 +1,36 @@
 # LanFetch Desktop — Changelog
 
+## 1.6.0 (release candidate) — the Tauri rebuild
+
+The Rune UI is gone. Same Rust engine (catalog, downloads,
+posters — carried over untouched, tests and all), new shell:
+Tauri 2 + Astro + Tailwind rendering through the system's own
+webview. The three failures that ended the Rune build shaped the
+architecture:
+
+- **Category clicks could latch shut.** Selection now lives in
+  the frontend and every load carries a generation number — a
+  click takes effect the same frame, and a superseded load can
+  never paint over a newer one, whatever the servers are doing.
+- **Later launches fetched nothing.** Catalog state is a server-
+  side session with an explicit lifecycle, not per-launch UI
+  state; refresh rediscovers instead of reusing a dead session.
+- **Slower than the phone.** Server work is parallel (one thread
+  per source for probes, paged progressive feed), posters stream
+  through a custom protocol from the disk cache — never base64
+  over IPC — and download progress arrives as pushed events,
+  not polling.
+
+Everything the Rune build had works here: poster grid with
+search and favorites, season-grouped detail with per-file
+quality, live transfers with speed and ETA, pause/resume per
+file or all at once, redownload when a finished file goes
+missing, server management (add / remove / enable), engine
+settings that apply immediately, first-run onboarding, and an
+update check. Your settings, favorites, downloads and poster
+cache carry over in place — this release installs as the same
+`lanfetch` package.
+
 ## 1.5.0 (release candidate)
 
 The fix release. Everything below came out of running 1.4.0 on a

@@ -32,6 +32,17 @@ pub fn run() {
         catalog: Arc::new(Mutex::new(commands::CatalogState::default())),
     };
     tauri::Builder::default()
+        // Single instance, registered first by the plugin's own
+        // contract: a second launch focuses the running window
+        // instead of opening a rival app over the same downloads.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(state)
         .setup(move |app| {
             // Downloads event bridge: the manager's framework-neutral
