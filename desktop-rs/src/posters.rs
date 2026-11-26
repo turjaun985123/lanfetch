@@ -155,6 +155,20 @@ mod tests {
     }
 
     #[test]
+    fn forget_allows_redispatch() {
+        // Memory-cap eviction forgets a URL; the title must be
+        // fetchable again afterwards or evicted posters would be
+        // gone for the whole session.
+        let mut q = PosterQueue::new();
+        assert!(q.enqueue("u"));
+        assert_eq!(q.next_dispatch().as_deref(), Some("u"));
+        q.resolve("u", true);
+        q.forget("u");
+        assert!(q.enqueue("u"), "a forgotten URL must enqueue again");
+        assert_eq!(q.next_dispatch().as_deref(), Some("u"));
+    }
+
+    #[test]
     fn dispatch_is_fifo() {
         let mut q = PosterQueue::new();
         for n in ["1", "2", "3", "4", "5"] {

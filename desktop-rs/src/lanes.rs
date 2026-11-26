@@ -176,7 +176,7 @@ pub fn btn_primary<S: 'static>(label: &str, p: &Palette, f: impl Fn(&mut S) + 's
 /// Raised neutral button (secondary action).
 pub fn btn_tonal<S: 'static>(label: &str, p: &Palette, f: impl Fn(&mut S) + 'static) -> El {
     el()
-        .h(30.0)
+        .h(40.0)
         .px(14.0)
         .center()
         .radius(999.0)
