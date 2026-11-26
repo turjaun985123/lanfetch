@@ -800,7 +800,7 @@ fn title_card(s: &State, p: &Palette, t: &Title) -> El {
     // most active task among this title's files.
     let mut dl_note: Option<(u8, String)> = None;
     for f in &t.files {
-        if let Some((st, fr)) = s.manager.task_by_url(&f.url) {
+        if let Some((st, fr)) = s.manager.task_by_url(&f.file_url) {
             let pct = (fr * 100.0) as u32;
             let (rank, txt) = match st {
                 DlState::Running => (5, format!("↓ {pct}%")),
@@ -990,7 +990,7 @@ fn detail_view(s: &State, p: &Palette, t: &Title) -> El {
             label = format!("S{sn:02}E{ep:02} · {label}");
         }
         let file = f.clone();
-        let state_badge = dl_badge_for(s, p, &f.url).unwrap_or_else(|| el());
+        let state_badge = dl_badge_for(s, p, &f.file_url).unwrap_or_else(|| el());
         list = list.child(
             card(p).w_full().padding(10.0).child(
                 row()
