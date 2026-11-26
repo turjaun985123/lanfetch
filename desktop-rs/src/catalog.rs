@@ -943,30 +943,55 @@ fn rank_results(mut items: Vec<Title>, query: &str) -> Vec<Title> {
 
 /// searchDirect port: h5ai search per server, breadth fallback, merged
 /// by folder URL and ranked.
+/// Wall-clock budget for one global search. Search had no deadline
+/// (Performance audit): one slow source's breadth walk could hold
+/// the results hostage long after every other server had answered.
+const SEARCH_DEADLINE: Duration = Duration::from_secs(20);
+
+/// Collect up to `expected` messages from `rx`, giving up at
+/// `deadline` and returning whatever arrived. Senders that miss the
+/// deadline are detached — their late sends simply fail.
+fn collect_with_deadline<T>(
+    rx: std::sync::mpsc::Receiver<T>,
+    expected: usize,
+    deadline: Duration,
+) -> Vec<T> {
+    let start = Instant::now();
+    let mut out = Vec::new();
+    while out.len() < expected {
+        let Some(remaining) = deadline.checked_sub(start.elapsed()) else { break };
+        match rx.recv_timeout(remaining) {
+            Ok(v) => out.push(v),
+            Err(_) => break,
+        }
+    }
+    out
+}
+
 pub fn search(sources: &[(String, String)], query: &str) -> Vec<Title> {
     let query = query.trim().to_string();
     if query.is_empty() {
         return Vec::new();
     }
-    let mut handles = Vec::new();
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<Title>>();
     for (name, root) in sources.to_vec() {
         let q = query.clone();
-        handles.push(std::thread::spawn(move || {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
             let mut titles = match h5ai_search(&root, &q) {
                 Some(items) => group_h5ai_hits(&name, &root, items),
                 None => breadth_search(&name, &root, &q),
             };
             enrich_posters(&mut titles);
-            titles
-        }));
+            let _ = tx.send(titles);
+        });
     }
+    drop(tx);
     let mut merged: Vec<Title> = Vec::new();
-    for h in handles {
-        if let Ok(titles) = h.join() {
-            for t in titles {
-                if !merged.iter().any(|x| x.folder_url == t.folder_url) {
-                    merged.push(t);
-                }
+    for titles in collect_with_deadline(rx, sources.len(), SEARCH_DEADLINE) {
+        for t in titles {
+            if !merged.iter().any(|x| x.folder_url == t.folder_url) {
+                merged.push(t);
             }
         }
     }
@@ -1159,6 +1184,25 @@ mod tests {
         assert!(is_image_bytes(b"GIF89a"));
         assert!(is_image_bytes(b"BMxxxx"));
         assert!(is_image_bytes(b"RIFF\x00\x00\x00\x00WEBP"));
+    }
+
+    #[test]
+    fn collect_with_deadline_returns_partial_results() {
+        let (tx, rx) = std::sync::mpsc::channel::<i32>();
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        // A third sender that never sends (a stuck source): the
+        // collector must return the two arrivals at the deadline,
+        // not wait forever. Short deadline keeps the test fast.
+        let start = Instant::now();
+        let got = collect_with_deadline(rx, 3, Duration::from_millis(60));
+        assert_eq!(got, vec![1, 2]);
+        assert!(start.elapsed() < Duration::from_secs(5));
+        // All expected arriving ends the wait immediately.
+        let (tx2, rx2) = std::sync::mpsc::channel::<i32>();
+        tx2.send(7).unwrap();
+        let got = collect_with_deadline(rx2, 1, Duration::from_secs(30));
+        assert_eq!(got, vec![7]);
     }
 
     #[test]
