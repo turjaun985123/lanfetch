@@ -1,1 +1,35 @@
-{"$schema":"https://schema.tauri.app/config/2","app":{"security":{"csp":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' lanfetch-poster: data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost lanfetch-poster:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"},"windows":[{"center":true,"height":760,"label":"main","minHeight":560,"minWidth":880,"resizable":true,"title":"LanFetch","width":1180}]},"build":{"beforeBuildCommand":"npm run build","beforeDevCommand":"npm run dev","devUrl":"http://127.0.0.1:4321","frontendDist":"../dist"},"bundle":{"active":true,"category":"Utility","icon":["icons/icon.png"],"linux":{"deb":{"depends":["libwebkit2gtk-4.1-0","libgtk-3-0","libsoup-3.0-0","libjavascriptcoregtk-4.1-0","librsvg2-2"],"priority":"optional","section":"net"}},"longDescription":"LanFetch browses DhakaFlix-style LAN directory servers, shows a poster catalog with live search and filters, and downloads with a parallel segmented engine that resumes byte-exactly across restarts.","shortDescription":"Browse LAN media servers and download with a segmented, resumable engine","targets":["deb"]},"identifier":"com.npcautomators.lanfetch","productName":"LanFetch","version":"../package.json"}
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' lanfetch-poster: data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost lanfetch-poster:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+    },
+    "windows": [
+      {
+        "center": true,
+        "height": 760,
+        "label": "main",
+        "minHeight": 560,
+        "minWidth": 880,
+        "resizable": true,
+        "title": "LanFetch",
+        "width": 1180
+      }
+    ]
+  },
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:4321",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.png"
+    ]
+  },
+  "identifier": "com.npcautomators.lanfetch",
+  "productName": "LanFetch",
+  "version": "../package.json"
+}

@@ -145,12 +145,23 @@ jobs:
         # with beforeBuildCommand disabled so it never rebuilds this.
         run: npm run build
 
-      - name: Build Tauri .deb
-        run: npx tauri build --bundles deb --config '{"build":{"beforeBuildCommand":""}}'
+      - name: Build Tauri app (no bundle)
+        # Tauri's own deb bundler derives Package from productName
+        # ("LanFetch"), breaking the dpkg upgrade path from the
+        # Rune-era "lanfetch" package — packaging is done by the
+        # project's proven script instead (Release plan's documented
+        # fallback, adopted in Wave 2 after the bundler's .deb failed
+        # the identity assert).
+        run: npx tauri build --no-bundle --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Package .deb (project script)
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          sh packaging/package-deb.sh src-tauri/target/release/lanfetch "lanfetch_${VERSION}_amd64.deb"
 
       - name: Assert .deb identity (Package + Version gate the upgrade path)
         run: |
-          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          DEB=$(ls lanfetch_*_amd64.deb | head -1)
           echo "Built: $DEB"
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
           dpkg-deb -f "$DEB" Package | grep -qx lanfetch
@@ -161,7 +172,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lanfetch-deb
-          path: desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
+          path: desktop-tauri/lanfetch_*_amd64.deb
           if-no-files-found: error
           retention-days: 14
 
