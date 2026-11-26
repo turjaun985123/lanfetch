@@ -391,6 +391,15 @@ pub struct Progress {
     /// every chunk so the UI can draw the Android app's segmented ring and
     /// per-lane bars while a transfer is running (not just at the end).
     pub live_segments: Mutex<Vec<Segment>>,
+    /// Set by the engine thread the moment run_download returns —
+    /// on EVERY exit (complete, failed, paused). The UI ticker
+    /// loops on this instead of finished/failed: the pause path
+    /// sets neither of those, so tickers used to leak forever on
+    /// pause and pile up across resumes (50-wave program, Wave 9).
+    pub stopped: AtomicBool,
+    /// Swap-guarded by the ticker spawn so a task never runs two
+    /// tickers at once.
+    pub ticker_active: AtomicBool,
 }
 
 impl Progress {
@@ -402,6 +411,8 @@ impl Progress {
             finished: AtomicBool::new(false),
             message: Mutex::new(None),
             live_segments: Mutex::new(Vec::new()),
+            stopped: AtomicBool::new(false),
+            ticker_active: AtomicBool::new(false),
         }
     }
 }

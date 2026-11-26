@@ -372,6 +372,10 @@ impl Manager {
             t.last_tick_bytes = t.downloaded();
             t.last_tick_at = std::time::Instant::now();
             t.speed_bps = 0.0;
+            // A resumed task's Progress still carries stopped=true
+            // from its previous run; clear it or the new ticker
+            // exits instantly (Wave 9).
+            t.progress.stopped.store(false, Ordering::SeqCst);
             (
                 t.url.clone(),
                 t.name.clone(),
@@ -383,16 +387,24 @@ impl Manager {
         };
         self.wake();
         let mgr = Arc::clone(self);
-        // UI ticker: wake ~4x/s while this task runs so bars/speed move.
-        {
+        // UI ticker: wake ~4x/s while this task runs so bars/speed
+        // move. Loops on Progress::stopped (set on EVERY engine
+        // exit — the old finished/failed condition leaked the
+        // ticker forever on pause) and is swap-guarded so a resume
+        // never runs a second ticker for the same task (Wave 9).
+        if !progress.ticker_active.swap(true, Ordering::SeqCst) {
             let mgr = Arc::clone(self);
             let progress = Arc::clone(&progress);
             std::thread::spawn(move || {
-                while !progress.finished.load(Ordering::SeqCst) && !progress.failed.load(Ordering::SeqCst) {
+                while !progress.stopped.load(Ordering::SeqCst) {
                     std::thread::sleep(std::time::Duration::from_millis(250));
+                    if progress.stopped.load(Ordering::SeqCst) {
+                        break;
+                    }
                     mgr.tick_speed(id);
                     mgr.wake();
                 }
+                progress.ticker_active.store(false, Ordering::SeqCst);
             });
         }
         std::thread::spawn(move || {
@@ -400,6 +412,9 @@ impl Manager {
             let _ = std::fs::create_dir_all(&dir);
             let part = dir.join(format!("{name}.part"));
             let out = run_download(&url, &part, segments, validator, pause_flag, Arc::clone(&progress));
+            // Every exit lands here — complete, failed or paused:
+            // tell the ticker to stop (Wave 9).
+            progress.stopped.store(true, Ordering::SeqCst);
             let finished = progress.finished.load(Ordering::SeqCst);
             let failed = progress.failed.load(Ordering::SeqCst);
             if finished {
