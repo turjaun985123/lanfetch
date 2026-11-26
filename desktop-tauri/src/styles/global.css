@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/* Anek Bangla — one family for Latin + Bangla, self-hosted (no CDN). */
+@font-face {
+  font-family: "Anek Bangla";
+  src: url("/fonts/anek_bangla_regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Anek Bangla";
+  src: url("/fonts/anek_bangla_medium.ttf") format("truetype");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Anek Bangla";
+  src: url("/fonts/anek_bangla_semibold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Anek Bangla";
+  src: url("/fonts/anek_bangla_bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+/* Lanes semantic tokens (Android LanesTheme values), remapped per
+   theme on <html data-theme>. Components use only semantic names. */
+:root {
+  --canvas: #f2f4f3;
+  --surface: #ffffff;
+  --raised: #e7ebea;
+  --hairline: #d5dbd9;
+  --ink: #14181a;
+  --ink-2: #4a5457;
+  --ink-3: #5f6a69;
+  --accent: #2b39f0;
+  --accent-container: #e1e4ff;
+  --on-accent-container: #171f99;
+  --paused: #8a5f00;
+  --failed: #b8322c;
+  --done: #1b7340;
+}
+[data-theme="dark"] {
+  --canvas: #101214;
+  --surface: #17191c;
+  --raised: #202327;
+  --hairline: #2a2e32;
+  --ink: #ecefef;
+  --ink-2: #a5adac;
+  --ink-3: #8a9392;
+  --accent: #8e98ff;
+  --accent-container: #1e2470;
+  --on-accent-container: #d9ddff;
+  --paused: #f2b632;
+  --failed: #ff7b72;
+  --done: #4cc380;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-hairline: var(--hairline);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-container: var(--accent-container);
+  --color-on-accent-container: var(--on-accent-container);
+  --color-paused: var(--paused);
+  --color-failed: var(--failed);
+  --color-done: var(--done);
+  --font-sans: "Anek Bangla", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-canvas text-ink font-sans;
+  /* Native-app feel (user requirement, 2026-11-26): dragging the
+     mouse must never select UI text like a web page's select-all.
+     Selection stays enabled only inside real text fields (below). */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+img {
+  -webkit-user-drag: none;
+}

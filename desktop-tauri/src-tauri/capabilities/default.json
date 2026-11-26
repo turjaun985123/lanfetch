@@ -1,0 +1,1 @@
+{"$schema":"../gen/schemas/desktop-schema.json","description":"LanFetch main window — commands and events only; no filesystem, shell, dialog or HTTP plugin permissions. The Rust command surface is the entire security boundary.","identifier":"default","permissions":["core:default"],"windows":["main"]}

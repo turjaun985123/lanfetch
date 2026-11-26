@@ -1,0 +1,104 @@
+name: Desktop Tauri CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'desktop-tauri-v*' ]
+    paths:
+      - 'desktop-tauri/**'
+      - '.github/workflows/desktop-tauri.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-tauri-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    # Pinned to Ubuntu 24.04 (glibc 2.39) — same baseline decision as
+    # the retired desktop-rs workflow: a newer glibc floor would make
+    # the .deb uninstallable on the user's Ubuntu 24.04 machine.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop-tauri
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Node (pinned)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop-tauri/package-lock.json
+
+      - name: Version consistency (package.json == Cargo.toml)
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          CARGO=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          echo "package.json=$PKG src-tauri/Cargo.toml=$CARGO"
+          test "$PKG" = "$CARGO"
+
+      - name: Install dependencies (lockfile)
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Build frontend (Astro)
+        run: npm run build
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop-tauri/src-tauri
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Tauri system dependencies
+        # WebKitGTK stack Tauri links against on Linux. Also needed for
+        # `cargo test`: compiling the tauri crate runs webkit2gtk-sys.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev \
+            build-essential pkg-config file
+
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
+          components: rustfmt, clippy
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-tauri/src-tauri
+
+      - name: Placeholder frontend dist (for cargo test only)
+        # generate_context! embeds frontendDist at compile time; the
+        # real Astro build runs in the frontend/bundle jobs. The test
+        # job only needs the path to exist.
+        working-directory: desktop-tauri
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><title>LanFetch</title>' > dist/index.html
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy (informational in Wave 1; becomes a gate in Wave 2)
+        continue-on-error: true
+        run: cargo clippy --locked -- -D warnings
+
+      - name: Unit tests
+        # The carried engine suite (43 tests from core/catalog/meta/
+        # store/manager) must pass unmodified in its new home.
+        run: cargo test --locked

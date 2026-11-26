@@ -1,0 +1,115 @@
+---
+import '../styles/global.css';
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LanFetch</title>
+    <script is:inline>
+      // Theme before first paint (no flash): stored choice wins,
+      // otherwise follow the OS. The settings wave wires the toggle.
+      try {
+        var t = localStorage.getItem('lanfetch-theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia('(prefers-color-scheme: light)').matches
+            ? 'light'
+            : 'dark';
+        }
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div class="flex h-full">
+      <aside
+        class="flex w-52 shrink-0 flex-col border-r border-hairline bg-surface"
+      >
+        <div class="px-4 pb-2 pt-4 text-[22px] font-semibold tracking-tight">
+          lanfetch
+        </div>
+        <nav class="flex flex-col gap-1 px-3 py-2 text-[13px] font-medium">
+          <span class="rounded-full bg-accent-container px-4 py-2 text-on-accent-container">Library</span>
+          <span class="rounded-full px-4 py-2 text-ink-2">Transfers</span>
+          <span class="rounded-full px-4 py-2 text-ink-2">Servers</span>
+          <span class="rounded-full px-4 py-2 text-ink-2">Settings</span>
+        </nav>
+        <div class="mt-auto px-4 py-3 text-[11px] text-ink-3" id="version"></div>
+      </aside>
+      <main class="min-w-0 flex-1 overflow-y-auto">
+        <header class="border-b border-hairline px-6 py-3">
+          <h1 class="text-[17px] font-semibold">Servers</h1>
+          <p class="text-[12px] text-ink-2" id="status">Starting…</p>
+        </header>
+        <section class="flex flex-col gap-2 px-6 py-5" id="probes"></section>
+      </main>
+    </div>
+
+    <script>
+      import { getBootstrap, probeSources } from '../lib/api';
+
+      const status = document.getElementById('status')!;
+      const probesEl = document.getElementById('probes')!;
+      const versionEl = document.getElementById('version')!;
+
+      function dotClass(s: string): string {
+        return s === 'up'
+          ? 'bg-done'
+          : s === 'down'
+            ? 'bg-failed'
+            : 'bg-ink-3';
+      }
+
+      async function main() {
+        let boot;
+        try {
+          boot = await getBootstrap();
+        } catch {
+          status.textContent =
+            'Not running inside Tauri — this is the browser preview.';
+          return;
+        }
+        versionEl.textContent = 'v' + boot.appVersion;
+        const enabled = boot.sources.filter((s) => s.enabled).length;
+        status.textContent =
+          boot.sources.length +
+          ' servers · ' +
+          enabled +
+          ' enabled · probing…';
+
+        const results = await probeSources();
+        probesEl.replaceChildren();
+        for (const p of results) {
+          const row = document.createElement('div');
+          row.className =
+            'flex items-center gap-3 rounded-2xl border border-hairline bg-surface px-4 py-3';
+          const dot = document.createElement('span');
+          dot.className = 'h-2 w-2 shrink-0 rounded-full ' + dotClass(p.status);
+          const name = document.createElement('span');
+          name.className = 'text-[13.5px] font-medium';
+          name.textContent = p.name;
+          const url = document.createElement('span');
+          url.className = 'min-w-0 flex-1 truncate text-[12px] text-ink-3';
+          url.textContent = p.rootUrl;
+          const state = document.createElement('span');
+          state.className = 'text-[12px] tabular-nums text-ink-2';
+          state.textContent =
+            p.status === 'up'
+              ? 'Online · ' + p.latencyMs + ' ms'
+              : p.status === 'down'
+                ? 'Unreachable'
+                : 'Disabled';
+          row.append(dot, name, url, state);
+          probesEl.append(row);
+        }
+        const up = results.filter((r) => r.status === 'up').length;
+        status.textContent =
+          up + ' of ' + results.length + ' servers online';
+      }
+
+      void main();
+    </script>
+  </body>
+</html>

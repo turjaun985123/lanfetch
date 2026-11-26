@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=LanFetch
-Comment=Browse LAN file servers and download with a segmented, resumable engine
-Exec=/usr/bin/lanfetch
-Icon=lanfetch
-Terminal=false
-Categories=Network;FileTransfer;
-Keywords=download;lan;ftp;http;
