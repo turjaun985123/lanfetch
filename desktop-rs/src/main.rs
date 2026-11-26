@@ -497,11 +497,19 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         changed = true;
     }
     if let Some((session, page)) = s.feed_latest.take() {
+        let more = session.has_more;
         s.feed_session = Some(session);
         s.feed_loading = false;
         enqueue_posters(s, &page);
         s.feed_titles.extend(page);
         s.lib_gen += 1;
+        // Stall guard (Wave 7): if two pages still don't fill the
+        // viewport, at-bottom never toggles and the scroll hooks
+        // stay silent — pull the next page directly. Bounded: the
+        // hooks take over once the pool reaches two full pages.
+        if more && s.feed_titles.len() < 36 {
+            drive_feed(s);
+        }
         changed = true;
     }
     if let Some(results) = s.search_latest.take() {
@@ -1180,7 +1188,28 @@ fn library_view(s: &State, p: &Palette) -> El {
 
     // Title grid, five portrait cards per row (Netflix density).
     let visible = visible_titles(s);
-    let mut grid = col().w_full().grow(1.0).shrink().gap(14.0).scroll(ScrollSpec { stick_bottom: false });
+    let mut grid = col()
+        .w_full()
+        .grow(1.0)
+        .shrink()
+        .gap(14.0)
+        .scroll(ScrollSpec { stick_bottom: false })
+        // Infinite scroll (50-wave program, Wave 7): Rune reports
+        // at-bottom changes and far-from-bottom crossings, never
+        // per frame — both hooks just call drive_feed, which
+        // self-guards while a page is in flight, so the chain is
+        // one page at a time. Prefetching from ~400 pt out is what
+        // makes the scroll feel endless instead of stop-and-wait.
+        .on_at_bottom(|s: &mut State, at: bool| {
+            if at && !s.search_mode {
+                drive_feed(s);
+            }
+        })
+        .on_far_from_bottom(400.0, |s: &mut State, far: bool| {
+            if !far && !s.search_mode {
+                drive_feed(s);
+            }
+        });
     if visible.is_empty() {
         if s.feed_loading || s.search_loading || s.cats_loading {
             for _ in 0..2 {
@@ -1204,7 +1233,18 @@ fn library_view(s: &State, p: &Palette) -> El {
         }
         grid = grid.child(row_el);
     }
+    if s.feed_loading && !visible.is_empty() {
+        // A page is in flight: show the fetch at the tail instead
+        // of a dead bottom (Wave 7).
+        let mut row_el = row().w_full().gap(14.0);
+        for _ in 0..5 {
+            row_el = row_el.child(skeleton_card(p));
+        }
+        grid = grid.child(row_el);
+    }
     if !s.search_mode && s.feed_session.as_ref().map(|f| f.has_more).unwrap_or(false) {
+        // Kept as the manual fallback for the one case the hooks
+        // can't see: a page that never overflows the viewport.
         grid = grid.child(
             row()
                 .w_full()
