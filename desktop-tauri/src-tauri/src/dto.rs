@@ -147,3 +147,74 @@ pub struct SourceProbeDto {
     pub status: String,
     pub latency_ms: Option<u64>,
 }
+
+// ------------------------------------------------------------ catalog
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryDto {
+    pub name: String,
+    /// Names of the sources that carry this category.
+    pub sources: Vec<String>,
+}
+
+impl From<&crate::catalog::Category> for CategoryDto {
+    fn from(c: &crate::catalog::Category) -> Self {
+        CategoryDto {
+            name: c.name.clone(),
+            sources: c.locations.iter().map(|(name, _)| name.clone()).collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TitleDto {
+    pub folder_url: String,
+    pub source_name: String,
+    pub category: String,
+    pub title: String,
+    pub year: Option<i32>,
+    /// "movie" | "series"
+    pub kind: String,
+    /// Remote poster URL (not a protocol src — the frontend batches
+    /// these through `poster_srcs`), null when the folder has none.
+    pub poster_url: Option<String>,
+    pub language: Option<String>,
+    pub season_count: usize,
+    pub best_quality: Option<String>,
+    pub copies: usize,
+    pub is_favorite: bool,
+}
+
+impl TitleDto {
+    pub fn new(t: &crate::catalog::Title, is_favorite: bool) -> Self {
+        TitleDto {
+            folder_url: t.folder_url.clone(),
+            source_name: t.source_name.clone(),
+            category: t.category.clone(),
+            title: t.title.clone(),
+            year: t.year,
+            kind: t.kind.clone(),
+            poster_url: t.poster_url.clone(),
+            language: t.language.clone(),
+            season_count: t.season_count,
+            best_quality: t.best_quality.clone(),
+            copies: t.copies,
+            is_favorite,
+        }
+    }
+}
+
+/// One page of a feed. `generation` identifies the feed the page
+/// belongs to; `superseded` is true when the caller's generation was
+/// already replaced by a newer feed_open (the page is then empty and
+/// must be dropped, never rendered).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedPageDto {
+    pub generation: u64,
+    pub titles: Vec<TitleDto>,
+    pub has_more: bool,
+    pub superseded: bool,
+}

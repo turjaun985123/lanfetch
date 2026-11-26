@@ -6,7 +6,10 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::core;
-use crate::dto::{BootstrapDto, DownloadListDto, SettingsDto, SourceDto, SourceProbeDto, TaskDto};
+use crate::dto::{
+    BootstrapDto, CategoryDto, DownloadListDto, FeedPageDto, SettingsDto, SourceDto,
+    SourceProbeDto, TaskDto, TitleDto,
+};
 use crate::manager::{DlState, Manager};
 use crate::store::SourceItem;
 
@@ -15,7 +18,23 @@ pub struct AppState {
     pub sources: Mutex<Vec<SourceItem>>,
     pub favorites: Mutex<Vec<String>>,
     pub posters: Arc<crate::poster_service::PosterService>,
+    pub catalog: Arc<Mutex<CatalogState>>,
 }
+
+/// Catalog browsing state: the discovered categories plus the one
+/// live feed session. Every feed_open bumps `generation`; pages from
+/// an older generation are reported `superseded` and must be dropped
+/// by the caller — the server-side half of the rule that a slow load
+/// can never overwrite a newer screen (the Rune build latched onto
+/// the first click instead, which is the bug this replaces).
+#[derive(Default)]
+pub struct CatalogState {
+    pub categories: Vec<crate::catalog::Category>,
+    pub feed: Option<crate::catalog::FeedSession>,
+    pub generation: u64,
+}
+
+const FEED_PAGE_SIZE: usize = 48;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -116,6 +135,122 @@ pub async fn probe_sources(state: State<'_, AppState>) -> Result<Vec<SourceProbe
                 })
             })
             .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------------ catalog feed
+
+fn enabled_sources(state: &AppState) -> Vec<(String, String)> {
+    lock(&state.sources)
+        .iter()
+        .filter(|s| s.enabled)
+        .map(|s| (s.name.clone(), s.root_url.clone()))
+        .collect()
+}
+
+fn favorites_set(state: &AppState) -> std::collections::HashSet<String> {
+    lock(&state.favorites).iter().cloned().collect()
+}
+
+/// Discover the category list across all enabled sources (parallel
+/// per source inside the engine). Cached after the first call;
+/// `refresh = true` rediscovers and drops the listing cache, which
+/// is what a manual refresh means.
+#[tauri::command]
+pub async fn get_categories(
+    state: State<'_, AppState>,
+    refresh: bool,
+) -> Result<Vec<CategoryDto>, String> {
+    if !refresh {
+        let catalog = lock(&state.catalog);
+        if !catalog.categories.is_empty() {
+            return Ok(catalog.categories.iter().map(CategoryDto::from).collect());
+        }
+    }
+    let sources = enabled_sources(&state);
+    let catalog_state = state.catalog.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if refresh {
+            crate::catalog::clear_listing_cache();
+        }
+        let categories = crate::catalog::discover_categories(&sources);
+        let dtos: Vec<CategoryDto> = categories.iter().map(CategoryDto::from).collect();
+        let mut catalog = lock(&catalog_state);
+        catalog.categories = categories;
+        catalog.feed = None;
+        catalog.generation += 1;
+        dtos
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Open a feed (one category, or None for all media categories) and
+/// return its first page. Always supersedes any previous feed.
+#[tauri::command]
+pub async fn feed_open(
+    state: State<'_, AppState>,
+    category: Option<String>,
+) -> Result<FeedPageDto, String> {
+    let catalog_state = state.catalog.clone();
+    let favorites = favorites_set(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut catalog = lock(&catalog_state);
+        if catalog.categories.is_empty() {
+            return Err("categories are not loaded yet".to_string());
+        }
+        catalog.generation += 1;
+        let generation = catalog.generation;
+        let mut feed = crate::catalog::FeedSession::new(&catalog.categories, category.as_deref());
+        let titles = feed
+            .next_page(FEED_PAGE_SIZE)
+            .iter()
+            .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
+            .collect();
+        let has_more = feed.has_more;
+        catalog.feed = Some(feed);
+        Ok(FeedPageDto {
+            generation,
+            titles,
+            has_more,
+            superseded: false,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The next page of the feed identified by `generation`. A stale
+/// generation is not an error: it returns an empty superseded page
+/// so the caller can simply drop it.
+#[tauri::command]
+pub async fn feed_next(state: State<'_, AppState>, generation: u64) -> Result<FeedPageDto, String> {
+    let catalog_state = state.catalog.clone();
+    let favorites = favorites_set(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut catalog = lock(&catalog_state);
+        if generation != catalog.generation || catalog.feed.is_none() {
+            return FeedPageDto {
+                generation: catalog.generation,
+                titles: Vec::new(),
+                has_more: false,
+                superseded: true,
+            };
+        }
+        let feed = catalog.feed.as_mut().expect("checked above");
+        let titles = feed
+            .next_page(FEED_PAGE_SIZE)
+            .iter()
+            .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
+            .collect();
+        FeedPageDto {
+            generation,
+            titles,
+            has_more: feed.has_more,
+            superseded: false,
+        }
     })
     .await
     .map_err(|e| e.to_string())

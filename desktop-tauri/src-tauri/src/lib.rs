@@ -31,6 +31,7 @@ pub fn run() {
         sources: Mutex::new(store::load_sources()),
         favorites: Mutex::new(store::load_favorites()),
         posters: posters.clone(),
+        catalog: Arc::new(Mutex::new(commands::CatalogState::default())),
     };
     tauri::Builder::default()
         .manage(state)
@@ -70,7 +71,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_bootstrap,
             commands::probe_sources,
-            commands::poster_srcs
+            commands::poster_srcs,
+            commands::get_categories,
+            commands::feed_open,
+            commands::feed_next
         ])
         .run(tauri::generate_context!())
         .expect("error while running LanFetch");

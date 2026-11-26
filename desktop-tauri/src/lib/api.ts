@@ -76,3 +76,44 @@ export function probeSources(): Promise<SourceProbeDto[]> {
 export function posterSrcs(urls: string[]): Promise<string[]> {
   return invoke<string[]>('poster_srcs', { urls });
 }
+
+export interface CategoryDto {
+  name: string;
+  sources: string[];
+}
+
+export interface TitleDto {
+  folderUrl: string;
+  sourceName: string;
+  category: string;
+  title: string;
+  year: number | null;
+  kind: string; // "movie" | "series"
+  posterUrl: string | null;
+  language: string | null;
+  seasonCount: number;
+  bestQuality: string | null;
+  copies: number;
+  isFavorite: boolean;
+}
+
+export interface FeedPageDto {
+  generation: number;
+  titles: TitleDto[];
+  hasMore: boolean;
+  /** True when this page belongs to a feed that was already
+   * replaced — drop it, never render it. */
+  superseded: boolean;
+}
+
+export function getCategories(refresh: boolean): Promise<CategoryDto[]> {
+  return invoke<CategoryDto[]>('get_categories', { refresh });
+}
+
+export function feedOpen(category: string | null): Promise<FeedPageDto> {
+  return invoke<FeedPageDto>('feed_open', { category });
+}
+
+export function feedNext(generation: number): Promise<FeedPageDto> {
+  return invoke<FeedPageDto>('feed_next', { generation });
+}
