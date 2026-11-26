@@ -69,3 +69,10 @@ export function getBootstrap(): Promise<BootstrapDto> {
 export function probeSources(): Promise<SourceProbeDto[]> {
   return invoke<SourceProbeDto[]>('probe_sources');
 }
+
+/** Register remote poster URLs; returns `lanfetch-poster://` srcs
+ * aligned with the input. Bytes travel via the protocol handler,
+ * never through IPC. */
+export function posterSrcs(urls: string[]): Promise<string[]> {
+  return invoke<string[]>('poster_srcs', { urls });
+}

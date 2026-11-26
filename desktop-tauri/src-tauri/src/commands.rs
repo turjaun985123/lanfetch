@@ -14,6 +14,7 @@ pub struct AppState {
     pub manager: Arc<Manager>,
     pub sources: Mutex<Vec<SourceItem>>,
     pub favorites: Mutex<Vec<String>>,
+    pub posters: Arc<crate::poster_service::PosterService>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -50,6 +51,15 @@ pub fn get_bootstrap(state: State<'_, AppState>) -> BootstrapDto {
             .into_owned(),
         data_dir: crate::manager::data_dir().to_string_lossy().into_owned(),
     }
+}
+
+/// Register remote poster URLs and return their `lanfetch-poster://`
+/// srcs, positionally aligned with the input. Only URL strings cross
+/// IPC — the bytes themselves travel as ordinary image loads through
+/// the protocol handler (disk-cached by the engine).
+#[tauri::command]
+pub fn poster_srcs(state: State<'_, AppState>, urls: Vec<String>) -> Vec<String> {
+    state.posters.register(&urls)
 }
 
 /// Probe every configured source in parallel (one thread per source —
