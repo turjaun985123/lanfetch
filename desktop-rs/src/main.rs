@@ -446,15 +446,18 @@ fn visible_titles(s: &State) -> Vec<Title> {
 
 fn compute_visible_titles(s: &State) -> Vec<Title> {
     let pool: &[Title] = if s.search_mode { &s.search_results } else { &s.feed_titles };
-    let mut out: Vec<Title> = pool
-        .iter()
+    // Duplicate folders of the same title (720p + 1080p uploads)
+    // merge into one card before filtering, so the quality filter
+    // and favorites see the union (Wave 15).
+    let merged = catalog::merge_copies(pool.to_vec(), &s.favorites);
+    let mut out: Vec<Title> = merged
+        .into_iter()
         .filter(|t| {
             (s.kind_filter.is_none() || s.kind_filter.as_deref() == Some(t.kind.as_str()))
                 && (s.quality_filter.is_none() || s.quality_filter == t.best_quality)
-                && (!s.fav_only || s.favorites.contains(&t.folder_url))
+                && (!s.fav_only || t.fav_any || s.favorites.contains(&t.folder_url))
                 && (!s.search_mode || catalog::in_categories(&t.category, &s.search_cats))
         })
-        .cloned()
         .collect();
     match s.sort_mode {
         1 => out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
@@ -841,6 +844,11 @@ fn title_card(s: &State, p: &Palette, t: &Title) -> El {
                     p.accent_container,
                     p.on_accent_container,
                 ))
+                .child(if t.copies > 1 {
+                    badge(format!("×{}", t.copies), p.raised, p.ink2)
+                } else {
+                    el()
+                })
                 .child(el().grow(1.0))
                 .child(
                     el()

@@ -45,6 +45,14 @@ pub struct Title {
     pub best_source_tag: Option<String>,
     pub best_codec: Option<String>,
     pub dual_audio: bool,
+    /// How many pool titles the view layer merged into this one
+    /// (the same movie as separate 720p/1080p folders) — 1 when
+    /// unmerged. Set by merge_copies; constructors leave it at 1.
+    pub copies: usize,
+    /// True when ANY merged copy is a favorite (the favorite set
+    /// keys on folder_url, and merging keeps only the first
+    /// copy's). Set by merge_copies.
+    pub fav_any: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -217,6 +225,8 @@ pub fn build_title(
             .next()
             .or_else(|| parse_codec(raw_name)),
         dual_audio: files.iter().any(|f| f.audio.is_some()) || parse_audio(raw_name).is_some(),
+        copies: 1,
+        fav_any: false,
         files,
     })
 }
@@ -700,6 +710,8 @@ fn group_h5ai_hits(source_name: &str, root_url: &str, items: Vec<H5aiItem>) -> V
                     .next()
                     .or_else(|| parse_codec(&raw_name)),
                 dual_audio: files.iter().any(|f| f.audio.is_some()) || parse_audio(&raw_name).is_some(),
+                copies: 1,
+                fav_any: false,
                 files,
             }
         })
@@ -767,6 +779,8 @@ fn breadth_search(source_name: &str, root_url: &str, query: &str) -> Vec<Title> 
                         best_source_tag: file.source_tag.clone(),
                         best_codec: file.codec.clone(),
                         dual_audio: file.audio.is_some(),
+                        copies: 1,
+                        fav_any: false,
                         files: vec![file],
                     });
                 }
@@ -790,6 +804,58 @@ fn enrich_posters(titles: &mut [Title]) {
             }
         }
     }
+}
+
+/// Merge duplicate pool titles — the same movie uploaded as
+/// separate 720p and 1080p folders used to render as two cards
+/// (UX audit: part of the "everything jumbled in one place"
+/// complaint). Key: (lowercased clean title, year, kind). The
+/// first copy in pool order represents the group; files
+/// concatenate (deduped by URL), the poster is the first copy
+/// that has one, and the quality/size/season aggregates span all
+/// copies. Favorite-ness is any-copy (see Title::fav_any).
+pub fn merge_copies(titles: Vec<Title>, favorites: &std::collections::HashSet<String>) -> Vec<Title> {
+    let mut out: Vec<Title> = Vec::with_capacity(titles.len());
+    let mut index: std::collections::HashMap<(String, Option<i32>, String), usize> =
+        std::collections::HashMap::new();
+    for t in titles {
+        let key = (t.title.to_lowercase(), t.year, t.kind.clone());
+        if let Some(&i) = index.get(&key) {
+            let rep = &mut out[i];
+            rep.copies += 1;
+            if rep.poster_url.is_none() {
+                rep.poster_url = t.poster_url.clone();
+            }
+            if favorites.contains(&t.folder_url) {
+                rep.fav_any = true;
+            }
+            for f in t.files {
+                if !rep.files.iter().any(|x| x.url == f.url) {
+                    rep.files.push(f);
+                }
+            }
+            rep.max_size = rep.max_size.max(t.max_size);
+            let quals: Vec<String> = rep.files.iter().filter_map(|f| f.quality.clone()).collect();
+            if let Some(q) = best_quality(&quals) {
+                rep.best_quality = Some(q);
+            }
+            rep.season_count = rep
+                .files
+                .iter()
+                .filter_map(|f| f.season)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            rep.dual_audio = rep.dual_audio || t.dual_audio;
+        } else {
+            let mut t = t;
+            if favorites.contains(&t.folder_url) {
+                t.fav_any = true;
+            }
+            index.insert(key, out.len());
+            out.push(t);
+        }
+    }
+    out
 }
 
 /// Search-scope filter: an empty selection means "all categories";
@@ -1060,7 +1126,43 @@ mod tests {
             best_source_tag: None,
             best_codec: None,
             dual_audio: false,
+            copies: 1,
+            fav_any: false,
         }
+    }
+
+    #[test]
+    fn merge_copies_unions_duplicate_folders() {
+        // The same movie as a 720p folder (no poster) and a 1080p
+        // folder (poster + the favorite mark) must become ONE card
+        // carrying the union.
+        let mut a = mk_title("Dune");
+        a.folder_url = "http://h/Dune 720p".into();
+        a.year = Some(2021);
+        let mut b = mk_title("Dune");
+        b.folder_url = "http://h/Dune 1080p".into();
+        b.year = Some(2021);
+        b.poster_url = Some("http://h/Dune 1080p/a.jpg".into());
+        let favs: std::collections::HashSet<String> =
+            std::collections::HashSet::from(["http://h/Dune 1080p".to_string()]);
+        let out = merge_copies(vec![a, b], &favs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].copies, 2);
+        assert_eq!(out[0].poster_url.as_deref(), Some("http://h/Dune 1080p/a.jpg"));
+        assert!(out[0].fav_any, "favorite on ANY copy must mark the merged card");
+    }
+
+    #[test]
+    fn merge_copies_keeps_years_and_kinds_apart() {
+        let mut a = mk_title("Dune");
+        a.year = Some(1984);
+        let mut b = mk_title("Dune");
+        b.year = Some(2021);
+        let mut c = mk_title("Dune");
+        c.year = Some(2021);
+        c.kind = "series".into();
+        let out = merge_copies(vec![a, b, c], &std::collections::HashSet::new());
+        assert_eq!(out.len(), 3, "different year or kind must not merge");
     }
 
     #[test]
