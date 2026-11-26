@@ -652,7 +652,7 @@ fn rail(s: &State, p: &Palette) -> El {
             s.tab = Tab::Settings
         }))
         .child(
-            text(format!("v{} · Rust + Rune", env!("CARGO_PKG_VERSION")))
+            text(format!("v{}", env!("CARGO_PKG_VERSION")))
                 .font(SMALL)
                 .color(p.ink3)
                 .px(12.0)
@@ -1680,7 +1680,7 @@ fn settings_view(s: &State, p: &Palette) -> El {
                     .gap(4.0)
                     .child(text(format!("LanFetch Desktop v{}", env!("CARGO_PKG_VERSION"))).font(LABEL).color(p.ink))
                     .child(
-                        text("Native Rust + Rune port of the Android app — same servers, same segmented engine, same Lanes design.")
+                        text("Desktop edition of the Android app — same servers, same segmented engine, same Lanes design.")
                             .font(SMALL)
                             .color(p.ink2)
                             .w_full()

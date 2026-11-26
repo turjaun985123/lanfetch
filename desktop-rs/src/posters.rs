@@ -83,7 +83,10 @@ impl PosterQueue {
         }
     }
 
-    /// How many URLs are still waiting to be dispatched.
+    /// How many URLs are still waiting to be dispatched. (The
+    /// Settings diagnostics surface that reads this lands in a
+    /// later wave; the queue tests use it now.)
+    #[allow(dead_code)]
     pub fn pending(&self) -> usize {
         self.queue.len()
     }
