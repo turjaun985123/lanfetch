@@ -206,6 +206,7 @@ struct State {
     add_url: TextEdit,
     settings: Settings,
     cache_msg: Option<String>,
+    poster_cache_msg: Option<String>,
     update_msg: Option<String>,
     update_latest: Latest<Result<Option<String>, String>>,
     selected_transfer: Option<u64>,
@@ -1797,6 +1798,45 @@ fn settings_view(s: &State, p: &Palette) -> El {
                                 let n = catalog::clear_listing_cache();
                                 s.cache_msg = Some(format!("Cleared {n} cached listings"));
                             })),
+                    )
+                    .child(el().w_full().h(1.0).fill(p.hairline))
+                    .child(
+                        row()
+                            .w_full()
+                            .gap(12.0)
+                            .child(
+                                col()
+                                    .grow(1.0)
+                                    .gap(2.0)
+                                    .child(text("Poster cache").font(LABEL).color(p.ink))
+                                    .child(
+                                        text(s.poster_cache_msg.clone().unwrap_or_else(|| {
+                                            // Live pipeline counters: the
+                                            // numbers that would have
+                                            // exposed the dead poster
+                                            // dispatch in one glance
+                                            // (Wave 13 diagnostics).
+                                            let ready = s
+                                                .posters
+                                                .values()
+                                                .filter(|v| matches!(v, PosterState::Ready(_)))
+                                                .count();
+                                            format!(
+                                                "{} dispatched · {} loaded · {} failed · {} on screen",
+                                                s.poster_queue.dispatched,
+                                                s.poster_queue.succeeded,
+                                                s.poster_queue.failed,
+                                                ready
+                                            )
+                                        }))
+                                            .font(SMALL)
+                                            .color(p.ink2),
+                                    ),
+                            )
+                            .child(btn_tonal(u.clear, p, |s: &mut State| {
+                                let n = catalog::clear_poster_cache();
+                                s.poster_cache_msg = Some(format!("Cleared {n} cached posters"));
+                            })),
                     ),
             ),
         )
@@ -2026,6 +2066,7 @@ fn main() {
             add_url: TextEdit::new(""),
             settings,
             cache_msg: None,
+            poster_cache_msg: None,
             update_msg: None,
             update_latest: Latest::default(),
             selected_transfer: None,

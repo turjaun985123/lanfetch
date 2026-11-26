@@ -121,6 +121,21 @@ pub fn clear_listing_cache() -> usize {
     n
 }
 
+/// Delete every file in the on-disk poster cache; returns how
+/// many were removed (Settings' Clear poster cache, Wave 13).
+pub fn clear_poster_cache() -> usize {
+    let dir = poster_cache_dir();
+    let mut n = 0;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            if std::fs::remove_file(e.path()).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
 // ------------------------------------------------------------------- files
 
 pub fn to_catalog_file(title_name: &str, entry: &DirEntry, folder_season: Option<i32>) -> CatalogFile {
