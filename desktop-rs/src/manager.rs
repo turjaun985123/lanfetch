@@ -64,6 +64,15 @@ impl Task {
     pub fn downloaded(&self) -> u64 {
         self.progress.downloaded.load(Ordering::SeqCst)
     }
+    /// Seconds remaining at the current (smoothed) speed, when a
+    /// total and a speed are both known (Wave 8).
+    pub fn eta_secs(&self) -> Option<f64> {
+        if self.total == 0 || self.speed_bps <= 0.0 {
+            return None;
+        }
+        let remaining = self.total.saturating_sub(self.downloaded());
+        Some(remaining as f64 / self.speed_bps)
+    }
     pub fn fraction(&self) -> f64 {
         if self.total == 0 {
             0.0
@@ -354,8 +363,15 @@ impl Manager {
     /// Spawn the engine thread for a task already marked Running by pump().
     fn launch(self: &Arc<Self>, id: u64) {
         let (url, name, segments, validator, pause_flag, progress) = {
-            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(t) = tasks.iter().find(|t| t.id == id) else { return };
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(t) = tasks.iter_mut().find(|t| t.id == id) else { return };
+            // Restart the speed clock at launch (Wave 8): the tick
+            // fields were set at enqueue/restore, so without this
+            // the first sample after a resume spans the whole
+            // paused interval and speed reads ~0.
+            t.last_tick_bytes = t.downloaded();
+            t.last_tick_at = std::time::Instant::now();
+            t.speed_bps = 0.0;
             (
                 t.url.clone(),
                 t.name.clone(),
@@ -473,7 +489,13 @@ impl Manager {
                 let dt = now.duration_since(t.last_tick_at).as_secs_f64();
                 if dt >= 0.2 {
                     let bytes = t.downloaded();
-                    t.speed_bps = (bytes.saturating_sub(t.last_tick_bytes) as f64) / dt;
+                    // EMA smoothing (Wave 8): the raw two-point
+                    // sample over ~250 ms bursts wildly at LAN
+                    // speeds (256 KiB chunks); half-weight history
+                    // keeps the readout — and the ETA derived from
+                    // it — steady.
+                    let inst = (bytes.saturating_sub(t.last_tick_bytes) as f64) / dt;
+                    t.speed_bps = if t.speed_bps > 0.0 { 0.5 * inst + 0.5 * t.speed_bps } else { inst };
                     moved = bytes != t.last_tick_bytes;
                     t.last_tick_bytes = bytes;
                     t.last_tick_at = now;

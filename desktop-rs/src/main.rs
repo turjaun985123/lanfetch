@@ -1282,14 +1282,27 @@ fn transfer_card(s: &State, p: &Palette, task: &manager::Task) -> El {
                 "Queued — probing…".to_string()
             }
         }
-        DlState::Running => format!(
-            "{} of {} · {}{}",
+        DlState::Running => {
+            let eta = match task.eta_secs() {
+                Some(s) => format!(" · {} left", fmt_eta(s)),
+                None => String::new(),
+            };
+            format!(
+                "{} of {} · {}{}{}",
+                fmt_bytes(downloaded),
+                if task.total > 0 { fmt_bytes(task.total) } else { "?".into() },
+                fmt_speed(task.speed_bps),
+                pct,
+                eta
+            )
+        }
+        DlState::Paused => format!(
+            "Paused · {} of {}{} · {} left",
             fmt_bytes(downloaded),
-            if task.total > 0 { fmt_bytes(task.total) } else { "?".into() },
-            fmt_speed(task.speed_bps),
-            pct
+            fmt_bytes(task.total),
+            pct,
+            fmt_bytes(task.total.saturating_sub(downloaded))
         ),
-        DlState::Paused => format!("Paused · {} of {}{}", fmt_bytes(downloaded), fmt_bytes(task.total), pct),
         DlState::Completed => format!("Finished · {}", fmt_bytes(task.total)),
         DlState::Failed => format!("Failed: {}", task.error.clone().unwrap_or_default()),
     };

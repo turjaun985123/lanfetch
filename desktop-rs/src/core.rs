@@ -249,6 +249,21 @@ pub fn fmt_speed(bytes_per_sec: f64) -> String {
     format!("{}/s", fmt_bytes(bytes_per_sec as u64))
 }
 
+/// Format a remaining-time estimate: "~1:23" under an hour,
+/// "~2:05:40" above it, "—" when there is no usable estimate
+/// (50-wave program, Wave 8 — ETA did not exist anywhere before).
+pub fn fmt_eta(secs: f64) -> String {
+    if !secs.is_finite() || secs <= 0.0 {
+        return "—".to_string();
+    }
+    let s = secs.round() as u64;
+    if s < 3600 {
+        format!("~{}:{:02}", s / 60, s % 60)
+    } else {
+        format!("~{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+    }
+}
+
 /// Sanitize a server-supplied file name for local disk (S5 rules, same as
 /// the Kotlin port): strip path separators and control characters, keep the
 /// extension, cap the length.
@@ -641,6 +656,18 @@ pub fn run_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eta_formats_minutes_hours_and_none() {
+        assert_eq!(fmt_eta(83.0), "~1:23");
+        assert_eq!(fmt_eta(7540.0), "~2:05:40");
+        assert_eq!(fmt_eta(3599.0), "~59:59");
+        assert_eq!(fmt_eta(3600.0), "~1:00:00");
+        assert_eq!(fmt_eta(0.0), "—");
+        assert_eq!(fmt_eta(-5.0), "—");
+        assert_eq!(fmt_eta(f64::INFINITY), "—");
+        assert_eq!(fmt_eta(f64::NAN), "—");
+    }
 
     #[test]
     fn plan_zero_total_is_open_segment() {
