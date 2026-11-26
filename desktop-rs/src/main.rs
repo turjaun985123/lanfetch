@@ -25,7 +25,7 @@ use rune::{
     col, el, row, text, text_input, App, AppSpec, Cx, El, ImageCache, Latest, ScrollSpec,
     SurfaceFit, TextEdit, Tx,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use store::{load_favorites, load_settings, load_sources, save_favorites, save_sources, Settings, SourceItem};
 
@@ -186,6 +186,10 @@ struct State {
     filters_open: bool,
     // Posters
     posters: HashMap<String, PosterState>,
+    /// Insertion order of Ready posters, for the memory cap in
+    /// poll() (Wave 12): decoded posters are ~1.4 MB each at
+    /// display scale and the map otherwise never shrinks.
+    poster_lru: VecDeque<String>,
     poster_queue: PosterQueue,
     /// Four parallel poster workers — the old single-flight queue
     /// needed 18 serial round trips to paint one page of cards.
@@ -549,6 +553,7 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
                             // size roughly 25× less (Perf audit #4).
                             let img = cache.load_scaled(bytes, 240.0, 2.0);
                             s.poster_queue.resolve(&url, true);
+                            s.poster_lru.push_back(url.clone());
                             s.posters.insert(url, PosterState::Ready(img));
                         } else {
                             s.poster_queue.resolve(&url, false);
@@ -605,6 +610,23 @@ fn poll(s: &mut State, _now: f64, _tx: &mut Tx) -> bool {
         for url in decode_failed {
             s.posters.insert(url, PosterState::Failed);
         }
+        changed = true;
+    }
+    // Memory cap (Wave 12): keep the newest 150 Ready posters.
+    // Evicted URLs are forgotten by the queue as well, so a feed
+    // refresh or category switch refetches them; within one long
+    // scroll session, far-back cards fall back to tiles — bounded
+    // memory wins on a small machine.
+    let mut evicted = false;
+    while s.poster_lru.len() > 150 {
+        let Some(old) = s.poster_lru.pop_front() else { break };
+        if matches!(s.posters.get(&old), Some(PosterState::Ready(_))) {
+            s.posters.remove(&old);
+            s.poster_queue.forget(&old);
+            evicted = true;
+        }
+    }
+    if evicted {
         changed = true;
     }
     // Download progress arrives via the manager's waker, not
@@ -1993,6 +2015,7 @@ fn main() {
             sort_mode: 0,
             filters_open: false,
             posters: HashMap::new(),
+            poster_lru: VecDeque::new(),
             poster_queue: PosterQueue::new(),
             poster_latest: std::array::from_fn(|_| Latest::default()),
             poster_busy: [false; 4],

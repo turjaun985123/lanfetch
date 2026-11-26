@@ -90,6 +90,14 @@ impl PosterQueue {
     pub fn pending(&self) -> usize {
         self.queue.len()
     }
+
+    /// Forget a URL entirely (memory-cap eviction): a later
+    /// enqueue may dispatch it again. Counters keep their history —
+    /// they are diagnostics, not state.
+    pub fn forget(&mut self, url: &str) {
+        self.states.remove(url);
+        self.queue.retain(|u| u != url);
+    }
 }
 
 #[cfg(test)]
