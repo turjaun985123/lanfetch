@@ -1050,6 +1050,46 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// audit #1). Raw encoded bytes under the same 2 MB bound as the
 /// network read; writes are tmp+rename so a crash never leaves a torn
 /// cache file behind.
+/// Total size ceiling for the on-disk poster cache (~200 MB). At the
+/// 2 MB per-poster bound that is at least 100 posters; in practice
+/// LAN posters run 50–300 KB, so the cache holds well over a thousand.
+const POSTER_CACHE_CAP: u64 = 200_000_000;
+
+/// Trim the poster cache directory to `cap` bytes, deleting the
+/// oldest `.img` files first. Returns how many files were deleted.
+/// Only `.img` entries count — the directory is ours, but a stray
+/// file a user dropped there is not ours to delete.
+fn enforce_poster_cache_cap(dir: &std::path::Path, cap: u64) -> usize {
+    let mut entries: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    let mut total: u64 = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().is_some_and(|x| x == "img") {
+                if let Ok(md) = e.metadata() {
+                    total += md.len();
+                    entries.push((path, md.len(), md.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)));
+                }
+            }
+        }
+    }
+    if total <= cap {
+        return 0;
+    }
+    entries.sort_by_key(|(_, _, mtime)| *mtime);
+    let mut deleted = 0;
+    for (path, len, _) in entries {
+        if total <= cap {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+            deleted += 1;
+        }
+    }
+    deleted
+}
+
 pub fn fetch_poster_cached(url: &str) -> Result<Vec<u8>, String> {
     let dir = poster_cache_dir();
     let path = dir.join(format!("{:016x}.img", fnv1a(url.as_bytes())));
@@ -1067,8 +1107,10 @@ pub fn fetch_poster_cached(url: &str) -> Result<Vec<u8>, String> {
     let bytes = fetch_poster_bytes(url)?;
     let _ = std::fs::create_dir_all(&dir);
     let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, &bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
+    if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+        // A long-lived install would otherwise grow this cache
+        // forever; trim oldest-first back under the cap on write.
+        enforce_poster_cache_cap(&dir, POSTER_CACHE_CAP);
     }
     Ok(bytes)
 }
@@ -1086,6 +1128,33 @@ mod tests {
         assert!(is_image_bytes(b"GIF89a"));
         assert!(is_image_bytes(b"BMxxxx"));
         assert!(is_image_bytes(b"RIFF\x00\x00\x00\x00WEBP"));
+    }
+
+    #[test]
+    fn poster_cache_cap_deletes_oldest_first() {
+        let dir = std::env::temp_dir().join(format!("lanfetch-cap-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        // Three 100-byte posters, oldest first: a, b, c.
+        for (i, name) in ["a.img", "b.img", "c.img"].iter().enumerate() {
+            let p = dir.join(name);
+            std::fs::write(&p, vec![0u8; 100]).unwrap();
+            let f = std::fs::File::open(&p).unwrap();
+            f.set_modified(base + std::time::Duration::from_secs(60 * i as u64)).unwrap();
+        }
+        // A non-cache file must never be touched.
+        std::fs::write(dir.join("keep.txt"), vec![0u8; 500]).unwrap();
+        // Cap 150: total .img = 300, so the two oldest go, newest stays.
+        let deleted = enforce_poster_cache_cap(&dir, 150);
+        assert_eq!(deleted, 2);
+        assert!(!dir.join("a.img").exists());
+        assert!(!dir.join("b.img").exists());
+        assert!(dir.join("c.img").exists());
+        assert!(dir.join("keep.txt").exists());
+        // Already under the cap: nothing more is deleted.
+        assert_eq!(enforce_poster_cache_cap(&dir, 150), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
