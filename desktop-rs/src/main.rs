@@ -701,8 +701,37 @@ fn rail(s: &State, p: &Palette) -> El {
         let tasks = s.manager.tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.iter().filter(|t| matches!(t.state, DlState::Running | DlState::Queued)).count()
     };
+    // Live server panel (Wave 17): the rail's lower half was ~55%
+    // void. Every source with its probe state, always visible —
+    // "which servers are up" stops being a Servers-tab trip.
+    let mut panel = col()
+        .w_full()
+        .gap(4.0)
+        .padding(10.0)
+        .radius(12.0)
+        .fill(p.raised)
+        .child(text("SERVERS").font(SECTION).color(p.ink3));
+    for (i, src) in s.sources.iter().enumerate() {
+        let (dot, label) = match s.probes.get(i) {
+            Some(ProbeState::Up(ms)) => (p.done, format!("{} ms", ms)),
+            Some(ProbeState::Down) => (p.failed, "down".to_string()),
+            Some(ProbeState::Checking) => (p.paused, "…".to_string()),
+            _ => (p.ink3, "—".to_string()),
+        };
+        panel = panel.child(
+            row()
+                .w_full()
+                .gap(6.0)
+                .child(text("●").font(SMALL).color(dot))
+                .child(text(src.name.clone()).font(SMALL).color(p.ink2).grow(1.0).truncate())
+                .child(text(label).font(SMALL).color(p.ink3)),
+        );
+    }
+    if active > 0 {
+        panel = panel.child(text(format!("↓ {active} active")).font(SMALL).color(p.accent));
+    }
     col()
-        .w(232.0)
+        .w(208.0)
         .h_full()
         .padding(16.0)
         .gap(6.0)
@@ -725,6 +754,7 @@ fn rail(s: &State, p: &Palette) -> El {
         .child(nav_item(p, "⚙", u.settings, s.tab == Tab::Settings, 0, |s: &mut State| {
             s.tab = Tab::Settings
         }))
+        .child(panel)
         .child(
             text(format!("v{}", env!("CARGO_PKG_VERSION")))
                 .font(SMALL)
