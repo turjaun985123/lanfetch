@@ -192,7 +192,7 @@ fn parse_size_after(row: &str) -> Option<u64> {
     let text = strip_tags(row);
     let mut best: Option<u64> = None;
     for tok in text.split_whitespace() {
-        let t = tok.trim_end_matches(|c| c == ',' || c == ';');
+        let t = tok.trim_end_matches([',', ';']);
         if let Ok(v) = t.parse::<u64>() {
             if v > 0 {
                 best = Some(v);
@@ -205,15 +205,11 @@ fn parse_size_after(row: &str) -> Option<u64> {
 }
 
 fn parse_suffixed_size(t: &str) -> Option<u64> {
-    let (num, mult) = if let Some(s) = t.strip_suffix(['K', 'k']) {
-        (s, 1024.0)
-    } else if let Some(s) = t.strip_suffix('M') {
-        (s, 1024.0 * 1024.0)
-    } else if let Some(s) = t.strip_suffix('G') {
-        (s, 1024.0 * 1024.0 * 1024.0)
-    } else {
-        return None;
-    };
+    let (num, mult) = t
+        .strip_suffix(['K', 'k'])
+        .map(|s| (s, 1024.0))
+        .or_else(|| t.strip_suffix('M').map(|s| (s, 1024.0 * 1024.0)))
+        .or_else(|| t.strip_suffix('G').map(|s| (s, 1024.0 * 1024.0 * 1024.0)))?;
     num.parse::<f64>().ok().map(|v| (v * mult) as u64)
 }
 
@@ -349,6 +345,10 @@ pub struct Segment {
 }
 
 impl Segment {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> u64 {
         if self.end == u64::MAX {
             u64::MAX
@@ -502,6 +502,7 @@ pub fn run_download(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(part_path)
     {
         Ok(f) => f,

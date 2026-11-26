@@ -64,8 +64,8 @@ pub struct Category {
 
 // ------------------------------------------------------------- listing cache
 
-static LISTING_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<DirEntry>)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type ListingCache = Mutex<HashMap<String, (Instant, Vec<DirEntry>)>>;
+static LISTING_CACHE: LazyLock<ListingCache> = LazyLock::new(|| Mutex::new(HashMap::new()));
 const LISTING_TTL: Duration = Duration::from_secs(600);
 /// Cap on cached listings: a deep browsing/search session must not pin
 /// thousands of listings in memory for 10 minutes (Engine audit #5).
@@ -382,7 +382,7 @@ fn category_priority(name: &str) -> usize {
 /// by name across servers (junk skipped), media categories first.
 pub fn discover_categories(sources: &[(String, String)]) -> Vec<Category> {
     let mut handles = Vec::new();
-    for (name, root) in sources.to_vec() {
+    for (name, root) in sources.iter().cloned() {
         handles.push(std::thread::spawn(move || {
             let entries = fetch_cached(&root).unwrap_or_default();
             (name, entries)
@@ -1135,7 +1135,7 @@ pub fn search(sources: &[(String, String)], query: &str) -> Vec<Title> {
         return Vec::new();
     }
     let (tx, rx) = std::sync::mpsc::channel::<Vec<Title>>();
-    for (name, root) in sources.to_vec() {
+    for (name, root) in sources.iter().cloned() {
         let q = query.clone();
         let tx = tx.clone();
         std::thread::spawn(move || {

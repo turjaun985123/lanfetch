@@ -94,11 +94,99 @@ jobs:
       - name: Format check
         run: cargo fmt --check
 
-      - name: Clippy (informational in Wave 1; becomes a gate in Wave 2)
-        continue-on-error: true
+      - name: Clippy (gate — promoted in Wave 2 after the carried code's 8 findings were fixed)
         run: cargo clippy --locked -- -D warnings
 
       - name: Unit tests
         # The carried engine suite (43 tests from core/catalog/meta/
         # store/manager) must pass unmodified in its new home.
         run: cargo test --locked
+
+  bundle:
+    needs: [frontend, backend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: desktop-tauri
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Node (pinned)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop-tauri/package-lock.json
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev \
+            build-essential pkg-config file
+
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-tauri/src-tauri
+
+      - name: Install dependencies (lockfile)
+        run: npm ci
+
+      - name: Build frontend (Astro)
+        # Its own step with its own verdict; the Tauri build below runs
+        # with beforeBuildCommand disabled so it never rebuilds this.
+        run: npm run build
+
+      - name: Build Tauri .deb
+        run: npx tauri build --bundles deb --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Assert .deb identity (Package + Version gate the upgrade path)
+        run: |
+          DEB=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          echo "Built: $DEB"
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          dpkg-deb -f "$DEB" Package | grep -qx lanfetch
+          dpkg-deb -f "$DEB" Version | grep -qx "$VERSION"
+          dpkg-deb -I "$DEB"
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanfetch-deb
+          path: desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/desktop-tauri-v')
+    needs: bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lanfetch-deb
+          path: deb
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: turjaun985123/lanfetch
+        run: |
+          DEB=$(ls deb/*.deb | head -1)
+          ARGS=(--title "LanFetch Desktop $GITHUB_REF_NAME" --notes "Tauri rebuild of LanFetch Desktop. See desktop-tauri/CHANGELOG.md for details. Rune builds (1.5.0 and earlier) do not auto-update to this release — install this .deb once manually; upgrades are automatic again after that.")
+          case "$GITHUB_REF_NAME" in
+            *-rc*) ARGS+=(--prerelease) ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "$DEB" "${ARGS[@]}"

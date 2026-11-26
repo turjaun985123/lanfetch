@@ -10,7 +10,7 @@ import '../styles/global.css';
     <title>LanFetch</title>
     <script is:inline>
       // Theme before first paint (no flash): stored choice wins,
-      // otherwise follow the OS. The settings wave wires the toggle.
+      // otherwise follow the OS.
       try {
         var t = localStorage.getItem('lanfetch-theme');
         if (t !== 'light' && t !== 'dark') {
@@ -24,63 +24,256 @@ import '../styles/global.css';
   </head>
   <body>
     <div class="flex h-full">
+      <!-- Rail -->
       <aside
         class="flex w-52 shrink-0 flex-col border-r border-hairline bg-surface"
       >
         <div class="px-4 pb-2 pt-4 text-[22px] font-semibold tracking-tight">
           lanfetch
         </div>
-        <nav class="flex flex-col gap-1 px-3 py-2 text-[13px] font-medium">
-          <span class="rounded-full bg-accent-container px-4 py-2 text-on-accent-container">Library</span>
-          <span class="rounded-full px-4 py-2 text-ink-2">Transfers</span>
-          <span class="rounded-full px-4 py-2 text-ink-2">Servers</span>
-          <span class="rounded-full px-4 py-2 text-ink-2">Settings</span>
+        <nav
+          class="flex flex-col gap-1 px-3 py-2 text-[13px] font-medium"
+          id="nav"
+        >
+          <button data-view="library" class="nav-item">Library</button>
+          <button data-view="transfers" class="nav-item">
+            Transfers
+            <span
+              id="nav-badge"
+              class="ml-auto hidden min-w-[18px] rounded-full bg-accent px-1 text-center text-[10px] font-semibold text-white"
+            ></span>
+          </button>
+          <button data-view="servers" class="nav-item">Servers</button>
+          <button data-view="settings" class="nav-item">Settings</button>
         </nav>
-        <div class="mt-auto px-4 py-3 text-[11px] text-ink-3" id="version"></div>
+        <div class="mt-auto px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">
+          Servers
+        </div>
+        <div class="px-4 pb-2 text-[12px] text-ink-2" id="rail-servers">…</div>
+        <div class="px-4 py-3 text-[11px] text-ink-3" id="version"></div>
       </aside>
+
+      <!-- Content -->
       <main class="min-w-0 flex-1 overflow-y-auto">
-        <header class="border-b border-hairline px-6 py-3">
-          <h1 class="text-[17px] font-semibold">Servers</h1>
-          <p class="text-[12px] text-ink-2" id="status">Starting…</p>
-        </header>
-        <section class="flex flex-col gap-2 px-6 py-5" id="probes"></section>
+        <!-- Library -->
+        <section data-screen="library">
+          <header class="border-b border-hairline px-6 py-3">
+            <h1 class="text-[17px] font-semibold">Library</h1>
+            <p class="text-[12px] text-ink-2" id="lib-status">…</p>
+          </header>
+          <div class="flex flex-col items-center px-6 py-16 text-center">
+            <div
+              class="flex h-[52px] w-[52px] items-center justify-center rounded-2xl border border-hairline bg-raised text-[22px] text-ink-2"
+            >
+              ▦
+            </div>
+            <p class="mt-4 text-[15px] font-semibold">Catalog coming online</p>
+            <p class="mt-1.5 max-w-[420px] text-[12px] leading-relaxed text-ink-2">
+              Categories, the poster grid and search land in the next waves.
+              Servers and transfers already work — check the rail.
+            </p>
+          </div>
+        </section>
+
+        <!-- Transfers -->
+        <section data-screen="transfers" class="hidden">
+          <header class="border-b border-hairline px-6 py-3">
+            <h1 class="text-[17px] font-semibold">Transfers</h1>
+            <p class="text-[12px] text-ink-2" id="tr-status">…</p>
+          </header>
+          <div class="flex flex-col gap-2.5 px-6 py-5" id="tasks"></div>
+        </section>
+
+        <!-- Servers -->
+        <section data-screen="servers" class="hidden">
+          <header class="border-b border-hairline px-6 py-3">
+            <h1 class="text-[17px] font-semibold">Servers</h1>
+            <p class="text-[12px] text-ink-2" id="srv-status">…</p>
+          </header>
+          <div class="flex flex-col gap-2 px-6 py-5" id="probes"></div>
+        </section>
+
+        <!-- Settings -->
+        <section data-screen="settings" class="hidden">
+          <header class="border-b border-hairline px-6 py-3">
+            <h1 class="text-[17px] font-semibold">Settings</h1>
+            <p class="text-[12px] text-ink-2">Applies immediately — no Save button.</p>
+          </header>
+          <div class="flex max-w-[560px] flex-col gap-6 px-6 py-5">
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Appearance</p>
+              <div class="mt-2 flex gap-1 rounded-full bg-raised p-1" id="theme-switch">
+                <button data-theme-choice="system" class="theme-btn">System</button>
+                <button data-theme-choice="light" class="theme-btn">Light</button>
+                <button data-theme-choice="dark" class="theme-btn">Dark</button>
+              </div>
+            </div>
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Storage</p>
+              <dl class="mt-2 flex flex-col gap-1.5 text-[13px]">
+                <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">Downloads</dt><dd class="min-w-0 truncate" id="set-dl-dir">…</dd></div>
+                <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">App data</dt><dd class="min-w-0 truncate" id="set-data-dir">…</dd></div>
+              </dl>
+            </div>
+            <p class="text-[12px] text-ink-3">
+              Transfer-engine settings (connections, concurrency) and language
+              arrive with the Settings wave; this screen grows section by section.
+            </p>
+          </div>
+        </section>
       </main>
     </div>
 
+    <style>
+      @reference "../styles/global.css";
+      .nav-item {
+        @apply flex items-center rounded-full px-4 py-2 text-left text-ink-2 transition-colors duration-150;
+      }
+      .nav-item:hover {
+        @apply bg-raised;
+      }
+      .nav-item.is-active {
+        @apply bg-accent-container text-on-accent-container;
+      }
+      .theme-btn {
+        @apply flex-1 rounded-full px-3 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors duration-150;
+      }
+      .theme-btn.is-active {
+        @apply bg-surface text-ink shadow-sm;
+      }
+    </style>
+
     <script>
       import { getBootstrap, probeSources } from '../lib/api';
+      import type { BootstrapDto, TaskDto } from '../lib/api';
 
-      const status = document.getElementById('status')!;
-      const probesEl = document.getElementById('probes')!;
-      const versionEl = document.getElementById('version')!;
+      const status = (id: string) => document.getElementById(id)!;
 
-      function dotClass(s: string): string {
-        return s === 'up'
-          ? 'bg-done'
-          : s === 'down'
-            ? 'bg-failed'
-            : 'bg-ink-3';
+      // ---- view switching -------------------------------------------------
+      function show(view: string) {
+        document.querySelectorAll('[data-screen]').forEach((el) => {
+          (el as HTMLElement).classList.toggle(
+            'hidden',
+            (el as HTMLElement).dataset.screen !== view,
+          );
+        });
+        document.querySelectorAll('#nav .nav-item').forEach((el) => {
+          (el as HTMLElement).classList.toggle(
+            'is-active',
+            (el as HTMLElement).dataset.view === view,
+          );
+        });
       }
+      document.querySelectorAll('#nav .nav-item').forEach((el) => {
+        el.addEventListener('click', () =>
+          show((el as HTMLElement).dataset.view!),
+        );
+      });
+      document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        if (e.key === '1') show('library');
+        else if (e.key === '2') show('transfers');
+        else if (e.key === '3') show('servers');
+        else if (e.key === ',') show('settings');
+      });
+      show('library');
 
-      async function main() {
-        let boot;
-        try {
-          boot = await getBootstrap();
-        } catch {
-          status.textContent =
-            'Not running inside Tauri — this is the browser preview.';
+      // ---- formatting ------------------------------------------------------
+      function fmtBytes(n: number): string {
+        if (n <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0;
+        let v = n;
+        while (v >= 1024 && i < units.length - 1) {
+          v /= 1024;
+          i++;
+        }
+        return (v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
+      }
+      const STATE_LABEL: Record<TaskDto['state'], string> = {
+        queued: 'Queued',
+        running: 'Running',
+        paused: 'Paused',
+        completed: 'Completed',
+        failed: 'Failed',
+      };
+
+      function renderTasks(boot: BootstrapDto) {
+        const wrap = status('tasks');
+        const tasks = boot.downloads.tasks;
+        status('tr-status').textContent =
+          tasks.length === 0
+            ? 'No transfers yet'
+            : tasks.length +
+              ' transfers · ' +
+              boot.downloads.activeCount +
+              ' active';
+        const badge = status('nav-badge');
+        if (boot.downloads.activeCount > 0) {
+          badge.textContent = String(boot.downloads.activeCount);
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+        wrap.replaceChildren();
+        if (tasks.length === 0) {
+          const empty = document.createElement('p');
+          empty.className = 'py-10 text-center text-[13px] text-ink-2';
+          empty.textContent =
+            'Movies and episodes you download appear here with live progress and speed.';
+          wrap.append(empty);
           return;
         }
-        versionEl.textContent = 'v' + boot.appVersion;
-        const enabled = boot.sources.filter((s) => s.enabled).length;
-        status.textContent =
-          boot.sources.length +
-          ' servers · ' +
-          enabled +
-          ' enabled · probing…';
+        for (const t of tasks) {
+          const card = document.createElement('div');
+          card.className =
+            'rounded-2xl border border-hairline bg-surface px-4 py-3.5';
+          const top = document.createElement('div');
+          top.className = 'flex items-baseline gap-3';
+          const name = document.createElement('span');
+          name.className = 'min-w-0 flex-1 truncate text-[13.5px] font-medium';
+          name.textContent = t.name;
+          const state = document.createElement('span');
+          state.className = 'text-[12px] font-medium text-ink-2';
+          state.textContent =
+            STATE_LABEL[t.state] +
+            (t.state === 'running' || t.state === 'paused'
+              ? ' · ' + Math.round(t.fraction * 100) + '%'
+              : '');
+          top.append(name, state);
+          const bar = document.createElement('div');
+          bar.className = 'mt-2.5 h-1.5 overflow-hidden rounded-full bg-raised';
+          const fill = document.createElement('div');
+          fill.className =
+            'h-full rounded-full ' +
+            (t.state === 'failed'
+              ? 'bg-failed'
+              : t.state === 'completed'
+                ? 'bg-done'
+                : t.state === 'paused'
+                  ? 'bg-paused'
+                  : 'bg-accent');
+          fill.style.width = Math.round(t.fraction * 100) + '%';
+          bar.append(fill);
+          const meta = document.createElement('p');
+          meta.className = 'mt-2 text-[12px] tabular-nums text-ink-3';
+          meta.textContent =
+            fmtBytes(t.downloaded) +
+            (t.total > 0 ? ' of ' + fmtBytes(t.total) : '') +
+            (t.error ? ' · ' + t.error : '');
+          card.append(top, bar, meta);
+          wrap.append(card);
+        }
+      }
 
+      // ---- servers ----------------------------------------------------------
+      function dotClass(s: string): string {
+        return s === 'up' ? 'bg-done' : s === 'down' ? 'bg-failed' : 'bg-ink-3';
+      }
+      async function loadProbes() {
         const results = await probeSources();
-        probesEl.replaceChildren();
+        const wrap = status('probes');
+        wrap.replaceChildren();
         for (const p of results) {
           const row = document.createElement('div');
           row.className =
@@ -102,13 +295,56 @@ import '../styles/global.css';
                 ? 'Unreachable'
                 : 'Disabled';
           row.append(dot, name, url, state);
-          probesEl.append(row);
+          wrap.append(row);
         }
         const up = results.filter((r) => r.status === 'up').length;
-        status.textContent =
+        status('srv-status').textContent =
           up + ' of ' + results.length + ' servers online';
+        status('rail-servers').textContent = up + ' online';
+        status('lib-status').textContent =
+          up > 0
+            ? up + ' servers online'
+            : 'No servers reachable — check the Servers tab';
       }
 
+      // ---- theme -------------------------------------------------------------
+      function applyTheme(choice: string) {
+        localStorage.setItem('lanfetch-theme', choice);
+        const dark =
+          choice === 'dark' ||
+          (choice === 'system' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        document.querySelectorAll('.theme-btn').forEach((el) => {
+          (el as HTMLElement).classList.toggle(
+            'is-active',
+            (el as HTMLElement).dataset.themeChoice === choice,
+          );
+        });
+      }
+      document.querySelectorAll('.theme-btn').forEach((el) => {
+        el.addEventListener('click', () =>
+          applyTheme((el as HTMLElement).dataset.themeChoice!),
+        );
+      });
+      applyTheme(localStorage.getItem('lanfetch-theme') ?? 'system');
+
+      // ---- boot ---------------------------------------------------------------
+      async function main() {
+        let boot: BootstrapDto;
+        try {
+          boot = await getBootstrap();
+        } catch {
+          status('lib-status').textContent =
+            'Not running inside Tauri — this is the browser preview.';
+          return;
+        }
+        status('version').textContent = 'v' + boot.appVersion;
+        status('set-dl-dir').textContent = boot.downloadsDir;
+        status('set-data-dir').textContent = boot.dataDir;
+        renderTasks(boot);
+        void loadProbes();
+      }
       void main();
     </script>
   </body>

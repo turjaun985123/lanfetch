@@ -138,7 +138,7 @@ pub fn parse_quality(text: &str) -> Option<String> {
 }
 
 pub fn parse_source_tag(text: &str) -> Option<String> {
-    let t = text.to_lowercase().replace('-', "").replace('.', "");
+    let t = text.to_lowercase().replace(['-', '.'], "");
     if t.contains("remux") {
         Some("REMUX".into())
     } else if t.contains("bluray") || t.contains("bdrip") || t.contains("brrip") {
@@ -257,7 +257,7 @@ pub fn clean_title(raw: &str) -> String {
         raw.to_string()
     };
     t = BRACKET_RE.replace_all(&t, " ").to_string();
-    t = t.replace('.', " ").replace('_', " ").replace('-', " ");
+    t = t.replace(['.', '_', '-'], " ");
     if let Some(m) = CUT_MARKER_RE.find(&t) {
         t = t[..m.start()].to_string();
     }
