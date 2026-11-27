@@ -1,1 +1,25 @@
-{"dependencies":{"@tailwindcss/vite":"^4","@tauri-apps/api":"^2","astro":"^7","tailwindcss":"^4"},"devDependencies":{"@tauri-apps/cli":"^2","typescript":"~5.9"},"name":"lanfetch-desktop","private":true,"scripts":{"build":"astro build","check":"tsc --noEmit","dev":"astro dev --host 127.0.0.1 --port 4321","preview":"astro preview","tauri":"tauri"},"type":"module","version":"1.6.0"}
+{
+  "dependencies": {
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/api": "^2",
+    "astro": "^7",
+    "tailwindcss": "^4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "typescript": "~5.9",
+    "vitest": "^3.2.7"
+  },
+  "name": "lanfetch-desktop",
+  "private": true,
+  "scripts": {
+    "build": "astro build",
+    "check": "tsc --noEmit",
+    "dev": "astro dev --host 127.0.0.1 --port 4321",
+    "preview": "astro preview",
+    "tauri": "tauri",
+    "test": "vitest run"
+  },
+  "type": "module",
+  "version": "1.6.0"
+}

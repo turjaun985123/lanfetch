@@ -49,6 +49,12 @@ jobs:
       - name: Type check
         run: npm run check
 
+      # Pure-logic unit tests (V2 Wave 4): node environment, no
+      # jsdom — these pin formatting/derivation logic only and
+      # claim nothing about DOM behavior.
+      - name: Unit tests (Vitest)
+        run: npm run test
+
       - name: Build frontend (Astro)
         run: npm run build
 

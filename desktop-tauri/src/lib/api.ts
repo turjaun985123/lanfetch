@@ -77,11 +77,24 @@ async function invoke<T>(
 }
 
 /** Subscribe to the manager's downloads-changed stamp, over
- * whichever transport is live. */
-export function onDownloadsChanged(cb: (stamp: number) => void): void {
+ * whichever transport is live. Returns an unsubscribe function
+ * (V2 FRONTEND.md step 0): the web branch closes its EventSource,
+ * the Tauri branch resolves the pending unlisten promise into the
+ * teardown, including when unsubscribed before it resolves. */
+export function onDownloadsChanged(cb: (stamp: number) => void): () => void {
   if (isTauri) {
-    void listen<number>('downloads-changed', (e) => cb(e.payload));
-    return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void listen<number>('downloads-changed', (e) => cb(e.payload)).then(
+      (u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      },
+    );
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }
   const token = webToken();
   const source = new EventSource(
@@ -91,6 +104,7 @@ export function onDownloadsChanged(cb: (stamp: number) => void): void {
     const stamp = Number(e.data);
     if (Number.isFinite(stamp)) cb(stamp);
   };
+  return () => source.close();
 }
 
 export interface SettingsDto {
