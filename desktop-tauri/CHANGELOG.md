@@ -1,5 +1,12 @@
 # LanFetch Desktop — Changelog
 
+## 2.0.0 — the V2 transformation
+
+See the root `CHANGELOG.md` for the full 2.0.0 entry (download-engine
+lifecycle, authenticated LAN web mode, /api/v1, frontend modules,
+security hardening). This file remains the record of the 1.6.0 RC line.
+
+
 ## 1.6.0 (release candidate) — the Tauri rebuild
 
 The Rune UI is gone. Same Rust engine (catalog, downloads,

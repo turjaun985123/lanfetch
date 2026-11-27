@@ -36,12 +36,8 @@ jobs:
           cache: npm
           cache-dependency-path: desktop-tauri/package-lock.json
 
-      - name: Version consistency (package.json == Cargo.toml)
-        run: |
-          PKG=$(node -p "require('./package.json').version")
-          CARGO=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
-          echo "package.json=$PKG src-tauri/Cargo.toml=$CARGO"
-          test "$PKG" = "$CARGO"
+      - name: Version consistency (ADR-005 — all carriers agree)
+        run: python3 scripts/check_version.py
 
       - name: Install dependencies (lockfile)
         run: npm ci
@@ -129,6 +125,14 @@ jobs:
         # manager) must pass unmodified in its new home — now the
         # engine crate, shared by the desktop app and the web binary.
         run: cargo test --locked --workspace
+
+      - name: Perf smoke timings (indicative only — not a benchmark)
+        # Re-runs only the perf_smoke target with --nocapture so
+        # its PERF lines land in the log. The same tests already
+        # gated in the Unit tests step above; this step exists
+        # purely for timing visibility. CI timings are indicative
+        # only and are never a capacity claim (Wave 8).
+        run: cargo test --locked -p lanfetch-engine --test perf_smoke -- --nocapture
 
   bundle:
     needs: [frontend, backend]

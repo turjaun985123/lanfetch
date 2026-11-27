@@ -13,3 +13,15 @@
 - *Schema-version field in every persisted file:* heavier machinery than serde defaults + fixtures for a single-writer local app; revisit only if a future migration cannot be expressed as defaults. Deferred, not rejected outright.
 
 **Consequences.** Positive: one enforceable version story; the release-notes staleness bug closes; the silent-data-loss class of bug (Agent 8's Medium findings) becomes structurally impossible rather than vigilance-dependent; API consumers get an independent stability promise. Negative: the fixture discipline adds a small tax to every persistence change (one fixture file + one test per format change — accepted as cheap insurance); the 2.0.0 bump means the still-pending final `1.6.0` tag decision must be resolved explicitly at Wave 9 — either 1.6.0 ships as the redesign's final first (the RC6 acceptance already awaiting the user), or V2 supersedes it and 1.6.0 remains an RC line. That is the user's call, recorded here so it cannot be silently elided.
+
+**Amendment (Wave 9, 2026-11-28).** Three corrections from the release-prep
+audit: (1) the Context above says "four files" but lists five — the carriers
+are package.json, package-lock.json, and the three Cargo manifests.
+(2) `Cargo.lock` is a sixth carrier in practice: every cargo step in CI runs
+`--locked`, so a stale lock fails the build; the consistency check therefore
+verifies the three workspace entries in Cargo.lock too.
+(3) Decision (2)'s check landed in Wave 9 as
+`desktop-tauri/scripts/check_version.py`, replacing the frontend job's old
+two-file comparison; because the release notes are generated from the tag
+(Wave 1), the check also requires a tag run's tag to equal
+`desktop-tauri-v<package version>`.
