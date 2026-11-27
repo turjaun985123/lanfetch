@@ -535,6 +535,62 @@ img {
     animation: lf-spin 0.8s linear infinite;
   }
 
+  /* ---- detail (R4: Agents 19, 20, 33) ---- */
+  /* The wash is a 240px layout box, blurred first and then scaled
+     up to cover — the blur never paints at hero size (Agent 33).
+     The scrim alone guarantees text contrast; the wash is purely
+     decorative and may not cover extreme widths. */
+  .hero {
+    @apply relative overflow-hidden;
+    contain: paint;
+  }
+  .hero-wash {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 240px;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    filter: blur(12px) saturate(0.5) brightness(1.12);
+    opacity: 0.6;
+    transform: scale(11);
+    transform-origin: top left;
+    will-change: transform;
+    pointer-events: none;
+  }
+  [data-theme='dark'] .hero-wash {
+    filter: blur(12px) saturate(0.65) brightness(0.5);
+    opacity: 1;
+  }
+  .hero-scrim {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      rgb(243 244 245 / 0.45),
+      rgb(243 244 245 / 0.88) 62%,
+      var(--canvas)
+    );
+    pointer-events: none;
+  }
+  [data-theme='dark'] .hero-scrim {
+    background: linear-gradient(
+      to bottom,
+      rgb(0 0 0 / 0.3),
+      rgb(0 0 0 / 0.62) 62%,
+      var(--canvas)
+    );
+  }
+  .detail-poster-frame {
+    @apply relative aspect-[2/3] overflow-hidden rounded-lg border border-strong bg-raised shadow-card;
+  }
+  .badge-meta {
+    @apply inline-flex items-center rounded-full border border-hairline bg-surface px-2 py-0.5 text-secondary font-medium text-ink-2;
+  }
+  .file-progress {
+    @apply absolute bottom-0 left-0 h-0.5 bg-accent;
+  }
+
   /* ---- app shell (R2: Agents 11-13, 26, 27) ----
      One #rail / #nav element serves every band. Cascade note:
      direction/padding for the shell live here, not in Tailwind

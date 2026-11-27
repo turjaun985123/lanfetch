@@ -378,46 +378,60 @@ import '../styles/global.css';
 
         <!-- Detail -->
         <section data-screen="detail" class="hidden">
-          <header class="screen-header">
-            <button
-              id="detail-back"
-              class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-            >
-              ← Library
-            </button>
-          </header>
-          <div class="flex gap-6 px-6 py-5">
-            <div class="w-[180px] shrink-0">
-              <div
-                class="relative aspect-[2/3] overflow-hidden rounded-xl border border-hairline bg-raised"
-              >
-                <div
-                  id="detail-initials"
-                  class="absolute inset-0 flex items-center justify-center text-[34px] font-semibold text-ink-3"
-                ></div>
-                <img
-                  id="detail-poster"
-                  class="absolute inset-0 hidden h-full w-full object-cover"
-                  draggable="false"
-                  alt=""
-                />
+          <div class="hero">
+            <img
+              id="detail-wash"
+              class="hero-wash hidden"
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
+            <div class="hero-scrim"></div>
+            <div class="relative">
+              <header class="flex items-center justify-between px-6 pt-4 max-[767px]:px-4">
+                <button id="detail-back" class="btn btn-ghost btn-sm">
+                  <svg class="ic ic-16" aria-hidden="true"><use href="#i-back" /></svg>
+                  Library
+                </button>
+                <button
+                  id="detail-fav"
+                  class="btn btn-ghost btn-sm"
+                  aria-pressed="false"
+                >
+                  <span id="detail-fav-icon"></span>
+                  <span id="detail-fav-label">Favorite</span>
+                </button>
+              </header>
+              <div class="flex gap-5 px-6 pb-6 pt-4 max-[639px]:flex-col max-[639px]:gap-4 max-[767px]:px-4 min-[640px]:gap-6">
+                <div class="w-[128px] shrink-0 min-[640px]:w-[160px] min-[1024px]:w-[180px] min-[1280px]:w-[200px]">
+                  <div class="detail-poster-frame">
+                    <div
+                      id="detail-initials"
+                      class="absolute inset-0 flex items-center justify-center text-display font-semibold text-ink-3"
+                    ></div>
+                    <img
+                      id="detail-poster"
+                      class="absolute inset-0 hidden h-full w-full object-cover"
+                      draggable="false"
+                      alt=""
+                    />
+                  </div>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h2
+                    id="detail-title"
+                    tabindex="-1"
+                    class="text-display font-semibold leading-tight max-[639px]:text-page"
+                  ></h2>
+                  <div id="detail-meta" class="mt-2.5 flex flex-wrap gap-1.5"></div>
+                  <p id="detail-status" class="status-line mt-2"></p>
+                </div>
               </div>
-              <button
-                id="detail-fav"
-                class="mt-3 w-full rounded-full border border-hairline px-3 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-              >
-                ☆ Favorite
-              </button>
             </div>
-            <div class="min-w-0 flex-1">
-              <h2
-                id="detail-title"
-                class="text-[20px] font-semibold leading-snug"
-              ></h2>
-              <p id="detail-meta" class="mt-1 text-[12.5px] text-ink-2"></p>
-              <p id="detail-status" class="mt-1 text-[12px] text-ink-3"></p>
-              <div id="detail-files" class="mt-4 flex flex-col gap-2"></div>
-            </div>
+          </div>
+          <div class="px-6 py-5 max-[767px]:px-4">
+            <h3 id="detail-files-heading" class="text-heading font-semibold">Files</h3>
+            <div id="detail-files" class="mt-3 flex flex-col gap-2"></div>
           </div>
         </section>
 
@@ -829,6 +843,10 @@ import '../styles/global.css';
       }
       onDownloadsChanged((stamp) => {
         if (stamp > lastStamp) void refreshDownloads();
+        // Keep an open Detail page's file states live (Agent 20);
+        // refreshDetailFiles no-ops unless Detail is visible and
+        // re-renders only on a real signature change.
+        void refreshDetailFiles();
       });
       document
         .getElementById('tr-clear')!
@@ -1578,17 +1596,25 @@ import '../styles/global.css';
       let detailGen = 0;
       let detailTitle: TitleDto | null = null;
 
+      // File actions (Agent 20). The old Paused button was a
+      // disabled dead-end: start_download does NOT resume a paused
+      // task (verified in engine manager.rs — enqueue dedups by
+      // URL and silently returns). A real resume finds the task by
+      // URL and calls resumeDownload; failed tasks resume only
+      // when the engine says the partial is ready, otherwise they
+      // re-probe through startDownload.
+      const pendingFileClicks = new Set<string>();
       function fileButton(f: FileDto): HTMLButtonElement {
         const b = document.createElement('button');
-        b.className =
-          'shrink-0 rounded-full bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-white transition-opacity duration-150 disabled:opacity-60';
-        const label = () => {
+        const paint = () => {
           switch (f.downloadState) {
             case 'queued':
-              b.textContent = 'Queued';
+              b.className = 'btn btn-ghost btn-sm shrink-0';
+              b.replaceChildren(icon('clock', 16), document.createTextNode('Queued'));
               b.disabled = true;
               break;
             case 'running':
+              b.className = 'btn btn-ghost btn-sm shrink-0';
               b.textContent =
                 'Downloading ' +
                 Math.round((f.downloadFraction ?? 0) * 100) +
@@ -1596,34 +1622,57 @@ import '../styles/global.css';
               b.disabled = true;
               break;
             case 'paused':
-              b.textContent = 'Paused';
-              b.disabled = true;
+              b.className = 'btn btn-ghost btn-sm shrink-0';
+              b.replaceChildren(icon('play', 16), document.createTextNode('Resume'));
+              b.disabled = false;
               break;
             case 'completed':
-              b.textContent = 'Downloaded';
+              b.className = 'btn btn-ghost btn-sm shrink-0';
+              b.replaceChildren(icon('check', 16), document.createTextNode('Downloaded'));
               b.disabled = true;
               break;
             case 'failed':
-              b.textContent = 'Retry';
+              b.className = 'btn btn-primary btn-sm shrink-0';
+              b.replaceChildren(icon('retry', 16), document.createTextNode('Retry'));
               b.disabled = false;
               break;
             default:
-              b.textContent = 'Download';
+              b.className = 'btn btn-primary btn-sm shrink-0';
+              b.replaceChildren(icon('download', 16), document.createTextNode('Download'));
               b.disabled = false;
           }
         };
-        label();
+        paint();
         b.addEventListener('click', async () => {
+          if (pendingFileClicks.has(f.fileUrl)) return;
+          pendingFileClicks.add(f.fileUrl);
           b.disabled = true;
-          b.textContent = 'Queueing…';
+          b.textContent = 'Working…';
           try {
-            const list = await startDownload(f.fileUrl, f.fileName);
-            renderDownloads(list);
+            let acted = false;
+            if (f.downloadState === 'paused' || f.downloadState === 'failed') {
+              try {
+                const list = await getDownloads();
+                const task = list.tasks.find((x) => x.url === f.fileUrl);
+                if (task && (f.downloadState === 'paused' || task.ready)) {
+                  renderDownloads(await resumeDownload(task.id));
+                  acted = true;
+                }
+              } catch {
+                // fall through to a fresh startDownload
+              }
+            }
+            if (!acted) {
+              renderDownloads(await startDownload(f.fileUrl, f.fileName));
+            }
             f.downloadState = 'queued';
-            label();
+            f.downloadFraction = 0;
+            paint();
+            void refreshDetailFiles();
           } catch {
-            b.textContent = 'Download';
-            b.disabled = false;
+            paint();
+          } finally {
+            pendingFileClicks.delete(f.fileUrl);
           }
         });
         return b;
@@ -1633,10 +1682,17 @@ import '../styles/global.css';
         const wrap = status('detail-files');
         wrap.replaceChildren();
         if (detail.files.length === 0) {
-          const p = document.createElement('p');
-          p.className = 'text-[13px] text-ink-2';
-          p.textContent = 'No downloadable files in this folder.';
-          wrap.append(p);
+          const empty = el('div', 'empty-state');
+          const ic = el('span', 'text-ink-3');
+          ic.append(icon('film', 24));
+          const h = el('h4', 'mt-3 text-heading font-semibold', 'No downloadable files');
+          const p = el(
+            'p',
+            'mt-1 max-w-[420px] text-body text-ink-2',
+            'This folder holds no video files LanFetch can fetch.',
+          );
+          empty.append(ic, h, p);
+          wrap.append(empty);
           return;
         }
         const isSeries = detail.title.kind === 'series';
@@ -1648,55 +1704,171 @@ import '../styles/global.css';
           seasons.set(key, arr);
         }
         for (const season of [...seasons.keys()].sort((a, b) => a - b)) {
+          const files = seasons.get(season)!;
           if (isSeries) {
-            const h = document.createElement('p');
-            h.className =
-              'mt-2 text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3';
-            h.textContent = season > 0 ? 'Season ' + season : 'Episodes';
-            wrap.append(h);
+            const head = el('div', 'mt-2 flex items-center justify-between gap-2');
+            head.append(
+              el(
+                'span',
+                'section-label',
+                (season > 0 ? 'Season ' + season : 'Episodes') +
+                  ' · ' +
+                  files.length +
+                  ' files',
+              ),
+            );
+            const actionable = files.filter(
+              (f) => !f.downloadState || f.downloadState === 'failed',
+            );
+            if (files.length >= 2 && actionable.length >= 2) {
+              const all = el('button', 'btn btn-ghost btn-sm', 'Download all');
+              all.addEventListener('click', async () => {
+                all.disabled = true;
+                all.textContent = 'Queueing…';
+                let last: DownloadListDto | null = null;
+                for (const f of actionable) {
+                  try {
+                    last = await startDownload(f.fileUrl, f.fileName);
+                  } catch {
+                    // one bad file must not stop the season
+                  }
+                }
+                if (last) renderDownloads(last);
+                void refreshDetailFiles();
+              });
+              head.append(all);
+            }
+            wrap.append(head);
           }
-          for (const f of seasons.get(season)!) {
-            const row = document.createElement('div');
-            row.className =
-              'flex items-center gap-3 rounded-xl border border-hairline bg-surface px-3.5 py-2.5';
-            const text = document.createElement('div');
-            text.className = 'min-w-0 flex-1';
-            const name = document.createElement('p');
-            name.className = 'truncate text-[13px] font-medium';
-            name.textContent = f.fileName;
-            const sub = document.createElement('p');
-            sub.className = 'mt-0.5 text-[11.5px] tabular-nums text-ink-3';
-            sub.textContent =
-              (f.episode != null ? 'E' + f.episode + ' · ' : '') +
-              (f.size >= 0 ? fmtBytes(f.size) : 'Size unknown') +
-              (f.quality ? ' · ' + f.quality : '') +
-              (f.codec ? ' · ' + f.codec : '') +
-              (f.audio ? ' · ' + f.audio : '');
+          for (const f of files) {
+            const row = el(
+              'div',
+              'row-card relative flex items-center gap-3 overflow-hidden px-3.5 py-3',
+            );
+            const text = el('div', 'min-w-0 flex-1');
+            const name = el('p', 'truncate text-row font-medium', f.fileName);
+            name.title = f.fileName;
+            const sub = el(
+              'div',
+              'mt-0.5 flex items-center gap-1.5 text-secondary tabular-nums text-ink-3',
+            );
+            sub.append(
+              document.createTextNode(
+                (f.episode != null ? 'E' + f.episode + ' · ' : '') +
+                  (f.size >= 0 ? fmtBytes(f.size) : 'Size unknown') +
+                  (f.quality ? ' · ' + f.quality : '') +
+                  (f.codec ? ' · ' + f.codec : '') +
+                  (f.audio ? ' · ' + f.audio : ''),
+              ),
+            );
+            if (f.sourceTag) {
+              sub.append(
+                el(
+                  'span',
+                  'badge border border-hairline bg-raised px-1.5 py-0.5 text-caption font-medium text-ink-2',
+                  f.sourceTag,
+                ),
+              );
+            }
             text.append(name, sub);
             row.append(text, fileButton(f));
+            if (f.downloadState === 'running') {
+              const bar = el('div', 'file-progress');
+              bar.style.width =
+                Math.round((f.downloadFraction ?? 0) * 100) + '%';
+              row.append(bar);
+            }
             wrap.append(row);
           }
         }
       }
 
+      // Live detail refresh (Agent 20): downloads-changed events
+      // re-fetch the open title, but the file list re-renders only
+      // when its signature actually changed — no flicker, no lost
+      // scroll position, no clobbering a click in flight.
+      let detailFilesSig = '';
+      let detailRefreshInFlight = false;
+      let detailDirty = false;
+      function filesSignature(files: FileDto[]): string {
+        return files
+          .map(
+            (f) =>
+              f.fileUrl +
+              '|' +
+              (f.downloadState ?? '') +
+              '|' +
+              Math.round((f.downloadFraction ?? 0) * 100),
+          )
+          .join(';');
+      }
+      async function refreshDetailFiles(): Promise<void> {
+        const section = document.querySelector('[data-screen="detail"]');
+        if (!detailTitle || !section || section.classList.contains('hidden'))
+          return;
+        if (detailRefreshInFlight) {
+          detailDirty = true;
+          return;
+        }
+        detailRefreshInFlight = true;
+        const gen = detailGen;
+        try {
+          const detail = await getTitleDetail(detailTitle.folderUrl);
+          if (gen !== detailGen) return;
+          const sig = filesSignature(detail.files);
+          if (sig === detailFilesSig) return;
+          detailFilesSig = sig;
+          detailTitle = detail.title;
+          status('detail-files-heading').textContent =
+            'Files · ' + detail.files.length;
+          const main = document.querySelector('main');
+          const top = main?.scrollTop ?? 0;
+          renderFiles(detail);
+          if (main) main.scrollTop = top;
+        } catch {
+          // keep the current paint; the next event retries
+        } finally {
+          detailRefreshInFlight = false;
+          if (detailDirty) {
+            detailDirty = false;
+            void refreshDetailFiles();
+          }
+        }
+      }
+
+      function paintFav(): void {
+        const fav = detailTitle?.isFavorite ?? false;
+        status('detail-fav').setAttribute('aria-pressed', String(fav));
+        status('detail-fav-icon').replaceChildren(
+          icon(fav ? 'star-filled' : 'star', 16),
+        );
+        status('detail-fav-label').textContent = fav ? 'Favorited' : 'Favorite';
+      }
+
       async function openDetail(t: TitleDto): Promise<void> {
         const gen = ++detailGen;
         detailTitle = t;
+        detailFilesSig = '';
         show('detail');
         // Snapshot paint: everything the DTO already knows renders
         // now; only the file list waits for hydration.
         status('detail-title').textContent = t.title;
-        status('detail-meta').textContent =
-          (t.year ? t.year + ' · ' : '') +
-          t.category +
-          ' · ' +
-          t.sourceName +
-          (t.language ? ' · ' + t.language : '') +
-          (t.copies > 1 ? ' · ' + t.copies + ' copies' : '');
+        status('detail-title').title = t.title;
+        const meta = status('detail-meta');
+        meta.replaceChildren();
+        const chips: string[] = [];
+        if (t.year) chips.push(t.year);
+        chips.push(t.category, t.sourceName);
+        if (t.language) chips.push(t.language);
+        if (t.copies > 1) chips.push(t.copies + ' copies');
+        for (const c of chips) meta.append(el('span', 'badge-meta', c));
         status('detail-initials').textContent = initials(t.title);
         const poster = status('detail-poster') as HTMLImageElement;
+        const wash = status('detail-wash') as HTMLImageElement;
         poster.classList.add('hidden');
         poster.removeAttribute('src');
+        wash.classList.add('hidden');
+        wash.removeAttribute('src');
         if (t.posterUrl) {
           const [src] = await posterSrcs([t.posterUrl]);
           if (gen === detailGen && src) {
@@ -1705,18 +1877,27 @@ import '../styles/global.css';
             poster.addEventListener('error', () => poster.classList.add('hidden'), {
               once: true,
             });
+            // The hero wash reuses the same resolved poster src —
+            // the frontend never constructs poster URLs (Agent 30).
+            wash.src = src;
+            wash.classList.remove('hidden');
+            wash.addEventListener('error', () => wash.classList.add('hidden'), {
+              once: true,
+            });
           }
         }
-        const fav = status('detail-fav');
-        fav.textContent = t.isFavorite ? '★ Favorited' : '☆ Favorite';
+        paintFav();
         status('detail-status').textContent = 'Loading files…';
+        status('detail-files-heading').textContent = 'Files';
         status('detail-files').replaceChildren();
         try {
           const detail = await getTitleDetail(t.folderUrl);
           if (gen !== detailGen) return;
           detailTitle = detail.title;
-          status('detail-status').textContent =
-            detail.files.length + ' files · click Download to start';
+          detailFilesSig = filesSignature(detail.files);
+          status('detail-status').textContent = '';
+          status('detail-files-heading').textContent =
+            'Files · ' + detail.files.length;
           renderFiles(detail);
         } catch {
           if (gen === detailGen) {
@@ -1738,7 +1919,7 @@ import '../styles/global.css';
         if (!detailTitle) return;
         const now = await toggleFavorite(detailTitle.folderUrl);
         detailTitle.isFavorite = now;
-        status('detail-fav').textContent = now ? '★ Favorited' : '☆ Favorite';
+        paintFav();
       });
 
       // ---- boot ---------------------------------------------------------------
