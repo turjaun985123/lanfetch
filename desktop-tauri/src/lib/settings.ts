@@ -21,6 +21,10 @@ export interface SettingsCtx {
 export interface SettingsScreen {
   /** Install the settings loaded at boot. */
   setSettings: (dto: SettingsDto) => void;
+  /** Reflect the loaded settings into the three selects (boot
+   * used to do this through the page-scope sel() helper, which
+   * moved into this module with the extraction). */
+  syncSettingsForm: (dto: SettingsDto) => void;
   applyTheme: (choice: string) => void;
   persistSettings: (patch: Partial<SettingsDto>) => Promise<void>;
   /** Apply the cached theme and wire the controls. Returns the
@@ -243,5 +247,11 @@ export function createSettings(ctx: SettingsCtx): SettingsScreen {
     currentSettings = dto;
   }
 
-  return { setSettings, applyTheme, persistSettings, mount };
+  function syncSettingsForm(dto: SettingsDto): void {
+    sel('set-connections').value = String(dto.connections);
+    sel('set-concurrent').value = String(dto.maxConcurrent);
+    sel('set-language').value = dto.language;
+  }
+
+  return { setSettings, syncSettingsForm, applyTheme, persistSettings, mount };
 }

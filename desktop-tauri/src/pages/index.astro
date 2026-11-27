@@ -1897,9 +1897,7 @@ import '../styles/global.css';
         settingsScreen.setSettings(boot.settings);
         servers.setSources(boot.sources);
         renderServers();
-        sel('set-connections').value = String(boot.settings.connections);
-        sel('set-concurrent').value = String(boot.settings.maxConcurrent);
-        sel('set-language').value = boot.settings.language;
+        settingsScreen.syncSettingsForm(boot.settings);
         // settings.json is the theme's source of truth; localStorage
         // is only the pre-paint cache that mirrors it.
         applyTheme(boot.settings.theme);
