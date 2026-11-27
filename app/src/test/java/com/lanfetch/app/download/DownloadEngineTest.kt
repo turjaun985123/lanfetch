@@ -66,6 +66,58 @@ class DownloadEngineTest {
         }
     }
 
+    @Test fun tricklingServerExhaustsRetryBudget() = runBlocking {
+        // Regression: the server delivers 4 KiB then drops the
+        // connection, on every attempt. Before the fix this test
+        // never returns — every attempt delivered > 0 bytes, which
+        // reset the retry counter to zero inside the read loop,
+        // so MAX_RETRIES was never reached and the segment (and
+        // the wakelock) was held forever. Now a trickle attempt
+        // consumes budget: after MAX_RETRIES + 1 attempts the
+        // download must fail. Backoff across 7 attempts totals
+        // ~90 s, hence the generous timeout.
+        val payload = ByteArray(1_000_000) { (it % 251).toByte() }
+        val tmp = Files.createTempFile("lanfetch-trickle-", ".bin").toFile()
+        tmp.deleteOnExit()
+        RangeServer(payload, truncateAfterBytes = 4096).use { server ->
+            val engine = DownloadEngine(OkHttpClient())
+            val plan = SegmentPlanner.plan(payload.size.toLong(), 1)
+            assertEquals(1, plan.size)
+            val sink = FileSink(tmp)
+            sink.open()
+            sink.preallocate(payload.size.toLong())
+            val outcome = withTimeout(240_000) {
+                engine.run(server.url("/file.bin"), sink, plan, payload.size.toLong(), "\"v1\"") {}
+            }
+            sink.close()
+            assertTrue(outcome is DownloadOutcome.Failed)
+        }
+    }
+
+    @Test fun tricklingServerExhaustsSegmentRetryBudget() = runBlocking {
+        // Segmented counterpart of tricklingServerExhaustsRetryBudget:
+        // a multi-segment plan dispatches to downloadSegment (the
+        // 1-segment test above routes to runSingleStream), whose read
+        // loop carried the identical budget-refund bug and fix. Three
+        // segments trickle in parallel, so wall time stays ~90 s.
+        val payload = ByteArray(3_000_000) { (it % 251).toByte() }
+        val tmp = Files.createTempFile("lanfetch-trickle-seg-", ".bin").toFile()
+        tmp.deleteOnExit()
+        RangeServer(payload, truncateAfterBytes = 4096).use { server ->
+            val engine = DownloadEngine(OkHttpClient())
+            val plan = SegmentPlanner.plan(payload.size.toLong(), 3)
+            assertEquals(3, plan.size)
+            val sink = FileSink(tmp)
+            sink.open()
+            sink.preallocate(payload.size.toLong())
+            val outcome = withTimeout(240_000) {
+                engine.run(server.url("/file.bin"), sink, plan, payload.size.toLong(), "\"v1\"") {}
+            }
+            sink.close()
+            assertTrue(outcome is DownloadOutcome.Failed)
+        }
+    }
+
     @Test fun unknownLengthChunkedDownloadCompletesAtEof() = runBlocking {
         val payload = ByteArray(128_321) { (it * 7 % 251).toByte() }
         val tmp = Files.createTempFile("lanfetch-unknown-", ".bin").toFile()
@@ -164,6 +216,7 @@ class DownloadEngineTest {
         private val sendContentLength: Boolean = true,
         private val etag: String = "\"v1\"",
         private val stallAfterBytes: Int = -1,
+        private val truncateAfterBytes: Int = -1,
         private val onFirstChunkSent: (() -> Unit)? = null,
     ) : Closeable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
@@ -225,6 +278,14 @@ class DownloadEngineTest {
         }
 
         private fun writeBody(out: java.io.OutputStream, offset: Int, len: Int) {
+            if (truncateAfterBytes in 1 until len) {
+                // Send a few bytes, then let the socket close (the
+                // caller's use block) while Content-Length promised
+                // more — an abrupt mid-body drop, every time.
+                out.write(data, offset, truncateAfterBytes)
+                out.flush()
+                return
+            }
             if (stallAfterBytes in 1 until len) {
                 out.write(data, offset, stallAfterBytes)
                 out.flush()

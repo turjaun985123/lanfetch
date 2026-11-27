@@ -177,6 +177,24 @@ abstract class AppDb : RoomDatabase() {
         fun build(context: Context): AppDb =
             Room.databaseBuilder(context.applicationContext, AppDb::class.java, "lanfetch.db")
                 .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                // Wave 7C decision (docs/MIGRATION.md §5.1): DB versions 1–2
+                // shipped only in app v1.0–v1.2 (Nov 2026); DB v3 arrived
+                // with app v1.3.0. The v1/v2 schemas were never exported
+                // (app/schemas/ starts at 4.json), so a data-preserving
+                // 1→2 / 2→3 migration cannot be verified with
+                // MigrationTestHelper — an unverifiable migration risks
+                // silent corruption. Instead, Room destructively recreates
+                // the database when opening a v1/v2 database, rather than
+                // throwing "migration not found" and crashing on launch.
+                // Only the database rows (sources, download queue,
+                // favorites, caches) are rebuilt empty; downloaded FILES
+                // on disk are not touched. Upgrades from v3+ keep the full
+                // non-destructive migration chain above.
+                // Room 2.8.5 deprecates the (vararg Int) overload of this
+                // method; this is the current overload, and
+                // dropAllTables = true is the recommended value so the
+                // obsolete pre-v3 tables are dropped as well.
+                .fallbackToDestructiveMigrationFrom(true, 1, 2)
                 .build()
 
         /** Audit B10: machine-readable pauseReason column (see DownloadEntity). */

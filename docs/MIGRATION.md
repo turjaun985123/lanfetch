@@ -99,16 +99,41 @@ frontends, scripts, and saved data keep their meaning.
 
 ## 5. Android
 
-**Room v9 is untouched by V2.** No schema change, no new migration, no
-destructive fallback is introduced. The registered chain (3→4→5→6→7→8→9)
-and existing user databases open exactly as in 1.3.x. Two pre-existing
-hygiene items are recorded, not silently "fixed" by V2: installs older
-than schema v3 have no migration path (and no destructive fallback) in
-the shipped app, and `app/schemas/` contains exported schemas 4–8 only —
-`9.json` was never committed, so the 8→9 step cannot be exercised by
-`MigrationTestHelper` until that file is generated and committed under
-Squad 9 review. Android settings (DataStore) and the downloads directory
-are likewise unchanged; the Android app needs no data migration for V2.
+**The Room v9 schema is untouched by V2.** No schema change and no new
+migration: the registered chain (3→4→5→6→7→8→9) is unchanged, and
+existing user databases at v3 or later open exactly as in 1.3.x. Android
+settings (DataStore) and the downloads directory are likewise unchanged.
+
+### 5.1 Decision (Wave 7C): destructive fallback for schema v1–v2 only
+
+Installs older than schema v3 previously had **no** way to open the
+database at all: no 1→2 or 2→3 migration is registered and there was no
+fallback, so Room threw on open and the app crashed for anyone upgrading
+directly from app v1.0–v1.2 — the only releases that shipped DB v1/v2
+(DB v3 arrived with app v1.3.0).
+
+**Decision:** `AppDb.build()` registers
+`fallbackToDestructiveMigrationFrom(true, 1, 2)` alongside the existing
+migration chain (Room 2.8.5; the vararg-only overload is deprecated in
+Room 2.8 in favour of this `dropAllTables` overload).
+
+- **Scope:** only start versions 1 and 2. Every database at v3+ follows
+  the full non-destructive chain, unchanged.
+- **Consequence:** opening a v1/v2 database recreates it empty at v9
+  instead of crashing. The database rows (sources, download queue,
+  favorites, caches) are lost; **downloaded files on disk are not
+  touched** — only the records describing them are rebuilt.
+- **Why not hand-written 1→2 / 2→3 migrations:** the v1–v3 schemas were
+  never exported (`app/schemas/` contains 4–8 only; 1.json–3.json do not
+  exist), so a hand-written migration cannot be verified with
+  `MigrationTestHelper`. An unverifiable migration risks silent data
+  corruption on exactly the installs it claims to save; a bounded,
+  documented reset of a database from a two-release window is the safer
+  failure mode.
+- **Schema capture:** `app/schemas/` also lacked `9.json` (never
+  committed), which left the 8→9 step untestable. Android CI now uploads
+  the generated schemas as the `room-schemas` artifact on every build,
+  so `9.json` can be committed from a verified generation.
 
 ## 6. Rollback
 

@@ -41,6 +41,12 @@ class DownloadEngine(
 ) {
     companion object {
         const val MAX_RETRIES = 6
+        // An attempt only earns back the retry budget when it
+        // delivered at least this much real progress; trickle
+        // attempts (a few bytes, then a dropped connection)
+        // consume budget, so a trickling server cannot hold a
+        // segment — and the wakelock — forever.
+        const val RETRY_RESET_MIN_BYTES = 256L * 1024
         const val BUFFER = 256 * 1024
         val USER_AGENT: String = "LanFetch/" + com.lanfetch.app.BuildConfig.VERSION_NAME
     }
@@ -258,12 +264,12 @@ class DownloadEngine(
                             counters.addAndGet(index, writable.toLong())
                             total.addAndGet(writable.toLong())
                             bytesThisAttempt += writable
-                            if (bytesThisAttempt > 0) attempt = 0
                         }
                     }
                 }
 
                 if (counters.get(index) >= segment.length) return
+                if (bytesThisAttempt >= RETRY_RESET_MIN_BYTES) attempt = 0
                 attempt++
                 if (attempt > MAX_RETRIES) {
                     throw IOException("Segment ${segment.index} stalled at ${counters.get(index)}/${segment.length}")
@@ -275,6 +281,7 @@ class DownloadEngine(
                 throw e
             } catch (e: Exception) {
                 coroutineContext.ensureActive()
+                if (bytesThisAttempt >= RETRY_RESET_MIN_BYTES) attempt = 0
                 attempt++
                 if (attempt > MAX_RETRIES) throw e
                 delay(backoff(attempt))
@@ -347,13 +354,13 @@ class DownloadEngine(
                             counters.set(0, existing)
                             total.set(existing)
                             bytesThisAttempt += writable
-                            if (bytesThisAttempt > 0) attempt = 0
                         }
                     }
                 }
 
                 if (totalBytes > 0 && existing >= totalBytes) break
                 if (totalBytes <= 0) break
+                if (bytesThisAttempt >= RETRY_RESET_MIN_BYTES) attempt = 0
                 attempt++
                 if (attempt > MAX_RETRIES) {
                     return DownloadOutcome.Failed("Stream stalled at $existing / $totalBytes")
@@ -365,6 +372,7 @@ class DownloadEngine(
                 throw e
             } catch (e: Exception) {
                 coroutineContext.ensureActive()
+                if (bytesThisAttempt >= RETRY_RESET_MIN_BYTES) attempt = 0
                 attempt++
                 if (attempt > MAX_RETRIES) return DownloadOutcome.Failed(e.message ?: "Download failed")
                 delay(backoff(attempt))

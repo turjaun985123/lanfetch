@@ -48,6 +48,16 @@ jobs:
           name: lanfetch-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
+      # KSP regenerates the Room schemas (incl. the never-committed 9.json)
+      # into app/schemas/ on every build; capture them so new schema files
+      # can be committed from a verified generation (docs/MIGRATION.md §5.1).
+      - name: Upload Room schemas
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: room-schemas
+          path: app/schemas/
+          if-no-files-found: warn
+
   release:
     # Release builds run for version tags. Manual runs build and upload signed
     # ABI APKs as workflow artifacts without publishing a GitHub Release.
