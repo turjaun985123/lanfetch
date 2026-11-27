@@ -544,6 +544,7 @@ fn handle(
 // errors, and the frozen error shape. New capability is added
 // here (and in dispatch) — the legacy surface stays frozen.
 
+#[derive(Debug)]
 struct V1Error {
     status: &'static str,
     code: &'static str,
