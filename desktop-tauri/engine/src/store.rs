@@ -142,7 +142,7 @@ impl Settings {
 }
 
 pub fn load_settings() -> Settings {
-    read_json(&dir().join("settings.json"))
+    read_json::<Settings>(&dir().join("settings.json"))
         .unwrap_or_default()
         .clamped()
 }
