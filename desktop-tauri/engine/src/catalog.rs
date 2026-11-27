@@ -5,7 +5,7 @@
 //! fallback). Nothing is crawled into a database — listings are fetched
 //! live and cached for 10 minutes, exactly like the phone app.
 
-use crate::core::{fetch_listing, http_agent, DirEntry};
+use crate::core::{body_text_capped, fetch_listing, http_agent, DirEntry};
 use crate::meta::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{LazyLock, Mutex};
@@ -732,7 +732,7 @@ fn h5ai_search(source_root: &str, query: &str) -> Option<Vec<H5aiItem>> {
     );
     let endpoint = format!("{}?", source_root.trim_end_matches('/'));
     let resp = http_agent().post(&endpoint).send_string(&body).ok()?;
-    let text = resp.into_string().ok()?;
+    let text = body_text_capped(resp).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
     let arr = json.get("search")?.as_array()?;
     Some(
@@ -1240,7 +1240,7 @@ pub fn check_desktop_update() -> Result<Option<String>, String> {
         .get("https://api.github.com/repos/turjaun985123/lanfetch/releases?per_page=100")
         .call()
         .map_err(|e| e.to_string())?;
-    let text = resp.into_string().map_err(|e| e.to_string())?;
+    let text = body_text_capped(resp)?;
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let current = env!("CARGO_PKG_VERSION");
     if let Some(releases) = json.as_array() {

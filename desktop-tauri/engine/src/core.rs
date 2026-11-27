@@ -125,18 +125,12 @@ pub const MAX_LISTING_BYTES: u64 = 4 * 1024 * 1024;
 /// "read failed" so the host earns the transport-failure cooldown.
 const LISTING_DEADLINE: Duration = Duration::from_secs(30);
 
-pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
-    let mut reader = http_agent()
-        .get(url)
-        .call()
-        .map_err(|e| match e {
-            // An HTTP status means the server IS reachable — callers
-            // (the failure cooldown) must not treat it as an outage.
-            ureq::Error::Status(code, _) => format!("http status {code}"),
-            other => format!("request failed: {other}"),
-        })?
-        .into_reader()
-        .take(MAX_LISTING_BYTES + 1);
+/// Read a response body under the listing bounds: at most
+/// MAX_LISTING_BYTES and at most LISTING_DEADLINE overall. A
+/// hostile or broken server must not be able to OOM the process
+/// with an endless body or hold the read open forever (audit).
+fn read_capped(reader: impl Read) -> Result<Vec<u8>, String> {
+    let mut reader = reader.take(MAX_LISTING_BYTES + 1);
     let started = Instant::now();
     let mut raw = Vec::new();
     let mut chunk = [0u8; 64 * 1024];
@@ -153,17 +147,68 @@ pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
             return Err("listing too large".to_string());
         }
     }
+    Ok(raw)
+}
+
+/// A response body as text, under the same caps as a listing
+/// read — for the endpoints that used to call `into_string()`
+/// uncapped (h5ai search, the update check).
+pub fn body_text_capped(resp: ureq::Response) -> Result<String, String> {
+    let raw = read_capped(resp.into_reader())?;
+    Ok(String::from_utf8_lossy(&raw).into_owned())
+}
+
+pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
+    let resp = http_agent().get(url).call().map_err(|e| match e {
+        // An HTTP status means the server IS reachable — callers
+        // (the failure cooldown) must not treat it as an outage.
+        ureq::Error::Status(code, _) => format!("http status {code}"),
+        other => format!("request failed: {other}"),
+    })?;
+    let raw = read_capped(resp.into_reader())?;
     let body = String::from_utf8_lossy(&raw);
     Ok(parse_listing(&body, url))
 }
 
+/// Find `needle` (ASCII) in `haystack` at or after `from`,
+/// comparing ASCII letters case-insensitively. The returned
+/// offset indexes `haystack` itself. Searching a lowercased
+/// COPY instead — the previous approach — breaks whenever a
+/// character's lowercase form has a different byte length
+/// (U+0130 İ expands 2 → 3 bytes): every later offset shifts
+/// and slicing the original at a shifted offset panics on a
+/// char boundary (audit slices 1/3; Bengali/Hindi/Turkish
+/// titles make this a normal-use crash, not an edge case).
+fn find_ci(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || from > h.len() || h.len() - from < n.len() {
+        return None;
+    }
+    (from..=h.len() - n.len()).find(|&i| {
+        h[i..i + n.len()]
+            .iter()
+            .zip(n.iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
+}
+
+/// The largest char boundary at or below `i`.
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i > s.len() {
+        i = s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 pub fn parse_listing(html: &str, base_url: &str) -> Vec<DirEntry> {
     let mut out = Vec::new();
-    let lower = html.to_lowercase();
     let mut pos = 0usize;
-    while let Some(rel) = lower[pos..].find("<a ") {
-        let a_start = pos + rel;
-        let Some(tag_end) = lower[a_start..].find('>') else {
+    while let Some(a_start) = find_ci(html, "<a ", pos) {
+        let Some(tag_end) = html[a_start..].find('>') else {
             break;
         };
         let tag = &html[a_start..a_start + tag_end];
@@ -175,17 +220,15 @@ pub fn parse_listing(html: &str, base_url: &str) -> Vec<DirEntry> {
             continue;
         }
         // Anchor text up to </a>.
-        let text_end = lower[pos..].find("</a>").map(|i| pos + i).unwrap_or(pos);
+        let text_end = find_ci(html, "</a>", pos).unwrap_or(pos);
         let raw_text = strip_tags(&html[pos..text_end]);
         let name = percent_decode(raw_text.trim());
         if name.is_empty() || name == "Parent Directory" || name.starts_with("?") {
             continue;
         }
         // The rest of the row (to end of line / row) may carry a size.
-        let row_end = lower[text_end..]
-            .find("</tr>")
-            .map(|i| text_end + i)
-            .unwrap_or_else(|| (text_end + 200).min(html.len()));
+        let row_end = find_ci(html, "</tr>", text_end)
+            .unwrap_or_else(|| floor_char_boundary(html, text_end + 200));
         let size = parse_size_after(&html[text_end..row_end]);
         let is_dir = href.ends_with('/');
         let clean_href = href.trim_end_matches('/');
@@ -195,9 +238,14 @@ pub fn parse_listing(html: &str, base_url: &str) -> Vec<DirEntry> {
         } else {
             name
         };
+        // Cross-origin entries are dropped by join_url (server
+        // confinement) — skip them entirely.
+        let Some(url) = join_url(base_url, &href) else {
+            continue;
+        };
         out.push(DirEntry {
             name: display,
-            url: join_url(base_url, &href),
+            url,
             is_dir,
             size: if is_dir { None } else { size },
         });
@@ -213,8 +261,9 @@ pub fn parse_listing(html: &str, base_url: &str) -> Vec<DirEntry> {
 }
 
 fn extract_attr(tag: &str, attr: &str) -> Option<String> {
-    let lower = tag.to_lowercase();
-    let i = lower.find(&format!("{attr}="))? + attr.len() + 1;
+    // find_ci for the same reason as parse_listing: offsets
+    // from a lowercased copy can shift and panic.
+    let i = find_ci(tag, &format!("{attr}="), 0)? + attr.len() + 1;
     let rest = &tag[i..];
     let first = rest.chars().next()?;
     if first == '"' || first == '\'' {
@@ -288,9 +337,39 @@ pub fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn join_url(base: &str, href: &str) -> String {
+/// (scheme, authority) of an absolute URL, if it has both.
+fn origin_of(url: &str) -> Option<(&str, &str)> {
+    let scheme_end = url.find("://")?;
+    let after = &url[scheme_end + 3..];
+    let auth_end = after.find('/').unwrap_or(after.len());
+    Some((&url[..scheme_end], &after[..auth_end]))
+}
+
+fn same_origin(a: &str, b: &str) -> bool {
+    match (origin_of(a), origin_of(b)) {
+        (Some((s1, h1)), Some((s2, h2))) => {
+            s1.eq_ignore_ascii_case(s2) && h1.eq_ignore_ascii_case(h2)
+        }
+        _ => false,
+    }
+}
+
+/// Resolve `href` against `base`, confined to the base's
+/// origin. A listing is served BY a source, so an entry
+/// pointing at a different scheme/host/port is not part of
+/// the catalog — trusting it (the previous behavior) let any
+/// listed server steer the crawler, poster fetcher and
+/// downloader at arbitrary addresses, including LAN services
+/// (audit slices 1/3/9). Cross-origin absolute hrefs and
+/// scheme-relative hrefs resolve to None; the caller drops
+/// the entry.
+fn join_url(base: &str, href: &str) -> Option<String> {
     if href.starts_with("http://") || href.starts_with("https://") {
-        return href.to_string();
+        return same_origin(base, href).then(|| href.to_string());
+    }
+    if href.starts_with("//") {
+        // Scheme-relative: another authority in disguise.
+        return None;
     }
     if let Some(stripped) = href.strip_prefix('/') {
         // Absolute path: keep scheme + authority of the base.
@@ -300,7 +379,7 @@ fn join_url(base: &str, href: &str) -> String {
                 .find('/')
                 .map(|i| scheme_end + 3 + i)
                 .unwrap_or(base.len());
-            return format!("{}/{}", &base[..auth_end], stripped);
+            return Some(format!("{}/{}", &base[..auth_end], stripped));
         }
     }
     let base = if base.ends_with('/') {
@@ -308,7 +387,7 @@ fn join_url(base: &str, href: &str) -> String {
     } else {
         format!("{base}/")
     };
-    format!("{base}{href}")
+    Some(format!("{base}{href}"))
 }
 
 // ---------------------------------------------------------------- format
@@ -931,6 +1010,49 @@ mod tests {
         }
         assert_eq!(segs.iter().map(|s| s.len()).sum::<u64>(), total);
         assert!(segs.iter().all(|s| s.len() >= (1 << 20)));
+    }
+
+    #[test]
+    fn parse_listing_survives_expanding_lowercase_chars() {
+        // U+0130 (İ) lowercases to a 3-byte sequence: offsets
+        // taken from a lowercased copy shifted and panicked on
+        // the next slice (audit). The title must survive intact.
+        let html =
+            "<tr><td><a href=\"İstanbul Film.mkv\">İstanbul Film.mkv</a></td><td>5M</td></tr>\
+                    <tr><td><a href=\"Second.mkv\">Second.mkv</a></td><td>6M</td></tr>";
+        let entries = parse_listing(html, "http://172.16.50.7/Movies/");
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.name == "İstanbul Film.mkv"));
+        assert!(entries.iter().any(|e| e.name == "Second.mkv"));
+    }
+
+    #[test]
+    fn parse_listing_drops_cross_origin_hrefs() {
+        // A listed server must not steer the crawler elsewhere
+        // (audit slices 1/3/9): other hosts, other ports and
+        // scheme-relative hrefs are dropped; same-origin
+        // absolute and relative hrefs survive.
+        let html = "<a href=\"http://evil.example/x.mkv\">Evil.mkv</a>\
+                    <a href=\"http://172.16.50.7:9999/y.mkv\">Port.mkv</a>\
+                    <a href=\"//evil.example/z.mkv\">SchemeRel.mkv</a>\
+                    <a href=\"http://172.16.50.7/Movies/Good.mkv\">Good.mkv</a>\
+                    <a href=\"Rel.mkv\">Rel.mkv</a>";
+        let entries = parse_listing(html, "http://172.16.50.7/Movies/");
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["Good.mkv", "Rel.mkv"]);
+    }
+
+    #[test]
+    fn parse_listing_row_without_tr_end_keeps_char_boundary() {
+        // No </tr>: the fallback window (+200 bytes) can land
+        // inside a multi-byte character — slicing there used to
+        // panic. The leading 'x' shifts the 2-byte é run so the
+        // window edge falls mid-character.
+        let title = "é".repeat(150);
+        let html = format!("<a href=\"f.mkv\">f.mkv</a> 5M x{title}");
+        let entries = parse_listing(&html, "http://172.16.50.7/");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].size, Some(5 * 1024 * 1024));
     }
 
     #[test]
