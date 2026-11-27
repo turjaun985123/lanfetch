@@ -5,7 +5,7 @@
 //! fallback). Nothing is crawled into a database — listings are fetched
 //! live and cached for 10 minutes, exactly like the phone app.
 
-use crate::core::{body_text_capped, fetch_listing, http_agent, DirEntry};
+use crate::core::{body_text_capped, call_following, fetch_listing, http_agent, DirEntry};
 use crate::meta::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{LazyLock, Mutex};
@@ -1236,10 +1236,13 @@ fn version_gt(a: &str, b: &str) -> bool {
 /// The Android app's UpdateChecker, desktop edition: the newest GitHub
 /// release tagged `desktop-tauri-v*`, if it is newer than this build.
 pub fn check_desktop_update() -> Result<Option<String>, String> {
-    let resp = http_agent()
-        .get("https://api.github.com/repos/turjaun985123/lanfetch/releases?per_page=100")
-        .call()
-        .map_err(|e| e.to_string())?;
+    let resp = call_following(
+        &http_agent(),
+        false,
+        "https://api.github.com/repos/turjaun985123/lanfetch/releases?per_page=100",
+        |r| r,
+    )
+    .map_err(|e| e.to_string())?;
     let text = body_text_capped(resp)?;
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let current = env!("CARGO_PKG_VERSION");
@@ -1288,7 +1291,7 @@ pub fn is_image_bytes(b: &[u8]) -> bool {
 /// Rejects any body that is not actually an image, with the first
 /// bytes named in the error so a failure is diagnosable.
 pub fn fetch_poster_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let resp = http_agent().get(url).call().map_err(|e| e.to_string())?;
+    let resp = call_following(&http_agent(), false, url, |r| r).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     use std::io::Read;
     resp.into_reader()

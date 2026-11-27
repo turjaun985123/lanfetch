@@ -727,3 +727,55 @@ fn resume_during_pause_unwind_is_honored() {
     mgr.pause(id);
     wait_for(&mgr, id, DlState::Paused, Duration::from_secs(30));
 }
+
+// ------------------------------------------------------------ Wave 7B:
+// redirect policy (docs/SECURITY.md S4)
+
+/// /file.mkv answers 302 with the given Location; every other
+/// path behaves like the plain range server.
+fn redirect_server(body: Vec<u8>, location: &'static str) -> Handler {
+    let inner = range_server(Arc::new(body));
+    Arc::new(move |req: &Req| {
+        if req.path == "/file.mkv" {
+            return Resp {
+                status: 302,
+                headers: vec![("Location".to_string(), location.to_string())],
+                body: Vec::new(),
+                drip: false,
+            };
+        }
+        inner(req)
+    })
+}
+
+#[test]
+fn redirect_same_host_followed() {
+    let home = fresh_home("redirect-ok");
+    let body = body_pattern(150_000);
+    let server = TestServer::start(redirect_server(body.clone(), "/real.mkv"));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("file.mkv"), "file.mkv".to_string());
+    let id = only_task_id(&mgr);
+    wait_for(&mgr, id, DlState::Completed, Duration::from_secs(60));
+    assert_eq!(final_bytes(&home, "file.mkv"), body);
+}
+
+#[test]
+fn redirect_cross_host_rejected() {
+    let _home = fresh_home("redirect-cross");
+    let body = body_pattern(150_000);
+    // "localhost" is a different host from 127.0.0.1 — the
+    // policy must reject the hop before any connection to it.
+    let server = TestServer::start(redirect_server(body, "http://localhost/real.mkv"));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("file.mkv"), "file.mkv".to_string());
+    let id = only_task_id(&mgr);
+    wait_for(&mgr, id, DlState::Failed, Duration::from_secs(60));
+    let tasks = mgr.tasks.lock().unwrap();
+    let task = tasks.first().unwrap();
+    assert!(
+        task.error.as_deref().unwrap_or("").contains("another host"),
+        "error was: {:?}",
+        task.error
+    );
+}

@@ -64,6 +64,10 @@ pub fn http_agent() -> ureq::Agent {
             // download legitimately takes minutes.
             .timeout(Duration::from_secs(30))
             .user_agent("LanFetch/1.0 (desktop-rs)")
+            // Redirects are followed manually by call_following
+            // under the S4 policy (same host, no downgrade) —
+            // ureq's built-in following allows both.
+            .redirects(0)
             .build()
     });
     AGENT.clone()
@@ -80,9 +84,131 @@ pub fn transfer_agent() -> ureq::Agent {
             .timeout_connect(Duration::from_secs(6))
             .timeout_read(Duration::from_secs(5))
             .user_agent("LanFetch/1.0 (desktop-rs)")
+            .redirects(0) // manual, policy-checked: see call_following
             .build()
     });
     AGENT.clone()
+}
+
+/// A failed engine HTTP call: either the underlying ureq error
+/// (statuses and transport failures keep their existing meaning
+/// for callers) or a redirect-policy rejection, which is a
+/// final, user-facing failure.
+#[derive(Debug)]
+pub enum CallError {
+    Ureq(ureq::Error),
+    Rejected(String),
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallError::Ureq(e) => write!(f, "{e}"),
+            CallError::Rejected(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+const MAX_REDIRECTS: u32 = 5;
+
+/// The host of a URL, lowercased, without userinfo or port
+/// (IPv6 literals lose their brackets). None when the URL has
+/// no authority.
+fn host_of(url: &str) -> Option<String> {
+    let (_, authority) = origin_of(url)?;
+    let host_port = authority.rsplit('@').next()?;
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next()?
+    } else {
+        host_port.split(':').next()?
+    };
+    Some(host.to_ascii_lowercase())
+}
+
+/// Resolve a redirect `Location` against the URL that produced
+/// it and judge the result against the redirect policy
+/// (docs/SECURITY.md S4, mirroring the Android app): never to
+/// a different host, never from HTTPS down to HTTP. An
+/// http → https hop to the same host is an upgrade and is
+/// followed.
+fn redirect_target(from: &str, location: &str) -> Result<String, CallError> {
+    let rejected = |m: &str| CallError::Rejected(m.to_string());
+    let target = if location.starts_with("http://") || location.starts_with("https://") {
+        location.to_string()
+    } else if let Some(rest) = location.strip_prefix("//") {
+        // Scheme-relative: keep the scheme, take the new
+        // authority — the host check below judges it.
+        let scheme = from.split("://").next().unwrap_or("http");
+        format!("{scheme}://{rest}")
+    } else if location.starts_with('/') {
+        match origin_of(from) {
+            Some((s, a)) => format!("{s}://{a}{location}"),
+            None => return Err(rejected("server sent an unusable redirect")),
+        }
+    } else {
+        // Relative to the directory of the current URL.
+        let after = from.split("://").nth(1).unwrap_or("");
+        if !after.contains('/') {
+            format!("{from}/{location}")
+        } else {
+            match from.rfind('/') {
+                Some(i) => format!("{}{}", &from[..=i], location),
+                None => return Err(rejected("server sent an unusable redirect")),
+            }
+        }
+    };
+    let from_host = host_of(from);
+    if from_host.is_none() || from_host != host_of(&target) {
+        return Err(rejected("server redirected to another host"));
+    }
+    if from.starts_with("https://") && target.starts_with("http://") {
+        return Err(rejected("server redirected to an unencrypted connection"));
+    }
+    Ok(target)
+}
+
+/// Perform a GET (or HEAD) and follow redirects manually
+/// under the S4 policy, at most MAX_REDIRECTS hops. `build`
+/// re-creates the request for every hop, so headers like Range
+/// and If-Range are re-sent — and never leak to another host,
+/// because cross-host hops are rejected before they happen.
+/// Both agents are built with redirects(0); a 3xx therefore
+/// surfaces as a normal response or a Status error depending
+/// on the exact code, and both shapes are handled.
+pub fn call_following(
+    agent: &ureq::Agent,
+    head: bool,
+    url: &str,
+    build: impl Fn(ureq::Request) -> ureq::Request,
+) -> Result<ureq::Response, CallError> {
+    let mut current = url.to_string();
+    let mut hops = 0u32;
+    loop {
+        let req = if head {
+            agent.head(&current)
+        } else {
+            agent.get(&current)
+        };
+        let result = build(req).call();
+        let mut location: Option<String> = None;
+        match &result {
+            Ok(r) if (300..400).contains(&r.status()) => {
+                location = r.header("Location").map(str::to_string);
+            }
+            Err(ureq::Error::Status(code, r)) if (300..400).contains(code) => {
+                location = r.header("Location").map(str::to_string);
+            }
+            _ => {}
+        }
+        let Some(location) = location else {
+            return result.map_err(CallError::Ureq);
+        };
+        if hops >= MAX_REDIRECTS {
+            return Err(CallError::Rejected("too many redirects".into()));
+        }
+        hops += 1;
+        current = redirect_target(&current, &location)?;
+    }
 }
 
 /// Parse a `Content-Range` header ("bytes <start>-<end>/<total|*>").
@@ -159,11 +285,14 @@ pub fn body_text_capped(resp: ureq::Response) -> Result<String, String> {
 }
 
 pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
-    let resp = http_agent().get(url).call().map_err(|e| match e {
+    let resp = call_following(&http_agent(), false, url, |r| r).map_err(|e| match e {
         // An HTTP status means the server IS reachable — callers
         // (the failure cooldown) must not treat it as an outage.
-        ureq::Error::Status(code, _) => format!("http status {code}"),
-        other => format!("request failed: {other}"),
+        CallError::Ureq(ureq::Error::Status(code, _)) => format!("http status {code}"),
+        CallError::Ureq(other) => format!("request failed: {other}"),
+        // A rejected redirect is a reachable server misbehaving:
+        // its own message, and NOT the transport-failure class.
+        CallError::Rejected(m) => m,
     })?;
     let raw = read_capped(resp.into_reader())?;
     let body = String::from_utf8_lossy(&raw);
@@ -554,7 +683,7 @@ pub struct Probe {
 /// HEAD first, Range-probe fallback (some autoindex servers refuse HEAD).
 pub fn probe_url(url: &str) -> Result<Probe, String> {
     let agent = http_agent();
-    if let Ok(resp) = agent.head(url).call() {
+    if let Ok(resp) = call_following(&agent, true, url, |r| r) {
         let total = resp.header("Content-Length").and_then(|v| v.parse().ok());
         let accept = resp
             .header("Accept-Ranges")
@@ -570,10 +699,7 @@ pub fn probe_url(url: &str) -> Result<Probe, String> {
             validator,
         });
     }
-    let resp = agent
-        .get(url)
-        .set("Range", "bytes=0-0")
-        .call()
+    let resp = call_following(&agent, false, url, |r| r.set("Range", "bytes=0-0"))
         .map_err(|e| format!("probe failed: {e}"))?;
     let status = resp.status();
     let content_range = resp.header("Content-Range").map(|s| s.to_string());
@@ -723,14 +849,24 @@ pub fn run_download(
                 } else {
                     format!("bytes={from}-{to}")
                 };
-                let mut req = agent.get(&url).set("Range", &range);
-                if let Some(v) = &validator {
-                    // If-Range guards against the file changing under a resume.
-                    req = req.set("If-Range", v);
-                }
-                let resp = match req.call() {
+                // Redirects follow the S4 policy via
+                // call_following; Range and If-Range are re-sent
+                // on every (same-host) hop.
+                let resp = match call_following(&agent, false, &url, |mut req| {
+                    req = req.set("Range", &range);
+                    if let Some(v) = &validator {
+                        // If-Range guards against the file changing under a resume.
+                        req = req.set("If-Range", v);
+                    }
+                    req
+                }) {
                     Ok(r) => Some(r),
-                    Err(ureq::Error::Status(416, _)) => {
+                    Err(CallError::Rejected(msg)) => {
+                        progress.failed.store(true, Ordering::SeqCst);
+                        *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+                        return;
+                    }
+                    Err(CallError::Ureq(ureq::Error::Status(416, _))) => {
                         // Range not satisfiable: benign only when the
                         // segment is already fully on disk; otherwise the
                         // file shrank or changed under the resume.
@@ -744,7 +880,7 @@ pub fn run_download(
                         }
                         return;
                     }
-                    Err(ureq::Error::Status(code, _)) => {
+                    Err(CallError::Ureq(ureq::Error::Status(code, _))) => {
                         progress.failed.store(true, Ordering::SeqCst);
                         *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
                             Some(format!("segment failed: HTTP {code}"));
@@ -752,7 +888,7 @@ pub fn run_download(
                     }
                     // Transport errors (refused, reset, timeout) retry
                     // through the stall/backoff path below.
-                    Err(ureq::Error::Transport(_)) => None,
+                    Err(CallError::Ureq(ureq::Error::Transport(_))) => None,
                 };
                 let mut hit_eof = false;
                 if let Some(resp) = resp {
@@ -1053,6 +1189,48 @@ mod tests {
         let entries = parse_listing(&html, "http://172.16.50.7/");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].size, Some(5 * 1024 * 1024));
+    }
+
+    #[test]
+    fn redirect_policy_same_host_followed() {
+        // Relative and absolute-path locations resolve on the
+        // same origin; an http -> https upgrade is allowed; a
+        // port change keeps the same host (mirrors Android's
+        // host comparison).
+        assert_eq!(
+            redirect_target("http://172.16.50.7/Movies/f.mkv", "/Movies2/f.mkv").unwrap(),
+            "http://172.16.50.7/Movies2/f.mkv"
+        );
+        assert_eq!(
+            redirect_target("http://172.16.50.7/Movies/f.mkv", "g.mkv").unwrap(),
+            "http://172.16.50.7/Movies/g.mkv"
+        );
+        assert_eq!(
+            redirect_target("http://172.16.50.7/f.mkv", "https://172.16.50.7/f.mkv").unwrap(),
+            "https://172.16.50.7/f.mkv"
+        );
+        assert!(
+            redirect_target("http://172.16.50.7/f.mkv", "http://172.16.50.7:8080/f.mkv").is_ok()
+        );
+    }
+
+    #[test]
+    fn redirect_policy_rejects_cross_host_and_downgrade() {
+        let cross = redirect_target("http://172.16.50.7/f.mkv", "http://evil.example/f.mkv");
+        assert!(
+            matches!(cross, Err(CallError::Rejected(m)) if m.contains("another host")),
+            "{cross:?}"
+        );
+        let scheme_rel = redirect_target("http://172.16.50.7/f.mkv", "//evil.example/f.mkv");
+        assert!(
+            matches!(scheme_rel, Err(CallError::Rejected(m)) if m.contains("another host")),
+            "{scheme_rel:?}"
+        );
+        let down = redirect_target("https://172.16.50.7/f.mkv", "http://172.16.50.7/f.mkv");
+        assert!(
+            matches!(down, Err(CallError::Rejected(m)) if m.contains("unencrypted")),
+            "{down:?}"
+        );
     }
 
     #[test]
