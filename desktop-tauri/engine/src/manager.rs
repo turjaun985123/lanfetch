@@ -748,6 +748,18 @@ impl Manager {
             // from its previous run; clear it or the new ticker
             // exits instantly (Wave 9).
             t.progress.stopped.store(false, Ordering::SeqCst);
+            // The same one-way-latch problem for the run outcome
+            // (found by the AF-4 reprobe-pause test — the first
+            // test ever to resume an ENGINE-failed task): workers
+            // read progress.failed at the top of every loop, so a
+            // stale true from the failed run made every worker of
+            // the next run exit instantly and the task landed
+            // Failed forever, unresumable. Probe failures never
+            // set these flags, which is why the Wave 2 retry test
+            // could not see it.
+            t.progress.failed.store(false, Ordering::SeqCst);
+            t.progress.finished.store(false, Ordering::SeqCst);
+            *t.progress.message.lock().unwrap_or_else(|e| e.into_inner()) = None;
             (
                 t.url.clone(),
                 t.name.clone(),
