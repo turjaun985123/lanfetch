@@ -1425,4 +1425,539 @@ mod tests {
         assert!(!token_eq("abc", "abcd"));
         assert!(!token_eq("", "a"));
     }
+
+    // -------------------------------------------------------- Wave 8:
+    // security regression tests (docs/SECURITY.md). The engine
+    // store resolves its directory from the process-global HOME,
+    // so every store-touching test below shares one throwaway
+    // HOME and holds HOME_LOCK for its whole run (the pattern the
+    // engine integration tests use).
+
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
+    fn test_home() -> &'static std::path::Path {
+        static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        HOME.get_or_init(|| {
+            let dir =
+                std::env::temp_dir().join(format!("lanfetch-web-tests-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            std::env::set_var("HOME", &dir);
+            dir
+        })
+    }
+
+    fn test_state() -> Arc<AppState> {
+        test_home();
+        Arc::new(AppState {
+            manager: Manager::load(),
+            sources: Mutex::new(lanfetch_engine::store::load_sources()),
+            favorites: Mutex::new(lanfetch_engine::store::load_favorites()),
+            posters: Arc::new(poster_service::PosterService::new()),
+            catalog: Arc::new(Mutex::new(CatalogState::default())),
+        })
+    }
+
+    fn test_cfg(lan: bool, token: &str) -> Arc<ServerCfg> {
+        Arc::new(ServerCfg {
+            lan,
+            token: token.to_string(),
+            version: "test".to_string(),
+        })
+    }
+
+    fn request(
+        method: &str,
+        path: &str,
+        query: &str,
+        headers: Vec<(String, String)>,
+        body: &[u8],
+    ) -> Request {
+        Request {
+            method: method.to_string(),
+            path: path.to_string(),
+            query: query.to_string(),
+            headers,
+            body: body.to_vec(),
+        }
+    }
+
+    fn bearer(token: &str) -> Vec<(String, String)> {
+        vec![("authorization".to_string(), format!("Bearer {token}"))]
+    }
+
+    /// One raw HTTP request through handle() on a loopback socket
+    /// pair; returns the raw response (handle() always closes).
+    fn roundtrip(state: &Arc<AppState>, cfg: &Arc<ServerCfg>, raw: &str) -> String {
+        roundtrip_with_subs(state, cfg, &Arc::new(Mutex::new(Vec::new())), raw)
+    }
+
+    fn roundtrip_with_subs(
+        state: &Arc<AppState>,
+        cfg: &Arc<ServerCfg>,
+        subscribers: &Subscribers,
+        raw: &str,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).unwrap();
+        let (server_stream, _) = listener.accept().unwrap();
+        let state = state.clone();
+        let cfg = cfg.clone();
+        let subscribers = subscribers.clone();
+        let server = std::thread::spawn(move || {
+            handle(server_stream, state, subscribers, cfg);
+        });
+        client
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        client.write_all(raw.as_bytes()).unwrap();
+        let mut response = Vec::new();
+        let _ = client.read_to_end(&mut response);
+        let _ = server.join();
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    fn raw(method: &str, target: &str, headers: &[(&str, &str)], body: &str) -> String {
+        let mut out = format!("{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+        for (n, v) in headers {
+            out.push_str(&format!("{n}: {v}\r\n"));
+        }
+        if !body.is_empty() || method == "POST" {
+            out.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        }
+        out.push_str("\r\n");
+        out.push_str(body);
+        out
+    }
+
+    fn status_line(response: &str) -> &str {
+        response.lines().next().unwrap_or("")
+    }
+
+    fn body_of(response: &str) -> &str {
+        response.split("\r\n\r\n").nth(1).unwrap_or("")
+    }
+
+    // SECURITY.md item 2 (unit level): the bearer token — and
+    // only the bearer token — authorizes API calls; the ?token=
+    // query form is an SSE-only exception.
+    #[test]
+    fn authorized_accepts_bearer_and_sse_query_only() {
+        let _guard = lock(&HOME_LOCK);
+        test_home();
+        // No token file: expected_token falls back to the cfg
+        // snapshot, which keeps this test deterministic.
+        let _ = std::fs::remove_file(lanfetch_engine::store::web_token_path());
+        let cfg = test_cfg(true, "sekrit-token");
+        assert!(authorized(
+            &request("GET", "/api/v1/downloads", "", bearer("sekrit-token"), &[]),
+            &cfg
+        ));
+        assert!(!authorized(
+            &request("GET", "/api/v1/downloads", "", bearer("wrong-token"), &[]),
+            &cfg
+        ));
+        assert!(!authorized(
+            &request("GET", "/api/v1/downloads", "", vec![], &[]),
+            &cfg
+        ));
+        // A query token must NOT authorize a normal API call…
+        assert!(!authorized(
+            &request(
+                "GET",
+                "/api/v1/downloads",
+                "token=sekrit-token",
+                vec![],
+                &[]
+            ),
+            &cfg
+        ));
+        // …but it is the one accepted form on the SSE paths.
+        assert!(authorized(
+            &request("GET", "/api/v1/events", "token=sekrit-token", vec![], &[]),
+            &cfg
+        ));
+        assert!(authorized(
+            &request("GET", "/api/events", "token=sekrit-token", vec![], &[]),
+            &cfg
+        ));
+        assert!(!authorized(
+            &request("GET", "/api/v1/events", "token=nope", vec![], &[]),
+            &cfg
+        ));
+    }
+
+    // SECURITY.md item 3: regeneration invalidates the old token
+    // immediately — expected_token re-reads the token file on
+    // every check instead of trusting the startup snapshot.
+    #[test]
+    fn token_regeneration_invalidates_old_token() {
+        let _guard = lock(&HOME_LOCK);
+        test_home();
+        let old = lanfetch_engine::store::load_or_create_web_token();
+        let cfg = test_cfg(true, "startup-snapshot");
+        assert!(authorized(
+            &request("GET", "/api/v1/downloads", "", bearer(&old), &[]),
+            &cfg
+        ));
+        let new = lanfetch_engine::store::regenerate_web_token();
+        assert_ne!(old, new);
+        assert!(
+            !authorized(
+                &request("GET", "/api/v1/downloads", "", bearer(&old), &[]),
+                &cfg
+            ),
+            "the old token must stop working the moment it is regenerated"
+        );
+        assert!(authorized(
+            &request("GET", "/api/v1/downloads", "", bearer(&new), &[]),
+            &cfg
+        ));
+    }
+
+    // SECURITY.md items 1+2 (handler level): in --lan mode every
+    // /api/* route except the health probe demands the token —
+    // wrong and missing tokens get 401 in both envelopes, the
+    // right token succeeds, and loopback mode stays tokenless.
+    #[test]
+    fn lan_mode_gates_every_api_route() {
+        let _guard = lock(&HOME_LOCK);
+        test_home();
+        let _ = std::fs::remove_file(lanfetch_engine::store::web_token_path());
+        let state = test_state();
+        let cfg = test_cfg(true, "sekrit-token");
+
+        // The health probe is the single exemption.
+        let r = roundtrip(&state, &cfg, &raw("GET", "/api/v1/health", &[], ""));
+        assert!(status_line(&r).contains("200"), "{r}");
+        assert!(body_of(&r).contains("\"status\":\"ok\""), "{r}");
+
+        // Reads are gated too (they disclose library + queue).
+        let r = roundtrip(&state, &cfg, &raw("GET", "/api/v1/downloads", &[], ""));
+        assert!(status_line(&r).contains("401"), "{r}");
+        assert!(body_of(&r).contains("\"code\":\"unauthorized\""), "{r}");
+
+        // Wrong token → 401; right token → 200.
+        let r = roundtrip(
+            &state,
+            &cfg,
+            &raw(
+                "GET",
+                "/api/v1/downloads",
+                &[("Authorization", "Bearer nope")],
+                "",
+            ),
+        );
+        assert!(status_line(&r).contains("401"), "{r}");
+        let r = roundtrip(
+            &state,
+            &cfg,
+            &raw(
+                "GET",
+                "/api/v1/downloads",
+                &[("Authorization", "Bearer sekrit-token")],
+                "",
+            ),
+        );
+        assert!(status_line(&r).contains("200"), "{r}");
+
+        // The legacy envelope answers with its frozen shape.
+        let r = roundtrip(
+            &state,
+            &cfg,
+            &raw(
+                "POST",
+                "/api/get_downloads",
+                &[("Content-Type", "application/json")],
+                "{}",
+            ),
+        );
+        assert!(status_line(&r).contains("401"), "{r}");
+        assert!(body_of(&r).contains("\"error\":\"unauthorized\""), "{r}");
+
+        // Loopback mode needs no token at all.
+        let local = test_cfg(false, "sekrit-token");
+        let r = roundtrip(&state, &local, &raw("GET", "/api/v1/downloads", &[], ""));
+        assert!(status_line(&r).contains("200"), "{r}");
+    }
+
+    // SECURITY.md item 1, second half: an unauthenticated
+    // state-changing request must not only 401 — nothing may
+    // change. With the token, the same request succeeds (the
+    // control proving the 401 was the auth gate, not routing).
+    #[test]
+    fn lan_unauthenticated_mutation_changes_nothing() {
+        let _guard = lock(&HOME_LOCK);
+        test_home();
+        let _ = std::fs::remove_file(lanfetch_engine::store::web_token_path());
+        let state = test_state();
+        let cfg = test_cfg(true, "sekrit-token");
+        let add_body = "{\"name\":\"ProbeSrv\",\"rootUrl\":\"http://127.0.0.1:9/\"}";
+
+        let r = roundtrip(
+            &state,
+            &cfg,
+            &raw(
+                "POST",
+                "/api/v1/sources",
+                &[("Content-Type", "application/json")],
+                add_body,
+            ),
+        );
+        assert!(status_line(&r).contains("401"), "{r}");
+
+        let r = roundtrip(
+            &state,
+            &cfg,
+            &raw(
+                "GET",
+                "/api/v1/sources",
+                &[("Authorization", "Bearer sekrit-token")],
+                "",
+            ),
+        );
+        assert!(status_line(&r).contains("200"), "{r}");
+        assert!(!body_of(&r).contains("ProbeSrv"), "{r}");
+
+        let r = roundtrip(
+            &state,
+            &cfg,
+            &raw(
+                "POST",
+                "/api/v1/sources",
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Authorization", "Bearer sekrit-token"),
+                ],
+                add_body,
+            ),
+        );
+        assert!(status_line(&r).contains("200"), "{r}");
+        assert!(body_of(&r).contains("ProbeSrv"), "{r}");
+    }
+
+    // SECURITY.md item 7: a spoofed Host (DNS-rebinding
+    // simulation) is refused with 403 in both modes — the check
+    // runs before auth, so even a valid token cannot save it.
+    #[test]
+    fn host_spoof_rejected_in_both_modes() {
+        let _guard = lock(&HOME_LOCK);
+        test_home();
+        let _ = std::fs::remove_file(lanfetch_engine::store::web_token_path());
+        let state = test_state();
+        let spoofed = "GET /api/v1/downloads HTTP/1.1\r\nHost: evil.example.com\r\n\r\n";
+
+        let local = test_cfg(false, "sekrit-token");
+        let r = roundtrip(&state, &local, spoofed);
+        assert!(status_line(&r).contains("403"), "{r}");
+
+        let lan = test_cfg(true, "sekrit-token");
+        let spoofed_auth = "GET /api/v1/downloads HTTP/1.1\r\nHost: evil.example.com\r\nAuthorization: Bearer sekrit-token\r\n\r\n";
+        let r = roundtrip(&state, &lan, spoofed_auth);
+        assert!(status_line(&r).contains("403"), "{r}");
+    }
+
+    // The CSRF guard: API mutations must declare a JSON content
+    // type; a cross-origin page's "simple" request cannot.
+    #[test]
+    fn csrf_guard_rejects_non_json_mutations() {
+        let _guard = lock(&HOME_LOCK);
+        let state = test_state();
+        let local = test_cfg(false, "sekrit-token");
+        let r = roundtrip(
+            &state,
+            &local,
+            &raw(
+                "POST",
+                "/api/get_downloads",
+                &[("Content-Type", "text/plain")],
+                "x=1",
+            ),
+        );
+        assert!(status_line(&r).contains("415"), "{r}");
+    }
+
+    // SECURITY.md item 8: the web bootstrap never discloses
+    // absolute filesystem paths — only display-shaped stand-ins.
+    #[test]
+    fn bootstrap_over_web_hides_absolute_paths() {
+        let _guard = lock(&HOME_LOCK);
+        let home = test_home().to_string_lossy().into_owned();
+        let state = test_state();
+        let local = test_cfg(false, "sekrit-token");
+        let r = roundtrip(
+            &state,
+            &local,
+            &raw(
+                "POST",
+                "/api/get_bootstrap",
+                &[("Content-Type", "application/json")],
+                "{}",
+            ),
+        );
+        assert!(status_line(&r).contains("200"), "{r}");
+        let value: serde_json::Value = serde_json::from_str(body_of(&r)).unwrap();
+        assert_eq!(value["downloadsDir"], "~/Downloads/LanFetch");
+        assert_eq!(value["dataDir"], "~/.local/share/lanfetch");
+        assert!(
+            !body_of(&r).contains(&home),
+            "bootstrap leaked the absolute home path: {r}"
+        );
+    }
+
+    // SECURITY.md item 9 (headers half): every response carries
+    // nosniff + referrer-policy; JSON is no-store; HTML carries
+    // the web CSP.
+    #[test]
+    fn responses_carry_security_headers() {
+        let _guard = lock(&HOME_LOCK);
+        let state = test_state();
+        let local = test_cfg(false, "sekrit-token");
+
+        let r = roundtrip(&state, &local, &raw("GET", "/api/v1/downloads", &[], ""));
+        let head = r.to_lowercase();
+        assert!(status_line(&r).contains("200"), "{r}");
+        assert!(head.contains("x-content-type-options: nosniff"), "{r}");
+        assert!(head.contains("referrer-policy: no-referrer"), "{r}");
+        assert!(head.contains("cache-control: no-store"), "{r}");
+
+        let r = roundtrip(&state, &local, &raw("GET", "/", &[], ""));
+        let head = r.to_lowercase();
+        assert!(status_line(&r).contains("200"), "{r}");
+        assert!(head.contains("content-security-policy:"), "{r}");
+        assert!(head.contains("default-src 'self'"), "{r}");
+    }
+
+    // SECURITY.md item 9 (traversal half): literal and encoded
+    // `..` in static paths never reach a file — the embedded
+    // tree is the only source and encoded segments are not
+    // decoded before lookup.
+    #[test]
+    fn static_traversal_is_rejected() {
+        let _guard = lock(&HOME_LOCK);
+        let state = test_state();
+        let local = test_cfg(false, "sekrit-token");
+        for path in ["/../secret.txt", "/....//secret.txt", "/%2e%2e/secret.txt"] {
+            let r = roundtrip(&state, &local, &raw("GET", path, &[], ""));
+            assert!(status_line(&r).contains("404"), "{path}: {r}");
+        }
+    }
+
+    // The SSE subscriber cap: with MAX_SSE registrations held,
+    // the next /api/events is refused 503 instead of spawning an
+    // unbounded stream (the gate half of SECURITY.md S3; the
+    // matching connection cap lives in run()'s accept loop and
+    // is covered by the socket-level test in web/tests/).
+    #[test]
+    fn sse_subscriber_cap_refuses_excess() {
+        let _guard = lock(&HOME_LOCK);
+        let state = test_state();
+        let local = test_cfg(false, "sekrit-token");
+        let mut keep = Vec::new();
+        let mut subs = Vec::new();
+        for i in 0..MAX_SSE {
+            let (tx, rx) = channel::<u64>();
+            subs.push((i as u64 + 1, tx));
+            keep.push(rx);
+        }
+        let subscribers: Subscribers = Arc::new(Mutex::new(subs));
+        let r = roundtrip_with_subs(
+            &state,
+            &local,
+            &subscribers,
+            &raw("GET", "/api/events", &[], ""),
+        );
+        assert!(status_line(&r).contains("503"), "{r}");
+        drop(keep);
+    }
+
+    // The v1 router is exercised through v1_handle, which takes
+    // a parsed Request — route_v1 itself only writes the result
+    // to the stream. Pins: the health shape, the frozen 404
+    // envelope for unknown routes, and 400s for a bad id and a
+    // malformed body.
+    #[test]
+    fn v1_router_shapes() {
+        let _guard = lock(&HOME_LOCK);
+        let state = test_state();
+        let cfg = test_cfg(true, "sekrit-token");
+
+        let ok = v1_handle(
+            &state,
+            &cfg,
+            &request("GET", "/api/v1/health", "", vec![], &[]),
+        )
+        .unwrap();
+        assert_eq!(ok["status"], "ok");
+        assert_eq!(ok["apiVersion"], 1);
+
+        let err = v1_handle(
+            &state,
+            &cfg,
+            &request("GET", "/api/v1/nope", "", vec![], &[]),
+        )
+        .unwrap_err();
+        assert_eq!(err.status, "404 Not Found");
+        assert_eq!(err.code, "not_found");
+
+        let err = v1_handle(
+            &state,
+            &cfg,
+            &request("DELETE", "/api/v1/downloads/abc", "", vec![], &[]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "bad_request");
+
+        let err = v1_handle(
+            &state,
+            &cfg,
+            &request("POST", "/api/v1/feed", "", vec![], b"{not json"),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "bad_request");
+    }
+
+    // SECURITY.md item 5, the testable half: read_request gives
+    // up cleanly on a peer that vanishes mid-head and on a head
+    // that never terminates (the 64 KiB cap). The 30 s whole-head
+    // deadline itself is a hard constant and is NOT exercised —
+    // a test for it would have to sit out the full deadline.
+    #[test]
+    fn read_request_parses_and_rejects() {
+        fn socket_pair() -> (TcpStream, TcpStream) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (server, _) = listener.accept().unwrap();
+            (client, server)
+        }
+
+        let (mut client, mut server) = socket_pair();
+        client
+            .write_all(
+                b"POST /api/v1/feed?x=1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
+            )
+            .unwrap();
+        let req = read_request(&mut server).expect("a valid request parses");
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/api/v1/feed");
+        assert_eq!(req.query, "x=1");
+        assert_eq!(req.header("host"), Some("localhost"));
+        assert_eq!(req.body, b"{}");
+
+        let (mut client, mut server) = socket_pair();
+        client.write_all(b"GET / HTTP/1.1\r\nHost: local").unwrap();
+        drop(client);
+        assert!(read_request(&mut server).is_none());
+
+        let (client, mut server) = socket_pair();
+        let writer = std::thread::spawn(move || {
+            let mut client = client;
+            // Just past the 64 KiB head cap, kept small enough
+            // that the writer never blocks on socket buffers.
+            let blob = vec![b'a'; 66_000];
+            let _ = client.write_all(&blob);
+        });
+        assert!(read_request(&mut server).is_none());
+        let _ = writer.join();
+    }
 }
