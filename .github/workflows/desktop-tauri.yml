@@ -59,8 +59,14 @@ jobs:
       - name: Responsive guardrails (static — not layout tests)
         run: |
           CSS=$(ls dist/_astro/*.css)
-          for b in 'max-width: ?639px' 'min-width: ?640px' 'min-width: ?768px' 'min-width: ?1280px' 'min-width: ?1536px' 'min-width: ?1920px'; do
-            grep -qE "@media[^{]*$b" $CSS || { echo "missing media band: $b"; exit 1; }
+          # Accept classic (min-width: 768px) and Lightning CSS
+          # range syntax (width>=768px) — the build pipeline emits
+          # the latter for hand-written queries too.
+          for spec in '639:<=' '640:>=' '768:>=' '1280:>=' '1536:>=' '1920:>='; do
+            px=${spec%%:*}; op=${spec##*:}
+            grep -qE "@media[^{]*((min|max)-width: ?${px}px|width ?${op} ?${px}px)" $CSS || {
+              echo "missing media band: ${px}px"; grep -oE '@media[^{]*' $CSS | sort -u | head -20; exit 1;
+            }
           done
           grep -qE 'env\(safe-area-inset-(bottom|top)' $CSS || { echo "no safe-area inset in dist CSS"; exit 1; }
           grep -hoE '(^|[;{])width: ?[0-9]+px' $CSS | grep -oE '[0-9]+' | \
