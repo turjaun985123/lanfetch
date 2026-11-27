@@ -734,6 +734,7 @@ import '../styles/global.css';
       } from '../lib/format';
       import { confirmDialog, el, icon, toast } from '../lib/ui';
       import { createTransfers } from '../lib/transfers';
+      import { createServers } from '../lib/servers';
 
       const status = (id: string) => document.getElementById(id)!;
 
@@ -859,231 +860,24 @@ import '../styles/global.css';
       const refreshDownloads = transfers.refreshDownloads;
       transfers.mount();
 
-      // ---- servers ----------------------------------------------------------
-      let sourcesList: SourceDto[] = [];
-      const probeMap = new Map<string, SourceProbeDto>();
-      function srvError(msg: string): void {
-        const e = status('srv-error');
-        e.textContent = msg;
-        e.classList.toggle('hidden', msg === '');
-      }
-
-      function renderServers(): void {
-        const wrap = status('probes');
-        wrap.replaceChildren();
-        for (const s of sourcesList) {
-          const p = probeMap.get(s.name);
-          const row = el(
-            'div',
-            'row-card flex flex-wrap items-center gap-3 px-4 py-3',
-          );
-          const pill = el(
-            'span',
-            'badge border border-hairline bg-raised px-2 py-0.5 text-caption font-semibold text-ink-2',
-          );
-          const dot = el(
-            'span',
-            'status-dot' +
-              (!s.enabled
-                ? ' is-disabled'
-                : p?.status === 'up'
-                  ? ' is-up'
-                  : p?.status === 'down'
-                    ? ' is-down'
-                    : ''),
-          );
-          pill.append(
-            dot,
-            document.createTextNode(
-              !s.enabled
-                ? 'Disabled'
-                : p?.status === 'up'
-                  ? 'Online · ' + p.latencyMs + ' ms'
-                  : p?.status === 'down'
-                    ? 'Unreachable'
-                    : 'Checking…',
-            ),
-          );
-          const name = el('span', 'text-row font-medium', s.name);
-          const url = el(
-            'span',
-            'min-w-0 flex-1 truncate text-secondary text-ink-3',
-            s.rootUrl,
-          );
-          url.title = s.rootUrl;
-          const main = el('div', 'flex min-w-0 flex-1 items-center gap-3');
-          main.append(pill, name, url);
-          const toggle = document.createElement('input');
-          toggle.type = 'checkbox';
-          toggle.checked = s.enabled;
-          toggle.className = 'switch';
-          toggle.setAttribute(
-            'aria-label',
-            (s.enabled ? 'Disable ' : 'Enable ') + s.name,
-          );
-          toggle.addEventListener('change', async () => {
-            try {
-              sourcesList = await setSourceEnabled(s.name, toggle.checked);
-              renderServers();
-              void loadProbes();
-            } catch {
-              toggle.checked = !toggle.checked;
-            }
-          });
-          row.append(main, toggle);
-          if (s.custom) {
-            const rm = document.createElement('button');
-            rm.className = 'btn btn-danger btn-sm shrink-0';
-            rm.replaceChildren(
-              icon('trash', 16),
-              document.createTextNode('Remove'),
-            );
-            rm.addEventListener('click', async () => {
-              const ok = await confirmDialog({
-                title: 'Remove this server?',
-                body: '“' + s.name + '” will be removed from LanFetch.',
-                confirmLabel: 'Remove',
-              });
-              if (!ok) return;
-              try {
-                sourcesList = await removeSource(s.name);
-                probeMap.delete(s.name);
-                renderServers();
-                void loadProbes();
-              } catch (e) {
-                srvError(String(e));
-              }
-            });
-            row.append(rm);
+      // Servers screen (V2 Wave 4): implementation in
+      // src/lib/servers.ts behind a state factory. The library
+      // status hook keeps the probe -> lib-status coupling in the
+      // shell, which owns the Library state until step 4.
+      const servers = createServers({
+        status,
+        libraryStatus: (up) => {
+          if (titleCount === 0 && activeQuery === '') {
+            status('lib-status').textContent =
+              up > 0
+                ? up + ' servers online'
+                : 'No servers reachable — check the Servers tab';
           }
-          wrap.append(row);
-        }
-        renderRailServers();
-      }
-
-      // Expanded-rail server list (Agent 23): the same
-      // sourcesList/probeMap, no new data path.
-      function renderRailServers(): void {
-        const host = status('rail-servers');
-        host.replaceChildren();
-        const up = sourcesList.filter(
-          (s) => s.enabled && probeMap.get(s.name)?.status === 'up',
-        ).length;
-        for (const s of sourcesList.slice(0, 5)) {
-          const p = probeMap.get(s.name);
-          const row = el(
-            'div',
-            'flex items-center gap-2 px-1 py-0.5 text-secondary',
-          );
-          row.append(
-            el(
-              'span',
-              'status-dot' +
-                (!s.enabled
-                  ? ' is-disabled'
-                  : p?.status === 'up'
-                    ? ' is-up'
-                    : p?.status === 'down'
-                      ? ' is-down'
-                      : ''),
-            ),
-            el('span', 'min-w-0 flex-1 truncate', s.name),
-          );
-          if (s.enabled && p?.status === 'up') {
-            row.append(
-              el('span', 'tabular-nums text-ink-3', p.latencyMs + ' ms'),
-            );
-          }
-          host.append(row);
-        }
-        host.append(
-          el(
-            'p',
-            'px-1 pt-1 text-caption text-ink-3',
-            up + ' of ' + sourcesList.length + ' online',
-          ),
-        );
-      }
-      async function loadProbes() {
-        const results = await probeSources();
-        probeMap.clear();
-        for (const p of results) probeMap.set(p.name, p);
-        renderServers();
-        const up = results.filter((r) => r.status === 'up').length;
-        status('srv-status').textContent =
-          up + ' of ' + results.length + ' servers online';
-        // Compact rail: server health survives as a dot on the
-        // Servers nav item (Agent 12); words live in its label.
-        const railDot = document.getElementById('rail-servers-dot');
-        if (railDot) {
-          railDot.className =
-            'rail-dot status-dot' +
-            (up > 0 ? ' is-up' : results.length > 0 ? ' is-down' : '');
-        }
-        document
-          .querySelector('#nav .nav-item[data-view="servers"]')
-          ?.setAttribute('aria-label', 'Servers, ' + up + ' online');
-        if (titleCount === 0 && activeQuery === '') {
-          status('lib-status').textContent =
-            up > 0
-              ? up + ' servers online'
-              : 'No servers reachable — check the Servers tab';
-        }
-      }
-      // Add-server: honest minimal validation only (Agent 23) —
-      // non-empty name, non-empty whitespace-free address. No
-      // scheme or URL-parser gate: the engine accepts what it
-      // accepts, and a missing scheme earns a hint, not a block.
-      const srvNameEl = document.getElementById('srv-name') as HTMLInputElement;
-      const srvUrlEl = document.getElementById('srv-url') as HTMLInputElement;
-      const srvAddBtn = status('srv-add') as HTMLButtonElement;
-      function validateSrvForm(): void {
-        const ok =
-          srvNameEl.value.trim().length > 0 &&
-          srvUrlEl.value.trim().length > 0 &&
-          !/\s/.test(srvUrlEl.value.trim());
-        srvAddBtn.disabled = !ok;
-        status('srv-hint').classList.toggle(
-          'hidden',
-          !(srvUrlEl.value.trim().length > 0 && !srvUrlEl.value.includes('://')),
-        );
-      }
-      srvNameEl.addEventListener('input', validateSrvForm);
-      srvUrlEl.addEventListener('input', validateSrvForm);
-      srvAddBtn.addEventListener('click', async () => {
-        srvError('');
-        srvAddBtn.disabled = true;
-        srvAddBtn.textContent = 'Adding…';
-        try {
-          sourcesList = await addSource(srvNameEl.value, srvUrlEl.value);
-          const added = srvNameEl.value;
-          srvNameEl.value = '';
-          srvUrlEl.value = '';
-          renderServers();
-          void loadProbes();
-          toast('Server ' + added + ' added');
-        } catch (e) {
-          srvError(String(e));
-        } finally {
-          srvAddBtn.textContent = 'Add server';
-          validateSrvForm();
-        }
+        },
       });
-      document
-        .getElementById('srv-refresh')!
-        .addEventListener('click', async () => {
-          const btn = status('srv-refresh') as HTMLButtonElement;
-          btn.disabled = true;
-          btn.classList.add('is-busy');
-          btn.setAttribute('aria-busy', 'true');
-          try {
-            await loadProbes();
-          } finally {
-            btn.disabled = false;
-            btn.classList.remove('is-busy');
-            btn.removeAttribute('aria-busy');
-          }
-        });
+      const renderServers = servers.renderServers;
+      const loadProbes = servers.loadProbes;
+      servers.mount();
 
       // ---- theme -------------------------------------------------------------
       function applyTheme(choice: string) {
@@ -2262,7 +2056,7 @@ import '../styles/global.css';
         status('set-dl-dir').textContent = boot.downloadsDir;
         status('set-data-dir').textContent = boot.dataDir;
         currentSettings = boot.settings;
-        sourcesList = boot.sources;
+        servers.setSources(boot.sources);
         renderServers();
         sel('set-connections').value = String(boot.settings.connections);
         sel('set-concurrent').value = String(boot.settings.maxConcurrent);
