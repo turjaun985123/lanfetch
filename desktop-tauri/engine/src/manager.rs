@@ -426,7 +426,9 @@ impl Manager {
             match probe_url(&url) {
                 Ok(probe) => {
                     let total = probe.total.unwrap_or(0);
-                    let mut paused_intent = false;
+                    // Assigned unconditionally inside the block below
+                    // (its only other exit is the early return).
+                    let paused_intent;
                     {
                         let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                         let Some(t) = tasks.iter_mut().find(|t| t.id == id) else {
