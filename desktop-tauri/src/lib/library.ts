@@ -374,7 +374,11 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
         );
       }
     } finally {
-      pageLoading = false;
+      // Guarded like every other loader (audit slice 6): a stale
+      // loadMore settling after a newer operation started must
+      // not clear that operation's flag — the sentinel would
+      // fire mid-load and pages would arrive out of order.
+      if (gen === libGen) pageLoading = false;
     }
   }
 
