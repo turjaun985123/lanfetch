@@ -1225,17 +1225,17 @@ mod tests {
     fn redirect_policy_rejects_cross_host_and_downgrade() {
         let cross = redirect_target("http://172.16.50.7/f.mkv", "http://evil.example/f.mkv");
         assert!(
-            matches!(cross, Err(CallError::Rejected(m)) if m.contains("another host")),
+            matches!(&cross, Err(CallError::Rejected(m)) if m.contains("another host")),
             "{cross:?}"
         );
         let scheme_rel = redirect_target("http://172.16.50.7/f.mkv", "//evil.example/f.mkv");
         assert!(
-            matches!(scheme_rel, Err(CallError::Rejected(m)) if m.contains("another host")),
+            matches!(&scheme_rel, Err(CallError::Rejected(m)) if m.contains("another host")),
             "{scheme_rel:?}"
         );
         let down = redirect_target("https://172.16.50.7/f.mkv", "http://172.16.50.7/f.mkv");
         assert!(
-            matches!(down, Err(CallError::Rejected(m)) if m.contains("unencrypted")),
+            matches!(&down, Err(CallError::Rejected(m)) if m.contains("unencrypted")),
             "{down:?}"
         );
     }
