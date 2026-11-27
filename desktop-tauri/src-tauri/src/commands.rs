@@ -1,7 +1,7 @@
 //! Tauri commands — Wave 1 surface: bootstrap + server probes.
 //! Catalog, poster and download commands land in their own waves.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use tauri::State;
 
