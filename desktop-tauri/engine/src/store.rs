@@ -28,11 +28,27 @@ pub fn bak_path(path: &std::path::Path) -> PathBuf {
 
 /// Crash-safe write: stage to a temp file, snapshot the current file to
 /// `.bak`, then rename over the target (atomic on Linux).
+///
+/// V2 hardening (DOWNLOAD-ENGINE.md RC-1): the temp name is unique per
+/// call — the pre-V2 single fixed `.tmp` path let two concurrent saves
+/// of the same file interleave and tear each other's staging — and the
+/// staged file is `sync_all`ed before the rename, so a power loss
+/// cannot leave the renamed file hollow.
 pub fn write_atomic(path: &std::path::Path, contents: &str) {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut tmp_os = path.as_os_str().to_owned();
-    tmp_os.push(".tmp");
+    tmp_os.push(format!(".tmp-{}-{n}", std::process::id()));
     let tmp = PathBuf::from(tmp_os);
-    if std::fs::write(&tmp, contents).is_err() {
+    let staged = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()
+    })();
+    if staged.is_err() {
+        let _ = std::fs::remove_file(&tmp);
         return;
     }
     if path.exists() {
@@ -59,11 +75,17 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<T
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Parallel segments per download (Android: "lanes"). Default 8.
+    /// The serde default is load-bearing (V2 RC-5): without it, one
+    /// missing field made the whole settings file unparseable and
+    /// silently reset *every* setting.
+    #[serde(default = "default_connections")]
     pub connections: u32,
     /// How many downloads may run at once; the rest wait as Queued.
+    #[serde(default = "default_max_concurrent")]
     pub max_concurrent: u32,
     /// "system" | "light" | "dark" (Android also has AMOLED; the desktop
     /// dark palette already sits on near-black surfaces).
+    #[serde(default = "default_theme")]
     pub theme: String,
     /// "system" | "en" | "bn" — UI language (Android: per-app locales).
     #[serde(default = "default_language")]
@@ -75,6 +97,22 @@ pub struct Settings {
 
 fn default_language() -> String {
     "system".to_string()
+}
+
+fn default_connections() -> u32 {
+    8
+}
+
+fn default_max_concurrent() -> u32 {
+    3
+}
+
+fn default_theme() -> String {
+    "system".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -104,10 +142,14 @@ pub fn save_settings(s: &Settings) {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceItem {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub root_url: String,
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// True for user-added servers (removable); seeds can only be disabled.
+    #[serde(default)]
     pub custom: bool,
 }
 
@@ -204,16 +246,27 @@ mod tests {
 /// the detail screen, where the full Title is at hand).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavTitle {
+    #[serde(default)]
     pub folder_url: String,
+    #[serde(default)]
     pub source_name: String,
+    #[serde(default)]
     pub category: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub raw_name: String,
+    #[serde(default)]
     pub year: Option<i32>,
+    #[serde(default)]
     pub kind: String,
+    #[serde(default)]
     pub poster_url: Option<String>,
+    #[serde(default)]
     pub language: Option<String>,
+    #[serde(default)]
     pub season_count: usize,
+    #[serde(default)]
     pub best_quality: Option<String>,
 }
 

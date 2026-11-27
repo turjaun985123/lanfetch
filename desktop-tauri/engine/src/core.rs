@@ -24,6 +24,7 @@ pub fn seed_sources() -> Vec<Source> {
     [
         ("DHAKA-FLIX-7", "http://172.16.50.7/DHAKA-FLIX-7/"),
         ("DHAKA-FLIX-8", "http://172.16.50.8/DHAKA-FLIX-8/"),
+        ("DHAKA-FLIX-9", "http://172.16.50.9/DHAKA-FLIX-9/"),
         ("DHAKA-FLIX-10", "http://172.16.50.10/DHAKA-FLIX-10/"),
         ("DHAKA-FLIX-12", "http://172.16.50.12/DHAKA-FLIX-12/"),
         ("DHAKA-FLIX-14", "http://172.16.50.14/DHAKA-FLIX-14/"),
@@ -59,6 +60,39 @@ pub fn http_agent() -> ureq::Agent {
             .build()
     });
     AGENT.clone()
+}
+
+/// The transfer-path agent: identical to `http_agent` except the read
+/// timeout is 5 s, not 30 s. That number is the documented pause bound
+/// (DOWNLOAD-ENGINE.md PA-3): a worker blocked in a read on a stalled
+/// server notices a pause within one read timeout, so pause latency is
+/// ≈5 s worst case instead of ≈30 s.
+pub fn transfer_agent() -> ureq::Agent {
+    static AGENT: std::sync::LazyLock<ureq::Agent> = std::sync::LazyLock::new(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(6))
+            .timeout_read(Duration::from_secs(5))
+            .user_agent("LanFetch/1.0 (desktop-rs)")
+            .build()
+    });
+    AGENT.clone()
+}
+
+/// Parse a `Content-Range` header ("bytes <start>-<end>/<total|*>").
+/// Returns (start, end, total) with total None for "*".
+pub fn parse_content_range(value: &str) -> Option<(u64, u64, Option<u64>)> {
+    let rest = value.trim().strip_prefix("bytes ")?.trim();
+    let (range, total) = rest.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    Some((
+        start.trim().parse().ok()?,
+        end.trim().parse().ok()?,
+        if total.trim() == "*" {
+            None
+        } else {
+            Some(total.trim().parse().ok()?)
+        },
+    ))
 }
 
 /// Probe a server root: Ok(elapsed_ms) when it answers with any HTTP status.
@@ -337,11 +371,21 @@ pub fn sanitize_keep_ext(name: &str) -> String {
 // ---------------------------------------------------------------- download
 
 /// One byte range of a download; `done` bytes of it are already on disk.
+/// Field defaults keep a partially-written persisted plan loadable
+/// (V2 RC-5): a missing `end` means the open segment, never a
+/// zero-length one, so corrupt data cannot fake a completion.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Segment {
+    #[serde(default)]
     pub start: u64,
+    #[serde(default = "default_segment_end")]
     pub end: u64, // inclusive; u64::MAX = to EOF (unknown total)
+    #[serde(default)]
     pub done: u64,
+}
+
+fn default_segment_end() -> u64 {
+    u64::MAX
 }
 
 impl Segment {
@@ -549,7 +593,7 @@ pub fn run_download(
         let validator = validator.clone();
         let single_segment = seg_state.len() == 1;
         handles.push(std::thread::spawn(move || {
-            let agent = http_agent();
+            let agent = transfer_agent();
             // Bounded retries with backoff: a server that accepts then
             // drops, trickles, or answers 206 with empty bodies must fail
             // the segment — the old loop re-requested the remaining range
@@ -606,6 +650,26 @@ pub fn run_download(
                 let mut hit_eof = false;
                 if let Some(resp) = resp {
                     let status = resp.status();
+                    // CP-2 (DOWNLOAD-ENGINE.md): a 206 is only usable
+                    // when its Content-Range starts exactly at the
+                    // requested offset and ends at the requested end
+                    // (any end for an open segment). A missing or
+                    // mismatched header means the body is NOT the
+                    // range we asked for — writing it at `from` would
+                    // silently corrupt the file (the pre-V2 engine did
+                    // exactly that). An unusable response writes zero
+                    // bytes; the stall judgement below retries it a
+                    // bounded number of times, then fails the task.
+                    let mut usable = status == 200;
+                    if status == 206 {
+                        usable = resp
+                            .header("Content-Range")
+                            .and_then(parse_content_range)
+                            .map(|(cs, ce, _total)| {
+                                cs == from && ce >= cs && (to == u64::MAX || ce == to)
+                            })
+                            .unwrap_or(false);
+                    }
                     if status == 200 {
                         // Server ignored Range (or If-Range validator
                         // changed): the body is the whole file, which is
@@ -620,59 +684,64 @@ pub fn run_download(
                             return;
                         }
                     }
-                    let mut reader = resp.into_reader();
-                    let mut buf = vec![0u8; 256 * 1024];
-                    loop {
-                        if pause.load(Ordering::SeqCst) {
-                            return;
-                        }
-                        // Never read past the segment's end: an
-                        // over-sending server would otherwise stream into
-                        // the next segment's territory while `done`
-                        // overshoots — a "completed" but corrupt file.
-                        let want = {
-                            let s = seg.lock().unwrap_or_else(|e| e.into_inner());
-                            let rem = s.remaining();
-                            if rem == 0 {
-                                break;
+                    if usable {
+                        let mut reader = resp.into_reader();
+                        let mut buf = vec![0u8; 256 * 1024];
+                        loop {
+                            if pause.load(Ordering::SeqCst) {
+                                return;
                             }
-                            if s.end == u64::MAX {
-                                buf.len()
-                            } else {
-                                (rem as usize).min(buf.len())
-                            }
-                        };
-                        match reader.read(&mut buf[..want]) {
-                            Ok(0) => {
-                                hit_eof = true;
-                                break;
-                            }
-                            Ok(n) => {
-                                let offset = {
-                                    let s = seg.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.start + s.done
-                                };
-                                if let Err(e) = file.write_all_at(&buf[..n], offset) {
-                                    progress.failed.store(true, Ordering::SeqCst);
-                                    *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
-                                        Some(format!("write failed: {e}"));
-                                    return;
+                            // Never read past the segment's end: an
+                            // over-sending server would otherwise stream into
+                            // the next segment's territory while `done`
+                            // overshoots — a "completed" but corrupt file.
+                            let want = {
+                                let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                                let rem = s.remaining();
+                                if rem == 0 {
+                                    break;
                                 }
-                                {
-                                    let mut s = seg.lock().unwrap_or_else(|e| e.into_inner());
-                                    s.done += n as u64;
-                                    if let Some(live) = progress
-                                        .live_segments
-                                        .lock()
-                                        .unwrap_or_else(|e| e.into_inner())
-                                        .get_mut(seg_idx)
-                                    {
-                                        live.done = s.done;
+                                if s.end == u64::MAX {
+                                    buf.len()
+                                } else {
+                                    (rem as usize).min(buf.len())
+                                }
+                            };
+                            match reader.read(&mut buf[..want]) {
+                                Ok(0) => {
+                                    hit_eof = true;
+                                    break;
+                                }
+                                Ok(n) => {
+                                    let offset = {
+                                        let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.start + s.done
+                                    };
+                                    if let Err(e) = file.write_all_at(&buf[..n], offset) {
+                                        progress.failed.store(true, Ordering::SeqCst);
+                                        *progress
+                                            .message
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner()) =
+                                            Some(format!("write failed: {e}"));
+                                        return;
                                     }
+                                    {
+                                        let mut s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                                        s.done += n as u64;
+                                        if let Some(live) = progress
+                                            .live_segments
+                                            .lock()
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .get_mut(seg_idx)
+                                        {
+                                            live.done = s.done;
+                                        }
+                                    }
+                                    progress.downloaded.fetch_add(n as u64, Ordering::SeqCst);
                                 }
-                                progress.downloaded.fetch_add(n as u64, Ordering::SeqCst);
+                                Err(_) => break, // mid-segment drop: judged below
                             }
-                            Err(_) => break, // mid-segment drop: judged below
                         }
                     }
                 }
@@ -730,6 +799,11 @@ pub fn run_download(
                     Ok(mut f) => {
                         let _ = f.set_len(last.end + 1);
                         let _ = f.flush();
+                        // CP-5 durability ordering: the bytes must be
+                        // on stable storage before the manager renames
+                        // .part to the final name — a power loss after
+                        // rename must not expose a hollow file.
+                        let _ = f.sync_all();
                         let _ = f.seek(SeekFrom::Start(0));
                     }
                     Err(err) => {
@@ -764,6 +838,19 @@ mod tests {
         assert_eq!(fmt_eta(-5.0), "—");
         assert_eq!(fmt_eta(f64::INFINITY), "—");
         assert_eq!(fmt_eta(f64::NAN), "—");
+    }
+
+    #[test]
+    fn content_range_parses_valid_and_rejects_garbage() {
+        assert_eq!(
+            parse_content_range("bytes 100-199/1234"),
+            Some((100, 199, Some(1234)))
+        );
+        assert_eq!(parse_content_range("bytes 0-499/*"), Some((0, 499, None)));
+        assert_eq!(parse_content_range("bytes */1234"), None);
+        assert_eq!(parse_content_range("items 0-1/2"), None);
+        assert_eq!(parse_content_range("bytes 5-3/10"), Some((5, 3, Some(10))));
+        assert_eq!(parse_content_range(""), None);
     }
 
     #[test]

@@ -25,14 +25,28 @@ pub enum DlState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedTask {
+    #[serde(default)]
     id: u64,
+    #[serde(default)]
     url: String,
+    #[serde(default)]
     name: String,
+    #[serde(default)]
     total: u64,
+    #[serde(default)]
     validator: Option<String>,
+    #[serde(default)]
     segments: Vec<Segment>,
+    #[serde(default = "default_persisted_state")]
     state: DlState,
+    #[serde(default)]
     error: Option<String>,
+}
+
+/// A persisted task with a missing state restores as Paused — the
+/// one state that neither runs nor claims success (V2 RC-5).
+fn default_persisted_state() -> DlState {
+    DlState::Paused
 }
 
 pub struct Task {
@@ -47,8 +61,13 @@ pub struct Task {
     // runtime only
     pub pause_flag: Arc<AtomicBool>,
     pub progress: Arc<Progress>,
-    /// Probed and planned; waiting only for a free concurrency slot.
-    pub ready: bool,
+    /// Pause requested while the probe is still in flight (T17): the
+    /// probe lands the task Paused with its plan stored, never
+    /// auto-started. Readiness is NOT stored anywhere — it is derived
+    /// from `!segments.is_empty()` (DOWNLOAD-ENGINE.md MAP-2); the
+    /// pre-V2 stored `ready` flag is what made probe-failed tasks
+    /// permanently un-retryable (Wave 0 P0).
+    pub pause_intent: bool,
     pub speed_bps: f64,
     last_tick_bytes: u64,
     last_tick_at: std::time::Instant,
@@ -95,6 +114,10 @@ pub struct Manager {
     next_id: AtomicU64,
     notifier: Mutex<Option<Notifier>>,
     settings: Mutex<Settings>,
+    /// Serializes every `save()` (RC-1): concurrent checkpoints from
+    /// the ticker, supervisors and command handlers must never
+    /// interleave writes to the same state file.
+    save_lock: Mutex<()>,
     /// Monotonic counter of everything the Transfers UI renders:
     /// byte progress (via tick_speed) and every state transition.
     /// poll() compares it against the last frame's value — before
@@ -130,6 +153,51 @@ fn state_file() -> PathBuf {
     data_dir().join("downloads.json")
 }
 
+/// CP-4 reconciliation: clamp a task's segment plan to what the .part
+/// file actually holds, and return the (possibly adjusted) plan. The
+/// file — not the persisted JSON — is ground truth: bytes the file
+/// cannot prove are planned again.
+fn reconcile_part(name: &str, mut segments: Vec<Segment>) -> Vec<Segment> {
+    let claimed: u64 = segments.iter().map(|s| s.done).sum();
+    if claimed == 0 || segments.is_empty() {
+        return segments;
+    }
+    let part = downloads_dir().join(format!("{name}.part"));
+    match std::fs::metadata(&part) {
+        Err(_) => {
+            // Gone entirely: no byte of the claimed progress exists.
+            for s in segments.iter_mut() {
+                s.done = 0;
+            }
+        }
+        Ok(md) => {
+            let len = md.len();
+            if len < claimed {
+                // Walk in order: earlier segments keep what the file
+                // can prove, the first short segment is clamped, and
+                // every later segment restarts — a hole can never
+                // reach Completed.
+                let mut budget = len;
+                for s in segments.iter_mut() {
+                    let keep = s.done.min(budget);
+                    budget -= keep;
+                    s.done = keep;
+                }
+            }
+            let bounded = segments.iter().all(|s| s.end != u64::MAX);
+            if bounded {
+                let total: u64 = segments.iter().map(|s| s.len()).sum();
+                if len > total {
+                    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&part) {
+                        let _ = f.set_len(total);
+                    }
+                }
+            }
+        }
+    }
+    segments
+}
+
 impl Manager {
     pub fn load() -> Arc<Self> {
         let mgr = Arc::new(Self {
@@ -137,6 +205,7 @@ impl Manager {
             next_id: AtomicU64::new(1),
             notifier: Mutex::new(None),
             settings: Mutex::new(load_settings()),
+            save_lock: Mutex::new(()),
             stamp: AtomicU64::new(0),
         });
         // A torn previous save falls back to the .bak snapshot rather
@@ -165,15 +234,30 @@ impl Manager {
                         total: p.total,
                         validator: p.validator,
                         segments: p.segments,
-                        // Anything mid-flight at exit comes back paused.
+                        // RC-3 restore mapping: mid-flight at exit
+                        // comes back Paused when a plan exists to
+                        // resume from; interrupted before its probe
+                        // produced a plan, it comes back Failed with
+                        // the reason recorded — and Failed is always
+                        // retryable (T14), so it is not a dead end.
                         state: match p.state {
-                            DlState::Running | DlState::Queued => DlState::Paused,
+                            DlState::Running | DlState::Queued => {
+                                if was_ready {
+                                    DlState::Paused
+                                } else {
+                                    DlState::Failed
+                                }
+                            }
                             other => other,
                         },
-                        error: p.error,
+                        error: match p.state {
+                            DlState::Running | DlState::Queued if !was_ready => {
+                                Some("interrupted before the download started".to_string())
+                            }
+                            _ => p.error,
+                        },
                         pause_flag: Arc::new(AtomicBool::new(true)),
-                        // A restored task with a plan can resume immediately.
-                        ready: was_ready,
+                        pause_intent: false,
                         progress,
                         speed_bps: 0.0,
                         last_tick_bytes: downloaded,
@@ -237,6 +321,7 @@ impl Manager {
     }
 
     pub fn save(&self) {
+        let _save_guard = self.save_lock.lock().unwrap_or_else(|e| e.into_inner());
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<PersistedTask> = tasks
             .iter()
@@ -261,11 +346,19 @@ impl Manager {
     }
 
     /// Queue a new download (probes on a worker thread, then starts).
-    /// A URL that is already queued, running or paused is not duplicated
-    /// (the Android download coordinator dedups the same way).
+    /// Dedup is atomic (T1): the check and the insert happen in one
+    /// lock scope, so a fast double-add can never create two tasks for
+    /// one URL (the pre-V2 code checked and inserted in separate
+    /// scopes). A URL owned by a Failed task retries that task (T14)
+    /// instead of creating a shadowing duplicate.
     pub fn enqueue(self: &Arc<Self>, url: String, name: String) {
-        {
-            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        enum Act {
+            Nothing,
+            Retry(u64),
+            Probe(u64),
+        }
+        let act = {
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             if tasks.iter().any(|t| {
                 t.url == url
                     && matches!(
@@ -273,105 +366,196 @@ impl Manager {
                         DlState::Queued | DlState::Running | DlState::Paused
                     )
             }) {
-                return;
+                Act::Nothing
+            } else if let Some(t) = tasks
+                .iter()
+                .find(|t| t.url == url && t.state == DlState::Failed)
+            {
+                Act::Retry(t.id)
+            } else {
+                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                tasks.push(Task {
+                    id,
+                    url: url.clone(),
+                    name: sanitize_keep_ext(&name),
+                    total: 0,
+                    validator: None,
+                    segments: Vec::new(),
+                    state: DlState::Queued,
+                    error: None,
+                    pause_flag: Arc::new(AtomicBool::new(false)),
+                    pause_intent: false,
+                    progress: Arc::new(Progress::new(0)),
+                    speed_bps: 0.0,
+                    last_tick_bytes: 0,
+                    last_tick_at: std::time::Instant::now(),
+                });
+                Act::Probe(id)
+            }
+        };
+        match act {
+            Act::Nothing => {}
+            Act::Retry(id) => self.start(id),
+            Act::Probe(id) => {
+                self.save();
+                self.bump();
+                self.wake();
+                self.probe_task(id);
             }
         }
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let progress = Arc::new(Progress::new(0));
-        {
-            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            tasks.push(Task {
-                id,
-                url: url.clone(),
-                name: sanitize_keep_ext(&name),
-                total: 0,
-                validator: None,
-                segments: Vec::new(),
-                state: DlState::Queued,
-                error: None,
-                pause_flag: Arc::new(AtomicBool::new(false)),
-                ready: false,
-                progress,
-                speed_bps: 0.0,
-                last_tick_bytes: 0,
-                last_tick_at: std::time::Instant::now(),
-            });
-        }
-        self.save();
-        self.bump();
-        self.wake();
+    }
+
+    /// Run the probe for a task (initial enqueue, or a retry) on a
+    /// worker thread and land the outcome. Success stores the plan —
+    /// or keeps the existing plan and its progress when the re-probe
+    /// describes the same file (RT-3) — and pumps. Failure marks the
+    /// task Failed (T4). A pause requested while the probe was in
+    /// flight lands the task Paused with its plan stored (T17); a
+    /// task removed meanwhile is left alone.
+    fn probe_task(self: &Arc<Self>, id: u64) {
+        let url = {
+            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(t) = tasks.iter().find(|t| t.id == id) else {
+                return;
+            };
+            t.url.clone()
+        };
         let mgr = Arc::clone(self);
-        std::thread::spawn(move || match probe_url(&url) {
-            Ok(probe) => {
-                let total = probe.total.unwrap_or(0);
-                let lanes = mgr.settings().connections.max(1) as usize;
-                let segments = if probe.accept_ranges {
-                    plan_segments(total, lanes)
-                } else if total > 0 {
-                    vec![Segment {
-                        start: 0,
-                        end: total - 1,
-                        done: 0,
-                    }]
-                } else {
-                    vec![Segment {
-                        start: 0,
-                        end: u64::MAX,
-                        done: 0,
-                    }]
-                };
-                {
-                    let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+        std::thread::spawn(move || {
+            let lanes = mgr.settings().connections.max(1) as usize;
+            match probe_url(&url) {
+                Ok(probe) => {
+                    let total = probe.total.unwrap_or(0);
+                    let mut paused_intent = false;
+                    {
+                        let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                        let Some(t) = tasks.iter_mut().find(|t| t.id == id) else {
+                            return;
+                        };
+                        // RT-3 drift check: same total, and validators
+                        // equal whenever both are known, means the
+                        // stored plan (and its downloaded bytes) still
+                        // describes this file — keep it.
+                        let no_drift = !t.segments.is_empty()
+                            && t.total == total
+                            && match (&t.validator, &probe.validator) {
+                                (Some(old), Some(new)) => old == new,
+                                _ => true,
+                            };
+                        if !no_drift {
+                            t.segments = if probe.accept_ranges {
+                                plan_segments(total, lanes)
+                            } else if total > 0 {
+                                vec![Segment {
+                                    start: 0,
+                                    end: total - 1,
+                                    done: 0,
+                                }]
+                            } else {
+                                vec![Segment {
+                                    start: 0,
+                                    end: u64::MAX,
+                                    done: 0,
+                                }]
+                            };
+                            t.progress.downloaded.store(0, Ordering::SeqCst);
+                        }
                         t.total = total;
                         t.validator = probe.validator.clone();
-                        t.segments = segments;
-                        t.ready = true;
                         t.progress.total.store(total, Ordering::SeqCst);
+                        paused_intent = t.pause_intent;
+                        t.pause_intent = false;
+                        if paused_intent {
+                            t.state = DlState::Paused;
+                            t.pause_flag.store(true, Ordering::SeqCst);
+                        } else {
+                            t.state = DlState::Queued;
+                        }
                     }
-                }
-                mgr.save();
-                mgr.bump();
-                mgr.pump();
-                mgr.wake();
-            }
-            Err(e) => {
-                let mut failed_name = String::new();
-                {
-                    let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
-                        t.state = DlState::Failed;
-                        t.error = Some(e.clone());
-                        failed_name = t.name.clone();
+                    mgr.save();
+                    mgr.bump();
+                    if !paused_intent {
+                        mgr.pump();
                     }
+                    mgr.wake();
                 }
-                mgr.save();
-                mgr.bump();
-                mgr.wake();
-                if !failed_name.is_empty() {
-                    notify("Download failed", &format!("{failed_name}: {e}"));
+                Err(e) => {
+                    let mut failed_name = String::new();
+                    {
+                        let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                            t.state = DlState::Failed;
+                            t.error = Some(e.clone());
+                            failed_name = t.name.clone();
+                        }
+                    }
+                    mgr.save();
+                    mgr.bump();
+                    mgr.wake();
+                    if !failed_name.is_empty() {
+                        notify("Download failed", &format!("{failed_name}: {e}"));
+                    }
                 }
             }
         });
     }
 
-    /// Resume a paused/failed task: it re-enters the queue and the
-    /// scheduler starts it as soon as a concurrency slot is free.
+    /// Resume or retry a task (T13/T14). A Paused task with a plan
+    /// re-enters the queue directly; a Failed task — or a Paused one
+    /// whose probe never produced a plan — always re-probes first.
+    /// Readiness is derived from the plan, never a stored gate: the
+    /// pre-V2 `ready` flag made probe-failed tasks un-retryable
+    /// forever (the Wave 0 P0 deadlock).
     pub fn start(self: &Arc<Self>, id: u64) {
-        {
+        enum Act {
+            Nothing,
+            Queue,
+            Probe,
+        }
+        let act = {
             let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             let Some(t) = tasks.iter_mut().find(|t| t.id == id) else {
                 return;
             };
-            if t.state == DlState::Running || t.state == DlState::Completed || !t.ready {
-                return;
+            match t.state {
+                DlState::Running | DlState::Completed => Act::Nothing,
+                // "Resume" of a still-queued task only cancels a
+                // pending pause intent recorded during its probe.
+                DlState::Queued => {
+                    t.pause_intent = false;
+                    Act::Nothing
+                }
+                DlState::Failed => {
+                    t.error = None;
+                    t.pause_intent = false;
+                    t.state = DlState::Queued;
+                    Act::Probe
+                }
+                DlState::Paused => {
+                    t.pause_intent = false;
+                    t.error = None;
+                    t.state = DlState::Queued;
+                    if t.segments.is_empty() {
+                        Act::Probe
+                    } else {
+                        Act::Queue
+                    }
+                }
             }
-            t.state = DlState::Queued;
-            t.error = None;
+        };
+        match act {
+            Act::Nothing => {}
+            Act::Queue => {
+                self.bump();
+                self.pump();
+                self.wake();
+            }
+            Act::Probe => {
+                self.bump();
+                self.wake();
+                self.probe_task(id);
+            }
         }
-        self.bump();
-        self.pump();
-        self.wake();
     }
 
     /// Scheduler: start ready, queued tasks (in queue order) until the
@@ -386,7 +570,7 @@ impl Manager {
                 if running >= max {
                     break;
                 }
-                if t.state == DlState::Queued && t.ready {
+                if t.state == DlState::Queued && !t.segments.is_empty() {
                     t.state = DlState::Running;
                     t.error = None;
                     t.pause_flag.store(false, Ordering::SeqCst);
@@ -430,6 +614,21 @@ impl Manager {
                 Arc::clone(&t.progress),
             )
         };
+        // CP-4: the .part on disk is ground truth, not the persisted
+        // plan. Reconcile before any byte is requested — a .part that
+        // was deleted or truncated while the app was closed clamps the
+        // plan, so the missing tail is re-fetched instead of the file
+        // completing with zero-filled holes.
+        let segments = reconcile_part(&name, segments);
+        {
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                t.segments = segments.clone();
+                let have: u64 = segments.iter().map(|s| s.done).sum();
+                t.progress.downloaded.store(have, Ordering::SeqCst);
+                t.last_tick_bytes = have;
+            }
+        }
         self.wake();
         let mgr = Arc::clone(self);
         // UI ticker: wake ~4x/s while this task runs so bars/speed
@@ -441,12 +640,20 @@ impl Manager {
             let mgr = Arc::clone(self);
             let progress = Arc::clone(&progress);
             std::thread::spawn(move || {
+                let mut last_checkpoint = std::time::Instant::now();
                 while !progress.stopped.load(Ordering::SeqCst) {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     if progress.stopped.load(Ordering::SeqCst) {
                         break;
                     }
                     mgr.tick_speed(id);
+                    // RC-1 periodic checkpoint: a kill mid-download
+                    // loses at most ~5 s of progress, not everything
+                    // since the last state transition.
+                    if last_checkpoint.elapsed() >= std::time::Duration::from_secs(5) {
+                        mgr.save();
+                        last_checkpoint = std::time::Instant::now();
+                    }
                     mgr.wake();
                 }
                 progress.ticker_active.store(false, Ordering::SeqCst);
@@ -467,13 +674,41 @@ impl Manager {
             // Every exit lands here — complete, failed or paused:
             // tell the ticker to stop (Wave 9).
             progress.stopped.store(true, Ordering::SeqCst);
-            let finished = progress.finished.load(Ordering::SeqCst);
-            let failed = progress.failed.load(Ordering::SeqCst);
-            if finished {
+            let mut finished = progress.finished.load(Ordering::SeqCst);
+            let mut failed = progress.failed.load(Ordering::SeqCst);
+            // T18: a task removed while its workers were unwinding
+            // must not be resurrected — no rename, no state write, no
+            // notification for a task that no longer exists. (The
+            // pre-V2 code renamed .part → final unconditionally, so a
+            // removed download could reappear as a finished file.)
+            let exists = {
+                let tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                tasks.iter().any(|t| t.id == id)
+            };
+            let mut rename_error: Option<String> = None;
+            if finished && exists {
                 let final_path = dir.join(&name);
-                let _ = std::fs::rename(&part, &final_path);
+                match std::fs::rename(&part, &final_path) {
+                    Ok(()) => {
+                        // Best-effort directory fsync so the rename
+                        // itself survives a power loss (CP-5).
+                        if let Ok(d) = std::fs::File::open(&dir) {
+                            let _ = d.sync_all();
+                        }
+                    }
+                    Err(e) => {
+                        // T12: a failed rename fails the task; the
+                        // .part is preserved so a retry can finish
+                        // the job. (Pre-V2 the result was discarded
+                        // with `let _ =` and the task claimed success.)
+                        rename_error =
+                            Some(format!("could not move the finished file into place: {e}"));
+                        finished = false;
+                        failed = true;
+                    }
+                }
             }
-            {
+            if exists {
                 let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                     t.segments = out;
@@ -482,26 +717,30 @@ impl Manager {
                         t.speed_bps = 0.0;
                     } else if failed {
                         t.state = DlState::Failed;
-                        t.error = progress
-                            .message
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .clone();
+                        t.error = rename_error.clone().or_else(|| {
+                            progress
+                                .message
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone()
+                        });
                     } else {
                         t.state = DlState::Paused;
                         t.speed_bps = 0.0;
                     }
                 }
             }
-            if finished {
+            if exists && finished {
                 notify("Download finished", &name);
-            } else if failed {
-                let err = progress
-                    .message
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone()
-                    .unwrap_or_default();
+            } else if exists && failed {
+                let err = rename_error.unwrap_or_else(|| {
+                    progress
+                        .message
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone()
+                        .unwrap_or_default()
+                });
                 notify("Download failed", &format!("{name}: {err}"));
             }
             mgr.bump();
@@ -516,6 +755,26 @@ impl Manager {
             let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                 t.pause_flag.store(true, Ordering::SeqCst);
+                match t.state {
+                    // T6: running workers unwind asynchronously; the
+                    // supervisor lands the task in Paused.
+                    DlState::Running => {}
+                    // T16/T17: a queued task with a plan pauses
+                    // immediately; one still probing records the
+                    // intent and the probe lands it Paused (a probe
+                    // failure wins over the intent and lands Failed).
+                    // The pre-V2 code set only the flag here, and
+                    // pump() cleared it at launch — the pause was
+                    // silently discarded.
+                    DlState::Queued => {
+                        if t.segments.is_empty() {
+                            t.pause_intent = true;
+                        } else {
+                            t.state = DlState::Paused;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         // Feedback now, not whenever the engine thread unwinds

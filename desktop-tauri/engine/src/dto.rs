@@ -114,7 +114,10 @@ impl From<&Task> for TaskDto {
             speed_bps: t.speed_bps,
             eta_secs: t.eta_secs(),
             error: t.error.clone(),
-            ready: t.ready,
+            // MAP-2: derived, never stored — a task is ready exactly
+            // when it has a segment plan. No code path may gate start
+            // or retry on this value.
+            ready: !t.segments.is_empty(),
             file_missing: t.state == DlState::Completed
                 && !crate::manager::downloads_dir().join(&t.name).exists(),
             segments: t.live_segments().iter().map(SegmentDto::from).collect(),
