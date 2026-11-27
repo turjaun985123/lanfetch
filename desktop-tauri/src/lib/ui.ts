@@ -8,7 +8,10 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 /** Build an `<svg><use href="#i-<name>"/></svg>` node for the
  * inline sprite defined in index.astro. Sizes: 16 inline,
  * 18 buttons/rows, 20 nav, 24 empty states. */
-export function icon(name: string, size: 16 | 18 | 20 | 24 = 18): SVGElement {
+export function icon(
+  name: string,
+  size: 16 | 18 | 20 | 24 | 32 = 18,
+): SVGElement {
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'ic' + (size !== 18 ? ' ic-' + size : ''));
   svg.setAttribute('aria-hidden', 'true');
