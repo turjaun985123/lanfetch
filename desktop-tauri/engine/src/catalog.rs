@@ -552,11 +552,26 @@ impl FeedSession {
         /// folder at a time, so a page cost 18–108 serial round trips
         /// (Engine audit #1).
         const BATCH: usize = 8;
+        /// Wall-clock budget for one page. The request count was
+        /// already bounded (page_size * 6) but time was not: against
+        /// a slow or half-dead server a page could crawl for many
+        /// minutes, and callers historically held the catalog lock
+        /// across the crawl, freezing the whole app behind it
+        /// (user-reported wedge, 2026-11-27). A page now stops
+        /// starting new batches once the budget is spent and returns
+        /// what it has — `has_more` stays honest, so the caller can
+        /// simply ask for the next page. A batch already in flight
+        /// is bounded by the listing deadline in fetch_listing.
+        const PAGE_BUDGET: Duration = Duration::from_secs(20);
+        let started = Instant::now();
         let mut collected: Vec<Title> = Vec::new();
         let mut requests = 0usize;
         let max_requests = page_size * 6;
         let mut turn = 0usize;
         while collected.len() < page_size && requests < max_requests {
+            if started.elapsed() > PAGE_BUDGET {
+                break;
+            }
             // Round-robin: pop a batch of nodes from the streams.
             let mut batch: Vec<FeedNode> = Vec::new();
             while batch.len() < BATCH && requests + batch.len() < max_requests {

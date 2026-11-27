@@ -1009,15 +1009,39 @@ fn get_categories(state: &AppState, refresh: bool) -> Vec<CategoryDto> {
 
 fn feed_open(state: &AppState, category: Option<String>) -> Result<FeedPageDto, String> {
     let favorites = favorites_set(state);
-    let mut catalog = lock(&state.catalog);
-    if catalog.categories.is_empty() {
-        return Err("categories are not loaded yet".to_string());
-    }
-    catalog.generation += 1;
-    let generation = catalog.generation;
-    let mut feed =
-        lanfetch_engine::catalog::FeedSession::new(&catalog.categories, category.as_deref());
+    // Build the session and bump the generation under the lock,
+    // then crawl UNLOCKED (user-reported wedge, 2026-11-27: the
+    // crawl used to run with the catalog mutex held, so one slow
+    // server froze every other catalog call, each category click
+    // queued another full crawl behind the lock, and a page
+    // refresh just joined the back of the queue).
+    let (mut feed, generation) = {
+        let mut catalog = lock(&state.catalog);
+        if catalog.categories.is_empty() {
+            return Err("categories are not loaded yet".to_string());
+        }
+        catalog.generation += 1;
+        (
+            lanfetch_engine::catalog::FeedSession::new(
+                &catalog.categories,
+                category.as_deref(),
+            ),
+            catalog.generation,
+        )
+    };
     let page = feed.next_page(FEED_PAGE_SIZE);
+    let has_more = feed.has_more;
+    let mut catalog = lock(&state.catalog);
+    if catalog.generation != generation {
+        // A newer feed_open superseded this one while it crawled:
+        // drop the stale page instead of overwriting the session.
+        return Ok(FeedPageDto {
+            generation: catalog.generation,
+            titles: Vec::new(),
+            has_more: false,
+            superseded: true,
+        });
+    }
     for t in &page {
         catalog.titles.insert(t.folder_url.clone(), t.clone());
     }
@@ -1025,7 +1049,6 @@ fn feed_open(state: &AppState, category: Option<String>) -> Result<FeedPageDto, 
         .iter()
         .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
         .collect();
-    let has_more = feed.has_more;
     catalog.feed = Some(feed);
     Ok(FeedPageDto {
         generation,
@@ -1037,8 +1060,25 @@ fn feed_open(state: &AppState, category: Option<String>) -> Result<FeedPageDto, 
 
 fn feed_next(state: &AppState, generation: u64) -> FeedPageDto {
     let favorites = favorites_set(state);
+    // Take the session OUT of the catalog so the crawl runs
+    // unlocked; it goes back only if the generation is still
+    // current when the page lands (see feed_open).
+    let mut feed = {
+        let mut catalog = lock(&state.catalog);
+        if generation != catalog.generation || catalog.feed.is_none() {
+            return FeedPageDto {
+                generation: catalog.generation,
+                titles: Vec::new(),
+                has_more: false,
+                superseded: true,
+            };
+        }
+        catalog.feed.take().expect("checked above")
+    };
+    let page = feed.next_page(FEED_PAGE_SIZE);
+    let has_more = feed.has_more;
     let mut catalog = lock(&state.catalog);
-    if generation != catalog.generation || catalog.feed.is_none() {
+    if catalog.generation != generation {
         return FeedPageDto {
             generation: catalog.generation,
             titles: Vec::new(),
@@ -1046,18 +1086,14 @@ fn feed_next(state: &AppState, generation: u64) -> FeedPageDto {
             superseded: true,
         };
     }
-    let page = {
-        let feed = catalog.feed.as_mut().expect("checked above");
-        feed.next_page(FEED_PAGE_SIZE)
-    };
     for t in &page {
         catalog.titles.insert(t.folder_url.clone(), t.clone());
     }
-    let has_more = catalog.feed.as_ref().map(|f| f.has_more).unwrap_or(false);
     let titles = page
         .iter()
         .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
         .collect();
+    catalog.feed = Some(feed);
     FeedPageDto {
         generation,
         titles,

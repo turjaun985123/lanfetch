@@ -181,14 +181,35 @@ pub async fn feed_open(
     let catalog_state = state.catalog.clone();
     let favorites = favorites_set(&state);
     tauri::async_runtime::spawn_blocking(move || {
-        let mut catalog = lock(&catalog_state);
-        if catalog.categories.is_empty() {
-            return Err("categories are not loaded yet".to_string());
-        }
-        catalog.generation += 1;
-        let generation = catalog.generation;
-        let mut feed = crate::catalog::FeedSession::new(&catalog.categories, category.as_deref());
+        // Build the session and bump the generation under the
+        // lock, then crawl UNLOCKED (user-reported wedge,
+        // 2026-11-27: the crawl used to run with the catalog mutex
+        // held, freezing every other catalog call behind one slow
+        // server; see web serve.rs feed_open).
+        let (mut feed, generation) = {
+            let mut catalog = lock(&catalog_state);
+            if catalog.categories.is_empty() {
+                return Err("categories are not loaded yet".to_string());
+            }
+            catalog.generation += 1;
+            (
+                crate::catalog::FeedSession::new(&catalog.categories, category.as_deref()),
+                catalog.generation,
+            )
+        };
         let page = feed.next_page(FEED_PAGE_SIZE);
+        let has_more = feed.has_more;
+        let mut catalog = lock(&catalog_state);
+        if catalog.generation != generation {
+            // Superseded by a newer feed_open while crawling:
+            // drop the stale page.
+            return Ok(FeedPageDto {
+                generation: catalog.generation,
+                titles: Vec::new(),
+                has_more: false,
+                superseded: true,
+            });
+        }
         for t in &page {
             catalog.titles.insert(t.folder_url.clone(), t.clone());
         }
@@ -196,7 +217,6 @@ pub async fn feed_open(
             .iter()
             .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
             .collect();
-        let has_more = feed.has_more;
         catalog.feed = Some(feed);
         Ok(FeedPageDto {
             generation,
@@ -217,8 +237,24 @@ pub async fn feed_next(state: State<'_, AppState>, generation: u64) -> Result<Fe
     let catalog_state = state.catalog.clone();
     let favorites = favorites_set(&state);
     tauri::async_runtime::spawn_blocking(move || {
+        // Take the session OUT so the crawl runs unlocked; it
+        // goes back only if the generation is still current.
+        let mut feed = {
+            let mut catalog = lock(&catalog_state);
+            if generation != catalog.generation || catalog.feed.is_none() {
+                return FeedPageDto {
+                    generation: catalog.generation,
+                    titles: Vec::new(),
+                    has_more: false,
+                    superseded: true,
+                };
+            }
+            catalog.feed.take().expect("checked above")
+        };
+        let page = feed.next_page(FEED_PAGE_SIZE);
+        let has_more = feed.has_more;
         let mut catalog = lock(&catalog_state);
-        if generation != catalog.generation || catalog.feed.is_none() {
+        if catalog.generation != generation {
             return FeedPageDto {
                 generation: catalog.generation,
                 titles: Vec::new(),
@@ -226,18 +262,14 @@ pub async fn feed_next(state: State<'_, AppState>, generation: u64) -> Result<Fe
                 superseded: true,
             };
         }
-        let page = {
-            let feed = catalog.feed.as_mut().expect("checked above");
-            feed.next_page(FEED_PAGE_SIZE)
-        };
         for t in &page {
             catalog.titles.insert(t.folder_url.clone(), t.clone());
         }
-        let has_more = catalog.feed.as_ref().map(|f| f.has_more).unwrap_or(false);
         let titles = page
             .iter()
             .map(|t| TitleDto::new(t, favorites.contains(&t.folder_url)))
             .collect();
+        catalog.feed = Some(feed);
         FeedPageDto {
             generation,
             titles,

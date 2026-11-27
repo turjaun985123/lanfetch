@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 struct Req {
     method: String,
+    path: String,
     range: Option<(u64, Option<u64>)>,
 }
 
@@ -97,11 +98,10 @@ fn handle_conn(mut stream: TcpStream, handler: Handler) {
     };
     let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
     let mut lines = head.lines();
-    let method = lines
-        .next()
-        .and_then(|l| l.split_whitespace().next())
-        .unwrap_or("GET")
-        .to_string();
+    let request_line = lines.next().unwrap_or("").to_string();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let path = parts.next().unwrap_or("/").to_string();
     let mut range = None;
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
@@ -110,7 +110,7 @@ fn handle_conn(mut stream: TcpStream, handler: Handler) {
             }
         }
     }
-    let resp = handler(&Req { method, range });
+    let resp = handler(&Req { method, path, range });
     let mut out = format!("HTTP/1.1 {} X\r\nConnection: close\r\n", resp.status);
     for (k, v) in &resp.headers {
         out.push_str(&format!("{k}: {v}\r\n"));
@@ -125,7 +125,10 @@ fn handle_conn(mut stream: TcpStream, handler: Handler) {
     let _ = stream.flush();
     if resp.drip {
         // A server that accepted the request and then went silent.
-        std::thread::sleep(Duration::from_secs(30));
+        // 90 s: comfortably past every client-side deadline the
+        // engine is supposed to enforce (30 s listing deadline),
+        // so a test that returns quickly proves the bound works.
+        std::thread::sleep(Duration::from_secs(90));
     }
 }
 
@@ -277,6 +280,36 @@ fn stall_server(total: u64) -> Handler {
                 h("ETag", "\"v1\""),
             ],
             body: Vec::new(),
+            drip: true,
+        }
+    })
+}
+
+/// A listing server whose category page answers instantly with
+/// links to 16 subfolders — and every subfolder listing sends a
+/// partial body and then goes silent (the wedge scenario: the
+/// client must bound the read itself, not wait for the server).
+fn stall_listing_server() -> Handler {
+    Arc::new(move |req: &Req| {
+        if req.path == "/cat/" {
+            let mut html = String::from("<html><body>");
+            for i in 1..=16 {
+                html.push_str(&format!("<a href=\"M{i}/\">M{i}</a>"));
+            }
+            html.push_str("</body></html>");
+            return Resp {
+                status: 200,
+                headers: vec![h("Content-Length", html.len())],
+                body: html.into_bytes(),
+                drip: false,
+            };
+        }
+        // Partial listing, then silence (drip holds the socket).
+        let partial = "<html><body><a href=\"x\">x</a>";
+        Resp {
+            status: 200,
+            headers: vec![h("Content-Length", 100_000)],
+            body: partial.as_bytes().to_vec(),
             drip: true,
         }
     })
@@ -519,5 +552,33 @@ fn pause_during_stalled_read_bounded() {
         started.elapsed() < Duration::from_secs(12),
         "pause took {:?}; the documented bound is ~5 s",
         started.elapsed()
+    );
+}
+
+/// Regression (user-reported wedge, 2026-11-27): a feed page whose
+/// folder listings stall mid-body must still return within a
+/// bounded time — the listing read deadline plus the page budget —
+/// instead of waiting on the server (90 s per folder here), and
+/// has_more must stay honest about the unfetched remainder.
+#[test]
+fn feed_page_bounded_against_stalling_listings() {
+    let _home = fresh_home("feedstall");
+    let server = TestServer::start(stall_listing_server());
+    let root = format!("http://127.0.0.1:{}/cat/", server.port);
+    let categories = vec![lanfetch_engine::catalog::Category {
+        name: "Movies".to_string(),
+        locations: vec![("SRC".to_string(), root)],
+    }];
+    let mut feed = lanfetch_engine::catalog::FeedSession::new(&categories, Some("Movies"));
+    let started = Instant::now();
+    let _page = feed.next_page(48);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(55),
+        "feed page took {elapsed:?} against stalling listings"
+    );
+    assert!(
+        feed.has_more,
+        "unfetched folders remain, has_more must stay honest"
     );
 }

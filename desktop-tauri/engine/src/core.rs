@@ -56,6 +56,13 @@ pub fn http_agent() -> ureq::Agent {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(6))
             .timeout_read(Duration::from_secs(30))
+            // An overall deadline as well as per-read ones: a
+            // server that trickles bytes resets the read timeout
+            // forever, and a catalog crawl must never hang on one
+            // (user-reported wedge, 2026-11-27). The transfer agent
+            // deliberately has NO overall timeout — a large
+            // download legitimately takes minutes.
+            .timeout(Duration::from_secs(30))
             .user_agent("LanFetch/1.0 (desktop-rs)")
             .build()
     });
@@ -111,6 +118,13 @@ pub fn probe(source: &Source) -> Result<u128, String> {
 /// caps at 4 MB; a hostile or misdirected URL must not OOM the app).
 pub const MAX_LISTING_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Hard wall-clock cap on reading one listing body. The agent's
+/// read timeout is per-read: a server dribbling a byte at a time
+/// resets it indefinitely, so the read loop enforces its own
+/// deadline (user-reported wedge, 2026-11-27). The error is a
+/// "read failed" so the host earns the transport-failure cooldown.
+const LISTING_DEADLINE: Duration = Duration::from_secs(30);
+
 pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
     let mut reader = http_agent()
         .get(url)
@@ -123,12 +137,21 @@ pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
         })?
         .into_reader()
         .take(MAX_LISTING_BYTES + 1);
+    let started = Instant::now();
     let mut raw = Vec::new();
-    reader
-        .read_to_end(&mut raw)
-        .map_err(|e| format!("read failed: {e}"))?;
-    if raw.len() as u64 > MAX_LISTING_BYTES {
-        return Err("listing too large".to_string());
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        if started.elapsed() > LISTING_DEADLINE {
+            return Err("read failed: listing took too long".to_string());
+        }
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&chunk[..n]),
+            Err(e) => return Err(format!("read failed: {e}")),
+        }
+        if raw.len() as u64 > MAX_LISTING_BYTES {
+            return Err("listing too large".to_string());
+        }
     }
     let body = String::from_utf8_lossy(&raw);
     Ok(parse_listing(&body, url))
