@@ -454,6 +454,158 @@ img {
       min-height: 44px;
     }
   }
+
+  /* ---- app shell (R2: Agents 11-13, 26, 27) ----
+     One #rail / #nav element serves every band. Cascade note:
+     direction/padding for the shell live here, not in Tailwind
+     utilities, because the utilities layer would override these
+     media-query rules. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .page-title {
+    @apply text-page font-semibold;
+  }
+  .status-line {
+    @apply text-secondary text-ink-2;
+    font-variant-numeric: tabular-nums;
+  }
+  .screen-header {
+    @apply sticky top-0 border-b border-hairline bg-canvas px-6 py-3;
+    z-index: var(--z-header);
+  }
+  @media (max-width: 767px) {
+    .screen-header {
+      padding-inline: 16px;
+    }
+  }
+  .rail {
+    width: var(--rail-w);
+    flex-direction: column;
+    border-right: 1px solid var(--hairline);
+    transition: width var(--dur-slow) var(--ease-out);
+  }
+  .brand-row {
+    @apply flex items-center gap-3 px-4 py-4;
+  }
+  #nav {
+    flex-direction: column;
+    padding: 8px 12px;
+  }
+  .rail-dot {
+    display: none;
+  }
+
+  /* Compact rail: forced at 768-1023, user-collapsed at >=1024.
+     html[data-rail] is set pre-paint and kept truthful on resize. */
+  html[data-rail="compact"] .rail {
+    width: var(--rail-w-compact);
+  }
+  html[data-rail="compact"] .nav-label {
+    display: none;
+  }
+  html[data-rail="compact"] .rail-meta {
+    display: none;
+  }
+  html[data-rail="compact"] #nav {
+    padding-inline: 8px;
+  }
+  html[data-rail="compact"] #nav .nav-item {
+    justify-content: center;
+    padding-inline: 0;
+    position: relative;
+  }
+  html[data-rail="compact"] #nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 8px;
+    height: 8px;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    font-size: 0;
+  }
+  html[data-rail="compact"] .brand-row {
+    flex-direction: column;
+    gap: 8px;
+    padding-inline: 0;
+  }
+  html[data-rail="compact"] .brand-glyph {
+    width: 28px;
+    height: 28px;
+  }
+  html[data-rail="compact"] #rail-toggle {
+    margin-left: 0;
+  }
+  html[data-rail="compact"] #rail-toggle svg {
+    transform: scaleX(-1);
+  }
+  html[data-rail="compact"] .rail-dot {
+    display: block;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+  }
+
+  /* Phone (<768): the rail becomes the bottom bar (Agent 13). */
+  @media (max-width: 767px) {
+    .rail {
+      position: fixed;
+      inset: auto 0 0 0;
+      z-index: var(--z-rail);
+      width: auto;
+      flex-direction: row;
+      height: calc(var(--bottomnav-h) + env(safe-area-inset-bottom));
+      padding-bottom: env(safe-area-inset-bottom);
+      border-right: 0;
+      border-top: 1px solid var(--hairline);
+    }
+    .rail .brand-row,
+    .rail .rail-meta {
+      display: none;
+    }
+    #nav {
+      flex-direction: row;
+      flex: 1;
+      gap: 4px;
+      padding: 4px 8px;
+    }
+    #nav .nav-item {
+      flex: 1;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      padding: 4px 2px;
+      min-height: 48px;
+      position: relative;
+      font-size: var(--text-caption);
+      line-height: var(--text-caption--line-height);
+    }
+    #rail #nav .nav-label {
+      display: block;
+    }
+    #nav .nav-item.is-active {
+      box-shadow: inset 0 2px 0 var(--accent);
+    }
+    #nav-badge {
+      position: absolute;
+      top: 2px;
+      right: calc(50% - 22px);
+      margin: 0;
+    }
+    main {
+      padding-bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom));
+    }
+  }
 }
 
 @keyframes lf-shimmer {

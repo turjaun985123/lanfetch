@@ -75,9 +75,32 @@ width at most.
   content caps at 2000px (grid) / 1600px (text screens) centered.
 - Touch: `@media (pointer: coarse)` raises chips/buttons/nav to
   ≥40px targets.
-- Tauri `minWidth` drops 880 → 720 once the shell survives it
-  (compact rail band covers 720–1023); the desktop app never uses
-  the phone layout, web mode does.
+- Tauri window (Agent 29, supersedes the earlier 720 idea —
+  720–767 would collide with the phone band): default 1280×800,
+  `minWidth` 768, `minHeight` 560. The desktop app never enters
+  the phone layout; web mode does.
+
+## R2 shell arbitrations (integrator, 2026-11-27)
+
+- One `#rail`/`#nav` element serves all bands (Agent 13 wins over
+  a separate bottom-nav element): <768 it restyles into the fixed
+  bottom bar; compact is keyed off `html[data-rail="compact"]`,
+  set pre-paint and kept truthful on resize (forced at 768–1023,
+  persisted user choice at ≥1024).
+- The collapse toggle lives in the brand row (Agent 11); in
+  compact it stacks under the glyph, icon flipped (Agent 12's
+  bottom placement rejected — one element, both states).
+- Transfers announcer: `tr-status` stays visual-only; a separate
+  visually-hidden live announcer arrives in R6 (Agent 31 wins
+  over Agent 21's role=status on tr-status — it rewrites per
+  event and would spam AT).
+- Progress fills: `.progress-fill` keeps its 180ms width
+  transition (Agents 32/33 — ticks are coalesced to ≤1/sec);
+  segmented fills patch without transition (Agent 22).
+- `state.ts` extraction deferred until after the visual waves
+  (Agent 28's own sequencing); `format.ts` landed in R2.
+- Cards keep per-card click closures; only `img` error handling
+  delegates to `#grid` (Agent 33).
 
 ## Icons (Agent 10's system)
 

@@ -52,6 +52,21 @@ jobs:
       - name: Build frontend (Astro)
         run: npm run build
 
+      # Static tripwires only (redesign Agents 15/27): they prove
+      # the responsive rules survived compilation into dist — NOT
+      # that anything renders correctly. Layout truth is the human
+      # RESPONSIVE-QA.md pass on the release candidate.
+      - name: Responsive guardrails (static — not layout tests)
+        run: |
+          CSS=$(ls dist/_astro/*.css)
+          for b in 'max-width: ?639px' 'min-width: ?640px' 'min-width: ?768px' 'min-width: ?1280px' 'min-width: ?1536px' 'min-width: ?1920px'; do
+            grep -qE "@media[^{]*$b" $CSS || { echo "missing media band: $b"; exit 1; }
+          done
+          grep -qE 'env\(safe-area-inset-(bottom|top)' $CSS || { echo "no safe-area inset in dist CSS"; exit 1; }
+          grep -hoE '(^|[;{])width: ?[0-9]+px' $CSS | grep -oE '[0-9]+' | \
+            awk '$1>240 {print "oversize fixed width: "$1"px"; bad=1} END {exit bad}'
+          ! grep -rnE 'w-\[(3[0-9]{2}|[4-9][0-9]{2}|[0-9]{4,})px\]' src/ || { echo "w-[>=300px] in src"; exit 1; }
+
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

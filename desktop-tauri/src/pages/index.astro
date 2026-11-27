@@ -6,7 +6,7 @@ import '../styles/global.css';
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>LanFetch</title>
     <script is:inline>
       // Theme before first paint (no flash): stored choice wins,
@@ -19,6 +19,20 @@ import '../styles/global.css';
             : 'dark';
         }
         document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+    <script is:inline>
+      // Rail mode before first paint (Agents 12/13): compact in the
+      // 768-1023 band, or at >=1024 when the user collapsed it
+      // (localStorage 'lanfetch-rail'). Below 768 the rail becomes
+      // the bottom bar and this attribute is irrelevant.
+      try {
+        var w = window.innerWidth;
+        var rail = 'expanded';
+        if (w >= 768 && w < 1024) rail = 'compact';
+        else if (w >= 1024 && localStorage.getItem('lanfetch-rail') === 'compact')
+          rail = 'compact';
+        document.documentElement.dataset.rail = rail;
       } catch (e) {}
     </script>
   </head>
@@ -223,42 +237,58 @@ import '../styles/global.css';
       </defs>
     </svg>
     <div class="flex h-full">
-      <!-- Rail -->
-      <aside
-        class="flex w-52 shrink-0 flex-col border-r border-hairline bg-surface"
-      >
-        <div class="px-4 pb-2 pt-4 text-[22px] font-semibold tracking-tight">
-          lanfetch
-        </div>
-        <nav
-          class="flex flex-col gap-1 px-3 py-2 text-[13px] font-medium"
-          id="nav"
-        >
-          <button data-view="library" class="nav-item">Library</button>
-          <button data-view="transfers" class="nav-item">
-            Transfers
-            <span
-              id="nav-badge"
-              class="ml-auto hidden min-w-[18px] rounded-full bg-accent px-1 text-center text-[10px] font-semibold text-white"
-            ></span>
+      <!-- Rail: ONE nav element for every band (Agents 11-13).
+           >=1024 expanded or user-collapsed, 768-1023 forced
+           compact, <768 the same element becomes the bottom bar —
+           so show(), the badge and the shortcuts can never desync. -->
+      <aside id="rail" class="rail flex shrink-0 bg-surface">
+        <div class="brand-row">
+          <svg class="ic ic-24 brand-glyph" aria-hidden="true"><use href="#i-logo" /></svg>
+          <span class="nav-label text-page font-semibold">lanfetch</span>
+          <button
+            id="rail-toggle"
+            class="icon-btn ml-auto"
+            type="button"
+            aria-expanded="true"
+            aria-controls="nav"
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+          >
+            <svg class="ic" aria-hidden="true"><use href="#i-panel-left" /></svg>
           </button>
-          <button data-view="servers" class="nav-item">Servers</button>
-          <button data-view="settings" class="nav-item">Settings</button>
-        </nav>
-        <div class="mt-auto px-4 pb-1 text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">
-          Servers
         </div>
-        <div class="px-4 pb-2 text-[12px] text-ink-2" id="rail-servers">…</div>
-        <div class="px-4 py-3 text-[11px] text-ink-3" id="version"></div>
+        <nav class="flex gap-1" id="nav" aria-label="Primary">
+          <button data-view="library" class="nav-item" aria-label="Library" title="Library">
+            <svg class="ic ic-20" aria-hidden="true"><use href="#i-library" /></svg>
+            <span class="nav-label">Library</span>
+          </button>
+          <button data-view="transfers" class="nav-item" aria-label="Transfers" title="Transfers">
+            <svg class="ic ic-20" aria-hidden="true"><use href="#i-transfers" /></svg>
+            <span class="nav-label">Transfers</span>
+            <span id="nav-badge" class="badge-count hidden" aria-hidden="true"></span>
+          </button>
+          <button data-view="servers" class="nav-item" aria-label="Servers" title="Servers">
+            <svg class="ic ic-20" aria-hidden="true"><use href="#i-servers" /></svg>
+            <span class="nav-label">Servers</span>
+            <span id="rail-servers-dot" class="rail-dot status-dot" aria-hidden="true"></span>
+          </button>
+          <button data-view="settings" class="nav-item" aria-label="Settings" title="Settings">
+            <svg class="ic ic-20" aria-hidden="true"><use href="#i-settings" /></svg>
+            <span class="nav-label">Settings</span>
+          </button>
+        </nav>
+        <div class="rail-meta section-label mt-auto px-4 pb-1">Servers</div>
+        <div class="rail-meta px-4 pb-2 text-secondary text-ink-2" id="rail-servers">…</div>
+        <div class="rail-meta border-t border-hairline px-4 py-3 text-caption text-ink-3" id="version"></div>
       </aside>
 
       <!-- Content -->
       <main class="min-w-0 flex-1 overflow-y-auto">
         <!-- Library -->
         <section data-screen="library">
-          <header class="border-b border-hairline px-6 py-3">
+          <header class="screen-header">
             <div class="flex items-center justify-between gap-3">
-              <h1 class="text-[17px] font-semibold">Library</h1>
+              <h1 class="page-title">Library</h1>
               <div class="flex items-center gap-2">
                 <input
                   id="lib-search"
@@ -275,7 +305,7 @@ import '../styles/global.css';
                 </button>
               </div>
             </div>
-            <p class="text-[12px] text-ink-2" id="lib-status">…</p>
+            <p class="status-line" id="lib-status">…</p>
             <div
               id="chips"
               class="mt-3 flex gap-1.5 overflow-x-auto pb-1"
@@ -322,7 +352,7 @@ import '../styles/global.css';
 
         <!-- Detail -->
         <section data-screen="detail" class="hidden">
-          <header class="border-b border-hairline px-6 py-3">
+          <header class="screen-header">
             <button
               id="detail-back"
               class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
@@ -367,9 +397,9 @@ import '../styles/global.css';
 
         <!-- Transfers -->
         <section data-screen="transfers" class="hidden">
-          <header class="border-b border-hairline px-6 py-3">
+          <header class="screen-header">
             <div class="flex items-center justify-between">
-              <h1 class="text-[17px] font-semibold">Transfers</h1>
+              <h1 class="page-title">Transfers</h1>
               <div class="flex gap-1.5">
                 <button
                   id="tr-pause-all"
@@ -391,16 +421,16 @@ import '../styles/global.css';
                 </button>
               </div>
             </div>
-            <p class="text-[12px] text-ink-2" id="tr-status">…</p>
+            <p class="status-line" id="tr-status">…</p>
           </header>
           <div class="flex flex-col gap-2.5 px-6 py-5" id="tasks"></div>
         </section>
 
         <!-- Servers -->
         <section data-screen="servers" class="hidden">
-          <header class="border-b border-hairline px-6 py-3">
-            <h1 class="text-[17px] font-semibold">Servers</h1>
-            <p class="text-[12px] text-ink-2" id="srv-status">…</p>
+          <header class="screen-header">
+            <h1 class="page-title">Servers</h1>
+            <p class="status-line" id="srv-status">…</p>
           </header>
           <div class="px-6 pt-5">
             <div
@@ -434,9 +464,9 @@ import '../styles/global.css';
 
         <!-- Settings -->
         <section data-screen="settings" class="hidden">
-          <header class="border-b border-hairline px-6 py-3">
-            <h1 class="text-[17px] font-semibold">Settings</h1>
-            <p class="text-[12px] text-ink-2">Applies immediately — no Save button.</p>
+          <header class="screen-header">
+            <h1 class="page-title">Settings</h1>
+            <p class="status-line">Applies immediately — no Save button.</p>
           </header>
           <div class="flex max-w-[560px] flex-col gap-6 px-6 py-5">
             <div>
@@ -537,6 +567,14 @@ import '../styles/global.css';
         TitleDetailDto,
         TitleDto,
       } from '../lib/api';
+      import {
+        STATE_LABEL,
+        dotClass,
+        fmtBytes,
+        fmtEta,
+        fmtSpeed,
+        initials,
+      } from '../lib/format';
 
       const status = (id: string) => document.getElementById(id)!;
 
@@ -551,12 +589,52 @@ import '../styles/global.css';
         // The detail screen belongs to the Library tab.
         const navView = view === 'detail' ? 'library' : view;
         document.querySelectorAll('#nav .nav-item').forEach((el) => {
-          (el as HTMLElement).classList.toggle(
-            'is-active',
-            (el as HTMLElement).dataset.view === navView,
-          );
+          const active = (el as HTMLElement).dataset.view === navView;
+          (el as HTMLElement).classList.toggle('is-active', active);
+          if (active) el.setAttribute('aria-current', 'page');
+          else el.removeAttribute('aria-current');
         });
       }
+
+      // ---- rail mode (Agents 11-13) -----------------------------------------
+      // data-rail on <html> is the single switch for the compact
+      // rail; the pre-paint script set it before first render and
+      // this keeps it truthful on resize / toggle. Below 768 the
+      // bottom-bar media query owns the layout entirely.
+      const railToggle = document.getElementById('rail-toggle');
+      function applyRail() {
+        const w = window.innerWidth;
+        let mode = 'expanded';
+        if (w >= 768 && w < 1024) mode = 'compact';
+        else if (
+          w >= 1024 &&
+          localStorage.getItem('lanfetch-rail') === 'compact'
+        )
+          mode = 'compact';
+        document.documentElement.dataset.rail = mode;
+        if (railToggle) {
+          railToggle.setAttribute(
+            'aria-expanded',
+            mode === 'expanded' ? 'true' : 'false',
+          );
+          const label =
+            mode === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar';
+          railToggle.setAttribute('aria-label', label);
+          railToggle.setAttribute('title', label);
+        }
+      }
+      applyRail();
+      window.addEventListener('resize', applyRail);
+      railToggle?.addEventListener('click', () => {
+        const compact = document.documentElement.dataset.rail !== 'compact';
+        try {
+          localStorage.setItem(
+            'lanfetch-rail',
+            compact ? 'compact' : 'expanded',
+          );
+        } catch {}
+        applyRail();
+      });
       document.querySelectorAll('#nav .nav-item').forEach((el) => {
         el.addEventListener('click', () =>
           show((el as HTMLElement).dataset.view!),
@@ -576,36 +654,6 @@ import '../styles/global.css';
       });
       show('library');
 
-      // ---- formatting ------------------------------------------------------
-      function fmtBytes(n: number): string {
-        if (n <= 0) return '0 B';
-        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        let i = 0;
-        let v = n;
-        while (v >= 1024 && i < units.length - 1) {
-          v /= 1024;
-          i++;
-        }
-        return (v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
-      }
-      const STATE_LABEL: Record<TaskDto['state'], string> = {
-        queued: 'Queued',
-        running: 'Running',
-        paused: 'Paused',
-        completed: 'Completed',
-        failed: 'Failed',
-      };
-      function fmtSpeed(bps: number): string {
-        return bps > 0 ? fmtBytes(Math.round(bps)) + '/s' : '';
-      }
-      function fmtEta(secs: number | null): string {
-        if (secs == null || !isFinite(secs) || secs < 0) return '';
-        const s = Math.round(secs);
-        if (s < 60) return s + 's left';
-        if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's left';
-        return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm left';
-      }
-
       function renderDownloads(list: DownloadListDto) {
         if (list.stamp > lastStamp) lastStamp = list.stamp;
         const wrap = status('tasks');
@@ -621,6 +669,16 @@ import '../styles/global.css';
         } else {
           badge.classList.add('hidden');
         }
+        // The badge numeral is decoration for AT (Agent 31): the
+        // count lives in the Transfers button's accessible name.
+        document
+          .querySelector('#nav .nav-item[data-view="transfers"]')
+          ?.setAttribute(
+            'aria-label',
+            list.activeCount > 0
+              ? 'Transfers, ' + list.activeCount + ' active downloads'
+              : 'Transfers',
+          );
         wrap.replaceChildren();
         if (tasks.length === 0) {
           const empty = document.createElement('p');
@@ -770,9 +828,6 @@ import '../styles/global.css';
       // ---- servers ----------------------------------------------------------
       let sourcesList: SourceDto[] = [];
       const probeMap = new Map<string, SourceProbeDto>();
-      function dotClass(s: string | undefined): string {
-        return s === 'up' ? 'bg-done' : s === 'down' ? 'bg-failed' : 'bg-ink-3';
-      }
       function renderServers(): void {
         const wrap = status('probes');
         wrap.replaceChildren();
@@ -843,6 +898,17 @@ import '../styles/global.css';
         status('srv-status').textContent =
           up + ' of ' + results.length + ' servers online';
         status('rail-servers').textContent = up + ' online';
+        // Compact rail: server health survives as a dot on the
+        // Servers nav item (Agent 12); words live in its label.
+        const railDot = document.getElementById('rail-servers-dot');
+        if (railDot) {
+          railDot.className =
+            'rail-dot status-dot' +
+            (up > 0 ? ' is-up' : results.length > 0 ? ' is-down' : '');
+        }
+        document
+          .querySelector('#nav .nav-item[data-view="servers"]')
+          ?.setAttribute('aria-label', 'Servers, ' + up + ' online');
         if (titleCount === 0 && activeQuery === '') {
           status('lib-status').textContent =
             up > 0
@@ -934,15 +1000,6 @@ import '../styles/global.css';
       let pageLoading = false;
       let currentCategory: string | null = null;
       let titleCount = 0;
-
-      function initials(name: string): string {
-        return name
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((w) => w[0]!.toUpperCase())
-          .join('');
-      }
 
       function makeCard(t: TitleDto, posterSrc: string | null): HTMLElement {
         const card = document.createElement('div');

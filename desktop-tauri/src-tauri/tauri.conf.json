@@ -7,13 +7,13 @@
     "windows": [
       {
         "center": true,
-        "height": 760,
+        "height": 800,
         "label": "main",
         "minHeight": 560,
-        "minWidth": 880,
+        "minWidth": 768,
         "resizable": true,
         "title": "LanFetch",
-        "width": 1180
+        "width": 1280
       }
     ]
   },
