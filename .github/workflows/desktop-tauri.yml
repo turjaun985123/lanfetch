@@ -198,9 +198,64 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  web-arm64:
+    # The web binary for ARM64 machines (Raspberry Pi, ARM VPS,
+    # ARM mini-PCs): built natively on GitHub's ARM runner — no
+    # cross toolchain, and the ldd assertion below runs against
+    # the real architecture.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop-tauri
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Node (pinned)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop-tauri/package-lock.json
+
+      - name: Install Rust (pinned)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-tauri
+
+      - name: Install dependencies (lockfile)
+        run: npm ci
+
+      - name: Build frontend (Astro)
+        run: npm run build
+
+      - name: Build web binary (arm64, single binary, embedded UI, no GUI deps)
+        run: |
+          cargo build --release -p lanfetch-web --locked
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          cp target/release/lanfetch-web "lanfetch-web-${VERSION}-linux-arm64"
+          file "lanfetch-web-${VERSION}-linux-arm64"
+          if ldd target/release/lanfetch-web | grep -qiE 'webkit|libgtk'; then
+            echo "lanfetch-web links GUI libraries — it must not"; exit 1
+          fi
+          echo "lanfetch-web (arm64) links no GUI libraries ✓"
+
+      - name: Upload web binary (arm64) artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanfetch-web-arm64
+          path: desktop-tauri/lanfetch-web-*-linux-arm64
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     if: startsWith(github.ref, 'refs/tags/desktop-tauri-v')
-    needs: bundle
+    needs: [bundle, web-arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -218,16 +273,23 @@ jobs:
           name: lanfetch-web
           path: deb
 
+      - name: Download web binary (arm64) artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lanfetch-web-arm64
+          path: deb
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: turjaun985123/lanfetch
         run: |
           DEB=$(ls deb/*.deb | head -1)
-          WEB=$(ls deb/lanfetch-web-* | head -1)
-          chmod +x "$WEB"
-          ARGS=(--title "LanFetch $GITHUB_REF_NAME" --notes "LanFetch 1.6.0 — two editions. DESKTOP: install the .deb (Tauri app). WEB: download lanfetch-web-*, chmod +x it, run it (add --lan to reach it from your phone) and open the printed address — a single binary with the UI embedded, no GUI libraries needed. See desktop-tauri/CHANGELOG.md for details. Rune builds (1.5.0 and earlier) do not auto-update to this release — install this .deb once manually; upgrades are automatic again after that.")
+          WEB=$(ls deb/lanfetch-web-*-linux-x86_64 | head -1)
+          WEBARM=$(ls deb/lanfetch-web-*-linux-arm64 | head -1)
+          chmod +x "$WEB" "$WEBARM"
+          ARGS=(--title "LanFetch $GITHUB_REF_NAME" --notes "LanFetch 1.6.0 — two editions. DESKTOP: install the .deb (Tauri app). WEB: download the lanfetch-web-* file for your CPU (linux-x86_64 or linux-arm64), chmod +x it, run it (add --lan to reach it from your phone) and open the printed address — a single binary with the UI embedded, no GUI libraries needed. See desktop-tauri/CHANGELOG.md for details. Rune builds (1.5.0 and earlier) do not auto-update to this release — install this .deb once manually; upgrades are automatic again after that.")
           case "$GITHUB_REF_NAME" in
             *-rc*) ARGS+=(--prerelease) ;;
           esac
-          gh release create "$GITHUB_REF_NAME" "$DEB" "$WEB" "${ARGS[@]}"
+          gh release create "$GITHUB_REF_NAME" "$DEB" "$WEB" "$WEBARM" "${ARGS[@]}"
