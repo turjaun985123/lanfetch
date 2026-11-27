@@ -153,6 +153,19 @@ fn state_file() -> PathBuf {
     data_dir().join("downloads.json")
 }
 
+/// The user-facing error for a contained engine panic (audit H2).
+const PANIC_ERROR: &str = "internal error: the download engine hit an unexpected problem";
+
+/// Audit H2: run `f` under panic containment. The download,
+/// probe and ticker supervisors run on bare threads; an uncaught
+/// panic used to strand the task in Running/Queued forever — no
+/// state write, no ticker stop, a scheduler slot leaked until
+/// restart. Returns None when `f` panicked; the caller lands the
+/// task in a terminal, retryable state instead.
+fn catch_engine_panic<T>(f: impl FnOnce() -> T) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).ok()
+}
+
 /// Audit H1: every on-disk path (`.part`, final file, remove)
 /// derives from the task name alone, so two tasks must never
 /// share one — the same filename from two servers otherwise
@@ -460,82 +473,104 @@ impl Manager {
         };
         let mgr = Arc::clone(self);
         std::thread::spawn(move || {
-            let lanes = mgr.settings().connections.max(1) as usize;
-            match probe_url(&url) {
-                Ok(probe) => {
-                    let total = probe.total.unwrap_or(0);
-                    // Assigned unconditionally inside the block below
-                    // (its only other exit is the early return).
-                    let paused_intent;
-                    {
-                        let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
-                        let Some(t) = tasks.iter_mut().find(|t| t.id == id) else {
-                            return;
-                        };
-                        // RT-3 drift check: same total, and validators
-                        // equal whenever both are known, means the
-                        // stored plan (and its downloaded bytes) still
-                        // describes this file — keep it.
-                        let no_drift = !t.segments.is_empty()
-                            && t.total == total
-                            && match (&t.validator, &probe.validator) {
-                                (Some(old), Some(new)) => old == new,
-                                _ => true,
+            // H2: a panic mid-probe must not strand the task in
+            // Queued forever — contain it and land the task Failed.
+            let panicked = catch_engine_panic(|| {
+                let lanes = mgr.settings().connections.max(1) as usize;
+                match probe_url(&url) {
+                    Ok(probe) => {
+                        let total = probe.total.unwrap_or(0);
+                        // Assigned unconditionally inside the block below
+                        // (its only other exit is the early return).
+                        let paused_intent;
+                        {
+                            let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                            let Some(t) = tasks.iter_mut().find(|t| t.id == id) else {
+                                return;
                             };
-                        if !no_drift {
-                            t.segments = if probe.accept_ranges {
-                                plan_segments(total, lanes)
-                            } else if total > 0 {
-                                vec![Segment {
-                                    start: 0,
-                                    end: total - 1,
-                                    done: 0,
-                                }]
+                            // RT-3 drift check: same total, and validators
+                            // equal whenever both are known, means the
+                            // stored plan (and its downloaded bytes) still
+                            // describes this file — keep it.
+                            let no_drift = !t.segments.is_empty()
+                                && t.total == total
+                                && match (&t.validator, &probe.validator) {
+                                    (Some(old), Some(new)) => old == new,
+                                    _ => true,
+                                };
+                            if !no_drift {
+                                t.segments = if probe.accept_ranges {
+                                    plan_segments(total, lanes)
+                                } else if total > 0 {
+                                    vec![Segment {
+                                        start: 0,
+                                        end: total - 1,
+                                        done: 0,
+                                    }]
+                                } else {
+                                    vec![Segment {
+                                        start: 0,
+                                        end: u64::MAX,
+                                        done: 0,
+                                    }]
+                                };
+                                t.progress.downloaded.store(0, Ordering::SeqCst);
+                            }
+                            t.total = total;
+                            t.validator = probe.validator.clone();
+                            t.progress.total.store(total, Ordering::SeqCst);
+                            paused_intent = t.pause_intent;
+                            t.pause_intent = false;
+                            if paused_intent {
+                                t.state = DlState::Paused;
+                                t.pause_flag.store(true, Ordering::SeqCst);
                             } else {
-                                vec![Segment {
-                                    start: 0,
-                                    end: u64::MAX,
-                                    done: 0,
-                                }]
-                            };
-                            t.progress.downloaded.store(0, Ordering::SeqCst);
+                                t.state = DlState::Queued;
+                            }
                         }
-                        t.total = total;
-                        t.validator = probe.validator.clone();
-                        t.progress.total.store(total, Ordering::SeqCst);
-                        paused_intent = t.pause_intent;
-                        t.pause_intent = false;
-                        if paused_intent {
-                            t.state = DlState::Paused;
-                            t.pause_flag.store(true, Ordering::SeqCst);
-                        } else {
-                            t.state = DlState::Queued;
+                        mgr.save();
+                        mgr.bump();
+                        if !paused_intent {
+                            mgr.pump();
+                        }
+                        mgr.wake();
+                    }
+                    Err(e) => {
+                        let mut failed_name = String::new();
+                        {
+                            let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                                t.state = DlState::Failed;
+                                t.error = Some(e.clone());
+                                failed_name = t.name.clone();
+                            }
+                        }
+                        mgr.save();
+                        mgr.bump();
+                        mgr.wake();
+                        if !failed_name.is_empty() {
+                            notify("Download failed", &format!("{failed_name}: {e}"));
                         }
                     }
-                    mgr.save();
-                    mgr.bump();
-                    if !paused_intent {
-                        mgr.pump();
-                    }
-                    mgr.wake();
                 }
-                Err(e) => {
-                    let mut failed_name = String::new();
-                    {
-                        let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+            })
+            .is_none();
+            if panicked {
+                // Land the task Failed (retryable via T14) rather
+                // than Queued forever; save + bump + wake so the UI
+                // shows it immediately.
+                {
+                    let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                        if t.state == DlState::Queued {
                             t.state = DlState::Failed;
-                            t.error = Some(e.clone());
-                            failed_name = t.name.clone();
+                            t.error = Some(PANIC_ERROR.to_string());
                         }
                     }
-                    mgr.save();
-                    mgr.bump();
-                    mgr.wake();
-                    if !failed_name.is_empty() {
-                        notify("Download failed", &format!("{failed_name}: {e}"));
-                    }
                 }
+                mgr.save();
+                mgr.bump();
+                mgr.wake();
             }
         });
     }
@@ -680,22 +715,27 @@ impl Manager {
             let mgr = Arc::clone(self);
             let progress = Arc::clone(&progress);
             std::thread::spawn(move || {
-                let mut last_checkpoint = std::time::Instant::now();
-                while !progress.stopped.load(Ordering::SeqCst) {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                    if progress.stopped.load(Ordering::SeqCst) {
-                        break;
+                // H2: a panic in the ticker must not leak
+                // ticker_active (a later resume would never get a
+                // ticker again) — the reset runs on every exit.
+                let _ = catch_engine_panic(|| {
+                    let mut last_checkpoint = std::time::Instant::now();
+                    while !progress.stopped.load(Ordering::SeqCst) {
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        if progress.stopped.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        mgr.tick_speed(id);
+                        // RC-1 periodic checkpoint: a kill mid-download
+                        // loses at most ~5 s of progress, not everything
+                        // since the last state transition.
+                        if last_checkpoint.elapsed() >= std::time::Duration::from_secs(5) {
+                            mgr.save();
+                            last_checkpoint = std::time::Instant::now();
+                        }
+                        mgr.wake();
                     }
-                    mgr.tick_speed(id);
-                    // RC-1 periodic checkpoint: a kill mid-download
-                    // loses at most ~5 s of progress, not everything
-                    // since the last state transition.
-                    if last_checkpoint.elapsed() >= std::time::Duration::from_secs(5) {
-                        mgr.save();
-                        last_checkpoint = std::time::Instant::now();
-                    }
-                    mgr.wake();
-                }
+                });
                 progress.ticker_active.store(false, Ordering::SeqCst);
             });
         }
@@ -703,14 +743,29 @@ impl Manager {
             let dir = downloads_dir();
             let _ = std::fs::create_dir_all(&dir);
             let part = dir.join(format!("{name}.part"));
-            let out = run_download(
-                &url,
-                &part,
-                segments,
-                validator,
-                pause_flag,
-                Arc::clone(&progress),
-            );
+            // H2: contain a panic inside the engine — everything
+            // below (ticker stop, state write, rename) must run on
+            // EVERY exit, or the task strands in Running forever.
+            // On panic the task lands Failed with the plan it
+            // launched with, so a retry resumes from the .part.
+            let out = match catch_engine_panic(|| {
+                run_download(
+                    &url,
+                    &part,
+                    segments.clone(),
+                    validator.clone(),
+                    Arc::clone(&pause_flag),
+                    Arc::clone(&progress),
+                )
+            }) {
+                Some(out) => out,
+                None => {
+                    progress.failed.store(true, Ordering::SeqCst);
+                    *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(PANIC_ERROR.to_string());
+                    segments
+                }
+            };
             // Every exit lands here — complete, failed or paused:
             // tell the ticker to stop (Wave 9).
             progress.stopped.store(true, Ordering::SeqCst);
@@ -893,6 +948,16 @@ impl Manager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panic_containment_returns_none_and_keeps_values() {
+        // H2: the guard the supervisors rely on — a panicking
+        // closure yields None (caller lands the task Failed), a
+        // healthy one yields its value untouched.
+        assert_eq!(catch_engine_panic(|| 42), Some(42));
+        let panicked: Option<()> = catch_engine_panic(|| panic!("simulated engine fault"));
+        assert_eq!(panicked, None);
+    }
 
     #[test]
     fn unique_name_counters_collisions() {
