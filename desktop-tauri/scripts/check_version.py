@@ -61,12 +61,16 @@ def main():
     ]
 
     # The release notes are generated from the tag (Wave 1 fix), so on a
-    # tag run the tag itself is a version carrier.
+    # tag run the tag itself is a version carrier. Release candidates
+    # carry an -rcN suffix on the same version and are equally valid.
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
         tag = os.environ.get("GITHUB_REF_NAME", "")
-        if tag != f"desktop-tauri-v{expected}":
+        if not re.fullmatch(
+            rf"desktop-tauri-v{re.escape(expected)}(-rc\d+)?", tag
+        ):
             failures.append(
-                f"release tag: found {tag!r}, expected 'desktop-tauri-v{expected}'"
+                f"release tag: found {tag!r}, "
+                f"expected 'desktop-tauri-v{expected}' (optionally -rcN)"
             )
 
     if failures:
