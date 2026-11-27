@@ -32,3 +32,56 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   if (text !== undefined) node.textContent = text;
   return node;
 }
+
+/** Transient feedback (Agent 26/31): status toasts are polite,
+ * alert toasts assertive; one event never raises both. Toasts
+ * live in the #toast-region rendered by index.astro. */
+export function toast(
+  message: string,
+  kind: 'status' | 'alert' = 'status',
+): void {
+  const region = document.getElementById('toast-region');
+  if (!region) return;
+  const node = document.createElement('div');
+  node.className = 'toast' + (kind === 'alert' ? ' is-alert' : '');
+  node.setAttribute('role', kind === 'alert' ? 'alert' : 'status');
+  node.textContent = message;
+  region.append(node);
+  window.setTimeout(() => node.remove(), 4000);
+}
+
+/** Destructive-action confirmation on the native <dialog>
+ * (Agent 26/31): focus lands on Cancel, Esc cancels, focus
+ * returns to the invoker natively. Fails safe — without
+ * showModal support the action does not happen. */
+export function confirmDialog(opts: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+}): Promise<boolean> {
+  const dlg = document.getElementById(
+    'confirm-dialog',
+  ) as HTMLDialogElement | null;
+  if (!dlg || typeof dlg.showModal !== 'function')
+    return Promise.resolve(false);
+  document.getElementById('confirm-title')!.textContent = opts.title;
+  document.getElementById('confirm-body')!.textContent = opts.body;
+  const ok = document.getElementById('confirm-ok') as HTMLButtonElement;
+  const cancel = document.getElementById(
+    'confirm-cancel',
+  ) as HTMLButtonElement;
+  ok.textContent = opts.confirmLabel;
+  return new Promise((resolve) => {
+    ok.onclick = () => {
+      dlg.close();
+      resolve(true);
+    };
+    cancel.onclick = () => {
+      dlg.close();
+      resolve(false);
+    };
+    dlg.oncancel = () => resolve(false);
+    dlg.showModal();
+    cancel.focus();
+  });
+}

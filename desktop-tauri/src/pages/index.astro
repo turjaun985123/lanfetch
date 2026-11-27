@@ -234,6 +234,12 @@ import '../styles/global.css';
             <path d="M12 7v5l3 2"/>
           </g>
         </symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24">
+          <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="12" height="12" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </g>
+        </symbol>
       </defs>
     </svg>
     <div class="flex h-full">
@@ -438,68 +444,97 @@ import '../styles/global.css';
         <!-- Transfers -->
         <section data-screen="transfers" class="hidden">
           <header class="screen-header">
-            <div class="flex items-center justify-between">
+            <div class="flex flex-wrap items-center justify-between gap-2">
               <h1 class="page-title">Transfers</h1>
-              <div class="flex gap-1.5">
-                <button
-                  id="tr-pause-all"
-                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-                >
+              <div class="flex gap-1.5 max-[767px]:order-3 max-[767px]:w-full max-[767px]:overflow-x-auto">
+                <button id="tr-pause-all" class="btn btn-ghost btn-sm shrink-0">
+                  <svg class="ic ic-16" aria-hidden="true"><use href="#i-pause" /></svg>
                   Pause all
                 </button>
-                <button
-                  id="tr-resume-all"
-                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-                >
+                <button id="tr-resume-all" class="btn btn-ghost btn-sm shrink-0">
+                  <svg class="ic ic-16" aria-hidden="true"><use href="#i-play" /></svg>
                   Resume all
                 </button>
-                <button
-                  id="tr-clear"
-                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-                >
+                <button id="tr-clear" class="btn btn-ghost btn-sm shrink-0">
+                  <svg class="ic ic-16" aria-hidden="true"><use href="#i-trash" /></svg>
                   Clear completed
                 </button>
               </div>
             </div>
             <p class="status-line" id="tr-status">…</p>
           </header>
-          <div class="flex flex-col gap-2.5 px-6 py-5" id="tasks"></div>
+          <div id="tr-summary" class="hidden">
+            <div class="grid grid-cols-2 gap-2 px-6 pt-4 max-[767px]:px-4 min-[768px]:grid-cols-4">
+              <div class="stat">
+                <p class="stat-value" id="tr-stat-active">0</p>
+                <p class="stat-label">Active</p>
+                <p class="stat-sub" id="tr-stat-speed"></p>
+              </div>
+              <div class="stat">
+                <p class="stat-value" id="tr-stat-queued">0</p>
+                <p class="stat-label">Queued</p>
+              </div>
+              <div class="stat">
+                <p class="stat-value" id="tr-stat-completed">0</p>
+                <p class="stat-label">Completed</p>
+              </div>
+              <div class="stat">
+                <p class="stat-value" id="tr-stat-failed">0</p>
+                <p class="stat-label">Failed</p>
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2.5 px-6 py-5 max-[767px]:px-4" id="tasks"></div>
         </section>
 
         <!-- Servers -->
         <section data-screen="servers" class="hidden">
           <header class="screen-header">
-            <h1 class="page-title">Servers</h1>
-            <p class="status-line" id="srv-status">…</p>
-          </header>
-          <div class="px-6 pt-5">
-            <div
-              class="flex flex-wrap items-center gap-2 rounded-2xl border border-hairline bg-surface px-4 py-3"
-            >
-              <input
-                id="srv-name"
-                type="text"
-                placeholder="Server name"
-                autocomplete="off"
-                class="w-40 rounded-full border border-hairline bg-raised px-3 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
-              />
-              <input
-                id="srv-url"
-                type="text"
-                placeholder="http://192.168.1.10/movies/"
-                autocomplete="off"
-                class="min-w-56 flex-1 rounded-full border border-hairline bg-raised px-3 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
-              />
+            <div class="flex items-center justify-between gap-2">
+              <h1 class="page-title">Servers</h1>
               <button
-                id="srv-add"
-                class="rounded-full bg-accent px-4 py-1.5 text-[12.5px] font-semibold text-white"
+                id="srv-refresh"
+                class="icon-btn"
+                aria-label="Re-check servers"
+                title="Re-check servers"
               >
+                <svg class="ic" aria-hidden="true"><use href="#i-refresh" /></svg>
+              </button>
+            </div>
+            <p class="status-line" id="srv-status" role="status" aria-live="polite">…</p>
+          </header>
+          <div class="px-6 pt-5 max-[767px]:px-4">
+            <div class="card flex flex-wrap items-end gap-2 px-4 py-3">
+              <div class="flex flex-col gap-1">
+                <label class="field-label" for="srv-name">Name</label>
+                <input
+                  id="srv-name"
+                  type="text"
+                  placeholder="Server name"
+                  autocomplete="off"
+                  class="input w-44"
+                />
+              </div>
+              <div class="flex min-w-56 flex-1 flex-col gap-1">
+                <label class="field-label" for="srv-url">Address</label>
+                <input
+                  id="srv-url"
+                  type="text"
+                  placeholder="http://192.168.1.10/movies/"
+                  autocomplete="off"
+                  class="input w-full"
+                />
+              </div>
+              <button id="srv-add" class="btn btn-primary" disabled>
                 Add server
               </button>
-              <p id="srv-error" class="w-full text-[12px] text-failed"></p>
+              <p id="srv-hint" class="hidden w-full text-secondary text-ink-3">
+                Tip: addresses usually start with http:// — LanFetch will try the address exactly as typed.
+              </p>
+              <p id="srv-error" class="field-error hidden w-full" role="alert"></p>
             </div>
           </div>
-          <div class="flex flex-col gap-2 px-6 py-5" id="probes"></div>
+          <div class="flex flex-col gap-2 px-6 py-5 max-[767px]:px-4" id="probes"></div>
         </section>
 
         <!-- Settings -->
@@ -508,63 +543,133 @@ import '../styles/global.css';
             <h1 class="page-title">Settings</h1>
             <p class="status-line">Applies immediately — no Save button.</p>
           </header>
-          <div class="flex max-w-[560px] flex-col gap-6 px-6 py-5">
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Appearance</p>
-              <div class="mt-2 flex gap-1 rounded-full bg-raised p-1" id="theme-switch">
-                <button data-theme-choice="system" class="theme-btn">System</button>
-                <button data-theme-choice="light" class="theme-btn">Light</button>
-                <button data-theme-choice="dark" class="theme-btn">Dark</button>
-              </div>
-            </div>
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Download engine</p>
-              <div class="mt-2 flex flex-col gap-2.5 text-[13px]">
-                <label class="flex items-center gap-3">
-                  <span class="w-44 shrink-0 text-ink-2">Connections per file</span>
-                  <select id="set-connections" class="rounded-lg border border-hairline bg-raised px-2 py-1.5 text-ink">
-                    <option>1</option><option>2</option><option>4</option><option>6</option>
-                    <option>8</option><option>12</option><option>16</option><option>24</option><option>32</option>
-                  </select>
-                </label>
-                <label class="flex items-center gap-3">
-                  <span class="w-44 shrink-0 text-ink-2">Downloads at once</span>
-                  <select id="set-concurrent" class="rounded-lg border border-hairline bg-raised px-2 py-1.5 text-ink">
-                    <option>1</option><option>2</option><option>3</option><option>4</option>
-                    <option>6</option><option>8</option><option>12</option><option>16</option>
-                  </select>
-                </label>
-                <label class="flex items-center gap-3">
-                  <span class="w-44 shrink-0 text-ink-2">Language</span>
-                  <select id="set-language" class="rounded-lg border border-hairline bg-raised px-2 py-1.5 text-ink">
-                    <option value="system">System</option>
-                    <option value="en">English</option>
-                    <option value="bn">বাংলা</option>
-                  </select>
-                </label>
-                <p class="text-[12px] text-ink-3">
-                  Engine values apply to new downloads immediately. The
-                  language choice is saved now and translates the whole
-                  interface in the polish update.
+          <div class="settings-layout px-6 py-5 max-[767px]:px-4">
+            <nav class="settings-nav" aria-label="Settings sections">
+              <a href="#set-sec-appearance" class="settings-nav-item is-active" data-sec="set-sec-appearance">Appearance</a>
+              <a href="#set-sec-engine" class="settings-nav-item" data-sec="set-sec-engine">Download engine</a>
+              <a href="#set-sec-language" class="settings-nav-item" data-sec="set-sec-language">Language</a>
+              <a href="#set-sec-storage" class="settings-nav-item" data-sec="set-sec-storage">Storage</a>
+              <a href="#set-sec-updates" class="settings-nav-item" data-sec="set-sec-updates">Updates</a>
+              <a href="#set-sec-shortcuts" class="settings-nav-item" data-sec="set-sec-shortcuts">Keyboard shortcuts</a>
+            </nav>
+            <div class="flex min-w-0 flex-1 flex-col gap-4">
+              <section class="card p-4" id="set-sec-appearance">
+                <h2 class="text-heading font-semibold">Appearance</h2>
+                <p class="mt-0.5 text-secondary text-ink-2">How LanFetch looks on this device.</p>
+                <div class="segmented mt-3" id="theme-switch" role="radiogroup" aria-label="Theme">
+                  <button data-theme-choice="system" class="theme-btn" role="radio" aria-checked="true">
+                    <svg class="ic ic-16" aria-hidden="true"><use href="#i-monitor" /></svg>
+                    System
+                  </button>
+                  <button data-theme-choice="light" class="theme-btn" role="radio" aria-checked="false">
+                    <svg class="ic ic-16" aria-hidden="true"><use href="#i-sun" /></svg>
+                    Light
+                  </button>
+                  <button data-theme-choice="dark" class="theme-btn" role="radio" aria-checked="false">
+                    <svg class="ic ic-16" aria-hidden="true"><use href="#i-moon" /></svg>
+                    Dark
+                  </button>
+                </div>
+              </section>
+              <section class="card p-4" id="set-sec-engine">
+                <h2 class="text-heading font-semibold">Download engine</h2>
+                <p class="mt-0.5 text-secondary text-ink-2">Values apply to new downloads immediately.</p>
+                <div class="mt-3 flex flex-col gap-2.5 text-body">
+                  <label class="flex items-center gap-3">
+                    <span class="w-44 shrink-0 text-ink-2">Connections per file</span>
+                    <select id="set-connections" class="select">
+                      <option>1</option><option>2</option><option>4</option><option>6</option>
+                      <option>8</option><option>12</option><option>16</option><option>24</option><option>32</option>
+                    </select>
+                  </label>
+                  <label class="flex items-center gap-3">
+                    <span class="w-44 shrink-0 text-ink-2">Downloads at once</span>
+                    <select id="set-concurrent" class="select">
+                      <option>1</option><option>2</option><option>3</option><option>4</option>
+                      <option>6</option><option>8</option><option>12</option><option>16</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+              <section class="card p-4" id="set-sec-language">
+                <h2 class="text-heading font-semibold">Language</h2>
+                <p class="mt-0.5 text-secondary text-ink-2">The language LanFetch should use.</p>
+                <div class="mt-3">
+                  <label class="flex items-center gap-3 text-body">
+                    <span class="w-44 shrink-0 text-ink-2">Interface language</span>
+                    <select id="set-language" class="select">
+                      <option value="system">System</option>
+                      <option value="en">English</option>
+                      <option value="bn">বাংলা</option>
+                    </select>
+                  </label>
+                  <p class="mt-2.5 text-secondary text-ink-3">
+                    Your choice is saved now, but the interface is still
+                    in English. A full Bangla translation is not included
+                    yet — choosing বাংলা does not change the app's
+                    language today.
+                  </p>
+                </div>
+              </section>
+              <section class="card p-4" id="set-sec-storage">
+                <h2 class="text-heading font-semibold">Storage</h2>
+                <p class="mt-0.5 text-secondary text-ink-2">Where LanFetch keeps downloads and its own data.</p>
+                <dl class="mt-3 flex flex-col gap-2 text-body">
+                  <div class="flex items-center gap-2">
+                    <dt class="w-28 shrink-0 text-ink-2">Downloads</dt>
+                    <dd class="min-w-0 flex-1 truncate" id="set-dl-dir">…</dd>
+                    <button class="icon-btn shrink-0" data-copy-target="set-dl-dir" aria-label="Copy downloads folder path">
+                      <svg class="ic ic-16" aria-hidden="true"><use href="#i-copy" /></svg>
+                    </button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <dt class="w-28 shrink-0 text-ink-2">App data</dt>
+                    <dd class="min-w-0 flex-1 truncate" id="set-data-dir">…</dd>
+                    <button class="icon-btn shrink-0" data-copy-target="set-data-dir" aria-label="Copy app data folder path">
+                      <svg class="ic ic-16" aria-hidden="true"><use href="#i-copy" /></svg>
+                    </button>
+                  </div>
+                </dl>
+              </section>
+              <section class="card p-4" id="set-sec-updates">
+                <h2 class="text-heading font-semibold">Updates</h2>
+                <p class="mt-0.5 text-secondary text-ink-2" id="set-version">Version …</p>
+                <p id="set-update" class="mt-2 flex items-center gap-2 text-body text-ink-2" role="status">Checking…</p>
+              </section>
+              <section class="card p-4" id="set-sec-shortcuts">
+                <h2 class="text-heading font-semibold">Keyboard shortcuts</h2>
+                <dl class="mt-3 flex flex-col gap-1.5 text-body">
+                  <div class="flex gap-2"><dt class="w-28 shrink-0"><kbd>Ctrl 1</kbd></dt><dd class="text-ink-2">Library</dd></div>
+                  <div class="flex gap-2"><dt class="w-28 shrink-0"><kbd>Ctrl 2</kbd></dt><dd class="text-ink-2">Transfers</dd></div>
+                  <div class="flex gap-2"><dt class="w-28 shrink-0"><kbd>Ctrl 3</kbd></dt><dd class="text-ink-2">Servers</dd></div>
+                  <div class="flex gap-2"><dt class="w-28 shrink-0"><kbd>Ctrl ,</kbd></dt><dd class="text-ink-2">Settings</dd></div>
+                  <div class="flex gap-2"><dt class="w-28 shrink-0"><kbd>Ctrl K</kbd></dt><dd class="text-ink-2">Focus search</dd></div>
+                  <div class="flex gap-2"><dt class="w-28 shrink-0"><kbd>Ctrl F</kbd></dt><dd class="text-ink-2">Focus search</dd></div>
+                </dl>
+                <p class="mt-2.5 text-secondary text-ink-3">
+                  Esc goes back from a title page; on macOS use ⌘ instead of Ctrl.
                 </p>
-              </div>
-            </div>
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Storage</p>
-              <dl class="mt-2 flex flex-col gap-1.5 text-[13px]">
-                <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">Downloads</dt><dd class="min-w-0 truncate" id="set-dl-dir">…</dd></div>
-                <div class="flex gap-2"><dt class="w-28 shrink-0 text-ink-2">App data</dt><dd class="min-w-0 truncate" id="set-data-dir">…</dd></div>
-              </dl>
-            </div>
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.9px] text-ink-3">Updates</p>
-              <p id="set-update" class="mt-2 text-[13px] text-ink-2">Checking…</p>
+              </section>
             </div>
           </div>
         </section>
       </main>
     </div>
 
+    <div id="toast-region" class="toast-region"></div>
+    <dialog
+      id="confirm-dialog"
+      class="dialog"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-body"
+    >
+      <h3 id="confirm-title" class="text-heading font-semibold"></h3>
+      <p id="confirm-body" class="mt-1.5 text-body text-ink-2"></p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button id="confirm-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+        <button id="confirm-ok" class="btn btn-danger btn-sm"></button>
+      </div>
+    </dialog>
 
     <script>
       import {
@@ -609,13 +714,12 @@ import '../styles/global.css';
       } from '../lib/api';
       import {
         STATE_LABEL,
-        dotClass,
         fmtBytes,
         fmtEta,
         fmtSpeed,
         initials,
       } from '../lib/format';
-      import { el, icon } from '../lib/ui';
+      import { confirmDialog, el, icon, toast } from '../lib/ui';
 
       const status = (id: string) => document.getElementById(id)!;
 
@@ -695,6 +799,273 @@ import '../styles/global.css';
       });
       show('library');
 
+      // Transfers rows are KEYED (Agent 21): a row's DOM is built
+      // once per task id and patched in place on every event —
+      // the old full-rebuild per event was the screen's worst
+      // problem (focus loss, flicker, layout thrash). Steady
+      // state creates zero nodes; writes are guarded by the last
+      // rendered values.
+      interface TaskRow {
+        root: HTMLElement;
+        name: HTMLElement;
+        state: HTMLElement;
+        barWrap: HTMLElement;
+        segbar: HTMLElement;
+        simpleBar: HTMLElement;
+        simpleFill: HTMLElement;
+        meta: HTMLElement;
+        error: HTMLElement;
+        actions: HTMLElement;
+        actionSig: string;
+        lastName: string;
+        lastStateText: string;
+        lastMeta: string;
+        lastError: string;
+        lastPct: number;
+        lastSegSig: string;
+        lastSegFills: string;
+      }
+      const taskRows = new Map<number, TaskRow>();
+      let trEmptyEl: HTMLElement | null = null;
+
+      const STATE_ICON: Record<TaskDto['state'], string> = {
+        queued: 'clock',
+        running: 'download',
+        paused: 'pause',
+        completed: 'check',
+        failed: 'warning',
+      };
+
+      function buildTaskRow(t: TaskDto): TaskRow {
+        const root = el('div', 'card px-4 py-3.5');
+        const top = el('div', 'flex items-baseline gap-3');
+        const name = el('span', 'min-w-0 flex-1 truncate text-row font-medium');
+        name.title = t.name;
+        const state = el(
+          'span',
+          'flex items-center gap-1.5 text-secondary font-medium text-ink-2',
+        );
+        top.append(name, state);
+        const barWrap = el('div', 'mt-2.5');
+        barWrap.setAttribute('role', 'progressbar');
+        barWrap.setAttribute('aria-valuemin', '0');
+        barWrap.setAttribute('aria-valuemax', '100');
+        const segbar = el('div', 'segbar hidden');
+        segbar.setAttribute('aria-hidden', 'true');
+        const simpleBar = el('div', 'progress');
+        const simpleFill = el('div', 'progress-fill');
+        simpleBar.append(simpleFill);
+        barWrap.append(segbar, simpleBar);
+        const meta = el('p', 'mt-2 text-secondary tabular-nums text-ink-3');
+        const error = el('p', 'task-error hidden');
+        const actions = el('div', 'mt-2.5 flex gap-1.5');
+        root.append(top, barWrap, meta, error, actions);
+        return {
+          root,
+          name,
+          state,
+          barWrap,
+          segbar,
+          simpleBar,
+          simpleFill,
+          meta,
+          error,
+          actions,
+          actionSig: '',
+          lastName: '',
+          lastStateText: '',
+          lastMeta: '',
+          lastError: '',
+          lastPct: -1,
+          lastSegSig: '',
+          lastSegFills: '',
+        };
+      }
+
+      function taskActionBtn(
+        label: string,
+        iconName: string,
+        danger: boolean,
+        fn: () => Promise<DownloadListDto>,
+      ): HTMLButtonElement {
+        const b = document.createElement('button');
+        b.className = 'btn btn-sm ' + (danger ? 'btn-danger' : 'btn-ghost');
+        b.replaceChildren(icon(iconName, 16), document.createTextNode(label));
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          try {
+            renderDownloads(await fn());
+          } catch {
+            b.disabled = false;
+            toast('That action failed — the list has been refreshed.', 'alert');
+            void refreshDownloads();
+          }
+        });
+        return b;
+      }
+
+      function patchTaskRow(row: TaskRow, t: TaskDto): void {
+        if (row.lastName !== t.name) {
+          row.lastName = t.name;
+          row.name.textContent = t.name;
+          row.name.title = t.name;
+          row.barWrap.setAttribute('aria-label', t.name);
+        }
+        const pct = Math.round(t.fraction * 100);
+        const stateText =
+          STATE_LABEL[t.state] +
+          (t.state === 'running' || t.state === 'paused' ? ' · ' + pct + '%' : '');
+        if (row.lastStateText !== stateText) {
+          row.lastStateText = stateText;
+          row.state.replaceChildren(
+            icon(STATE_ICON[t.state], 16),
+            document.createTextNode(stateText),
+          );
+        }
+        if (row.lastPct !== pct) {
+          row.lastPct = pct;
+          row.barWrap.setAttribute('aria-valuenow', String(pct));
+          row.barWrap.setAttribute(
+            'aria-valuetext',
+            STATE_LABEL[t.state] + ', ' + pct + ' percent',
+          );
+        }
+        // Segmented vs simple bar (Agent 22): segments render when
+        // the engine reports them against a known total; the
+        // simple bar covers everything else.
+        const segmented = t.segments.length > 0 && t.total > 0;
+        row.segbar.classList.toggle('hidden', !segmented);
+        row.simpleBar.classList.toggle('hidden', segmented);
+        if (segmented) {
+          row.segbar.className =
+            'segbar' +
+            (t.state === 'paused'
+              ? ' is-paused'
+              : t.state === 'failed'
+                ? ' is-failed'
+                : t.state === 'completed'
+                  ? ' is-done'
+                  : '');
+          const geoSig = t.segments
+            .map((s) => s.start + ':' + (s.end ?? t.total))
+            .join(';');
+          if (row.lastSegSig !== geoSig) {
+            row.lastSegSig = geoSig;
+            row.lastSegFills = '';
+            row.segbar.replaceChildren();
+            for (const s of t.segments) {
+              const slice = el('div', 'segbar-slice');
+              slice.style.left = (s.start / t.total) * 100 + '%';
+              slice.style.width =
+                (((s.end ?? t.total) - s.start) / t.total) * 100 + '%';
+              slice.append(el('div', 'segbar-fill'));
+              row.segbar.append(slice);
+            }
+          }
+          const fills = t.segments
+            .map((s) => {
+              const span = (s.end ?? t.total) - s.start;
+              const f = span > 0 ? s.done / span : 0;
+              return Math.round(Math.min(1, Math.max(0, f)) * 100);
+            })
+            .join(';');
+          if (row.lastSegFills !== fills) {
+            row.lastSegFills = fills;
+            const parts = fills.split(';');
+            row.segbar.querySelectorAll('.segbar-fill').forEach((fill, i) => {
+              (fill as HTMLElement).style.width = (parts[i] ?? '0') + '%';
+            });
+          }
+        } else if (row.simpleFill.style.width !== pct + '%') {
+          row.simpleFill.style.width = pct + '%';
+          row.simpleFill.className =
+            'progress-fill' +
+            (t.state === 'paused'
+              ? ' is-paused'
+              : t.state === 'failed'
+                ? ' is-failed'
+                : t.state === 'completed'
+                  ? ' is-done'
+                  : '');
+        }
+        const metaText =
+          fmtBytes(t.downloaded) +
+          (t.total > 0 ? ' of ' + fmtBytes(t.total) : '') +
+          (t.state === 'running' && t.speedBps > 0
+            ? ' · ' + fmtSpeed(t.speedBps)
+            : '') +
+          (t.state === 'running' && fmtEta(t.etaSecs)
+            ? ' · ' + fmtEta(t.etaSecs)
+            : '');
+        if (row.lastMeta !== metaText) {
+          row.lastMeta = metaText;
+          row.meta.textContent = metaText;
+        }
+        // Errors get their own line, never appended to the meta
+        // line (Agent 22).
+        const errText = t.state === 'failed' && t.error ? t.error : '';
+        if (row.lastError !== errText) {
+          row.lastError = errText;
+          row.error.textContent = errText;
+          row.error.classList.toggle('hidden', errText === '');
+        }
+        const actionSig = t.state + '|' + t.fileMissing;
+        if (row.actionSig !== actionSig) {
+          row.actionSig = actionSig;
+          row.actions.replaceChildren();
+          if (t.state === 'running' || t.state === 'queued') {
+            row.actions.append(
+              taskActionBtn('Pause', 'pause', false, () => pauseDownload(t.id)),
+            );
+          }
+          if (t.state === 'paused') {
+            row.actions.append(
+              taskActionBtn('Resume', 'play', false, () => resumeDownload(t.id)),
+            );
+          }
+          if (t.state === 'failed') {
+            row.actions.append(
+              taskActionBtn('Retry', 'retry', false, () => resumeDownload(t.id)),
+            );
+          }
+          if (t.state === 'completed' && t.fileMissing) {
+            const note = el(
+              'span',
+              'self-center text-secondary text-paused',
+              'File missing',
+            );
+            row.actions.append(
+              note,
+              taskActionBtn('Redownload', 'redownload', false, () =>
+                redownloadDownload(t.id),
+              ),
+            );
+          }
+          // Remove is destructive: it goes through the confirm
+          // dialog, not the plain action path (Agent 02 #7).
+          const rm = document.createElement('button');
+          rm.className = 'btn btn-sm btn-danger';
+          rm.replaceChildren(icon('trash', 16), document.createTextNode('Remove'));
+          rm.addEventListener('click', async () => {
+            const ok = await confirmDialog({
+              title: 'Remove this download?',
+              body: '“' + t.name + '” will be removed from Transfers.',
+              confirmLabel: 'Remove',
+            });
+            if (!ok) return;
+            rm.disabled = true;
+            try {
+              renderDownloads(await removeDownload(t.id));
+            } catch {
+              rm.disabled = false;
+              toast('Remove failed — the list has been refreshed.', 'alert');
+              void refreshDownloads();
+            }
+          });
+          row.actions.append(rm);
+        }
+      }
+
       function renderDownloads(list: DownloadListDto) {
         if (list.stamp > lastStamp) lastStamp = list.stamp;
         const wrap = status('tasks');
@@ -720,97 +1091,64 @@ import '../styles/global.css';
               ? 'Transfers, ' + list.activeCount + ' active downloads'
               : 'Transfers',
           );
-        wrap.replaceChildren();
-        if (tasks.length === 0) {
-          const empty = document.createElement('p');
-          empty.className = 'py-10 text-center text-[13px] text-ink-2';
-          empty.textContent =
-            'Movies and episodes you download appear here with live progress and speed.';
-          wrap.append(empty);
-          return;
+        // Summary strip (Agent 21) from the DTO already in hand.
+        const summary = status('tr-summary');
+        summary.classList.toggle('hidden', tasks.length === 0);
+        if (tasks.length > 0) {
+          status('tr-stat-active').textContent = String(list.activeCount);
+          const speed = tasks
+            .filter((t) => t.state === 'running')
+            .reduce((sum, t) => sum + t.speedBps, 0);
+          status('tr-stat-speed').textContent =
+            speed > 0 ? fmtSpeed(speed) + ' total' : '';
+          status('tr-stat-queued').textContent = String(
+            tasks.filter((t) => t.state === 'queued').length,
+          );
+          status('tr-stat-completed').textContent = String(
+            tasks.filter((t) => t.state === 'completed').length,
+          );
+          status('tr-stat-failed').textContent = String(
+            tasks.filter((t) => t.state === 'failed').length,
+          );
         }
+        for (const id of ['tr-pause-all', 'tr-resume-all', 'tr-clear']) {
+          (status(id) as HTMLButtonElement).disabled = tasks.length === 0;
+        }
+        // Empty state: created once, toggled (Agents 21/25).
+        if (!trEmptyEl) {
+          trEmptyEl = el('div', 'empty-state');
+          const ic = el('span', 'text-ink-3');
+          ic.append(icon('transfers', 24));
+          trEmptyEl.append(
+            ic,
+            el('h3', 'mt-3 text-heading font-semibold', 'No transfers yet'),
+            el(
+              'p',
+              'mt-1 max-w-[420px] text-body text-ink-2',
+              'Movies and episodes you download appear here with live progress and speed.',
+            ),
+          );
+        }
+        trEmptyEl.classList.toggle('hidden', tasks.length !== 0);
+        wrap.append(trEmptyEl);
+        // Keyed rows in list order: appending an existing node
+        // moves it, never recreates it.
+        const seen = new Set<number>();
         for (const t of tasks) {
-          const card = document.createElement('div');
-          card.className =
-            'rounded-2xl border border-hairline bg-surface px-4 py-3.5';
-          const top = document.createElement('div');
-          top.className = 'flex items-baseline gap-3';
-          const name = document.createElement('span');
-          name.className = 'min-w-0 flex-1 truncate text-[13.5px] font-medium';
-          name.textContent = t.name;
-          const state = document.createElement('span');
-          state.className = 'text-[12px] font-medium text-ink-2';
-          state.textContent =
-            STATE_LABEL[t.state] +
-            (t.state === 'running' || t.state === 'paused'
-              ? ' · ' + Math.round(t.fraction * 100) + '%'
-              : '');
-          top.append(name, state);
-          const bar = document.createElement('div');
-          bar.className = 'mt-2.5 h-1.5 overflow-hidden rounded-full bg-raised';
-          const fill = document.createElement('div');
-          fill.className =
-            'h-full rounded-full ' +
-            (t.state === 'failed'
-              ? 'bg-failed'
-              : t.state === 'completed'
-                ? 'bg-done'
-                : t.state === 'paused'
-                  ? 'bg-paused'
-                  : 'bg-accent');
-          fill.style.width = Math.round(t.fraction * 100) + '%';
-          bar.append(fill);
-          const meta = document.createElement('p');
-          meta.className = 'mt-2 text-[12px] tabular-nums text-ink-3';
-          meta.textContent =
-            fmtBytes(t.downloaded) +
-            (t.total > 0 ? ' of ' + fmtBytes(t.total) : '') +
-            (t.state === 'running' && t.speedBps > 0
-              ? ' · ' + fmtSpeed(t.speedBps)
-              : '') +
-            (t.state === 'running' && fmtEta(t.etaSecs)
-              ? ' · ' + fmtEta(t.etaSecs)
-              : '') +
-            (t.error ? ' · ' + t.error : '');
-          card.append(top, bar, meta);
-          const actions = document.createElement('div');
-          actions.className = 'mt-2.5 flex gap-1.5';
-          const mkBtn = (label: string, fn: () => Promise<DownloadListDto>) => {
-            const b = document.createElement('button');
-            b.className =
-              'rounded-full border border-hairline px-3 py-1 text-[11.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised';
-            b.textContent = label;
-            b.addEventListener('click', async () => {
-              b.disabled = true;
-              try {
-                renderDownloads(await fn());
-              } catch {
-                b.disabled = false;
-              }
-            });
-            return b;
-          };
-          if (t.state === 'running' || t.state === 'queued') {
-            actions.append(mkBtn('Pause', () => pauseDownload(t.id)));
+          seen.add(t.id);
+          let row = taskRows.get(t.id);
+          if (!row) {
+            row = buildTaskRow(t);
+            taskRows.set(t.id, row);
           }
-          if (t.state === 'paused') {
-            actions.append(mkBtn('Resume', () => resumeDownload(t.id)));
+          patchTaskRow(row, t);
+          wrap.append(row.root);
+        }
+        for (const [id, row] of taskRows) {
+          if (!seen.has(id)) {
+            row.root.remove();
+            taskRows.delete(id);
           }
-          if (t.state === 'failed') {
-            actions.append(mkBtn('Retry', () => resumeDownload(t.id)));
-          }
-          if (t.state === 'completed' && t.fileMissing) {
-            const note = document.createElement('span');
-            note.className = 'self-center text-[11.5px] text-paused';
-            note.textContent = 'File missing';
-            actions.append(
-              note,
-              mkBtn('Redownload', () => redownloadDownload(t.id)),
-            );
-          }
-          actions.append(mkBtn('Remove', () => removeDownload(t.id)));
-          card.append(actions);
-          wrap.append(card);
         }
       }
 
@@ -851,6 +1189,12 @@ import '../styles/global.css';
       document
         .getElementById('tr-clear')!
         .addEventListener('click', async () => {
+          const ok = await confirmDialog({
+            title: 'Clear completed downloads?',
+            body: 'Completed downloads will be removed from the Transfers list.',
+            confirmLabel: 'Clear',
+          });
+          if (!ok) return;
           try {
             renderDownloads(await clearCompletedDownloads());
           } catch {}
@@ -873,37 +1217,65 @@ import '../styles/global.css';
       // ---- servers ----------------------------------------------------------
       let sourcesList: SourceDto[] = [];
       const probeMap = new Map<string, SourceProbeDto>();
+      function srvError(msg: string): void {
+        const e = status('srv-error');
+        e.textContent = msg;
+        e.classList.toggle('hidden', msg === '');
+      }
+
       function renderServers(): void {
         const wrap = status('probes');
         wrap.replaceChildren();
         for (const s of sourcesList) {
           const p = probeMap.get(s.name);
-          const row = document.createElement('div');
-          row.className =
-            'flex items-center gap-3 rounded-2xl border border-hairline bg-surface px-4 py-3';
-          const dot = document.createElement('span');
-          dot.className =
-            'h-2 w-2 shrink-0 rounded-full ' + dotClass(p?.status);
-          const name = document.createElement('span');
-          name.className = 'text-[13.5px] font-medium';
-          name.textContent = s.name;
-          const url = document.createElement('span');
-          url.className = 'min-w-0 flex-1 truncate text-[12px] text-ink-3';
-          url.textContent = s.rootUrl;
-          const state = document.createElement('span');
-          state.className = 'text-[12px] tabular-nums text-ink-2';
-          state.textContent = !s.enabled
-            ? 'Disabled'
-            : p?.status === 'up'
-              ? 'Online · ' + p.latencyMs + ' ms'
-              : p?.status === 'down'
-                ? 'Unreachable'
-                : '…';
+          const row = el(
+            'div',
+            'row-card flex flex-wrap items-center gap-3 px-4 py-3',
+          );
+          const pill = el(
+            'span',
+            'badge border border-hairline bg-raised px-2 py-0.5 text-caption font-semibold text-ink-2',
+          );
+          const dot = el(
+            'span',
+            'status-dot' +
+              (!s.enabled
+                ? ' is-disabled'
+                : p?.status === 'up'
+                  ? ' is-up'
+                  : p?.status === 'down'
+                    ? ' is-down'
+                    : ''),
+          );
+          pill.append(
+            dot,
+            document.createTextNode(
+              !s.enabled
+                ? 'Disabled'
+                : p?.status === 'up'
+                  ? 'Online · ' + p.latencyMs + ' ms'
+                  : p?.status === 'down'
+                    ? 'Unreachable'
+                    : 'Checking…',
+            ),
+          );
+          const name = el('span', 'text-row font-medium', s.name);
+          const url = el(
+            'span',
+            'min-w-0 flex-1 truncate text-secondary text-ink-3',
+            s.rootUrl,
+          );
+          url.title = s.rootUrl;
+          const main = el('div', 'flex min-w-0 flex-1 items-center gap-3');
+          main.append(pill, name, url);
           const toggle = document.createElement('input');
           toggle.type = 'checkbox';
           toggle.checked = s.enabled;
-          toggle.className = 'h-4 w-4 shrink-0 accent-[var(--color-accent)]';
-          toggle.title = s.enabled ? 'Disable server' : 'Enable server';
+          toggle.className = 'switch';
+          toggle.setAttribute(
+            'aria-label',
+            (s.enabled ? 'Disable ' : 'Enable ') + s.name,
+          );
           toggle.addEventListener('change', async () => {
             try {
               sourcesList = await setSourceEnabled(s.name, toggle.checked);
@@ -913,26 +1285,79 @@ import '../styles/global.css';
               toggle.checked = !toggle.checked;
             }
           });
-          row.append(dot, name, url, state, toggle);
+          row.append(main, toggle);
           if (s.custom) {
             const rm = document.createElement('button');
-            rm.className =
-              'shrink-0 rounded-full border border-hairline px-2.5 py-1 text-[11.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised';
-            rm.textContent = 'Remove';
+            rm.className = 'btn btn-danger btn-sm shrink-0';
+            rm.replaceChildren(
+              icon('trash', 16),
+              document.createTextNode('Remove'),
+            );
             rm.addEventListener('click', async () => {
+              const ok = await confirmDialog({
+                title: 'Remove this server?',
+                body: '“' + s.name + '” will be removed from LanFetch.',
+                confirmLabel: 'Remove',
+              });
+              if (!ok) return;
               try {
                 sourcesList = await removeSource(s.name);
                 probeMap.delete(s.name);
                 renderServers();
                 void loadProbes();
               } catch (e) {
-                status('srv-error').textContent = String(e);
+                srvError(String(e));
               }
             });
             row.append(rm);
           }
           wrap.append(row);
         }
+        renderRailServers();
+      }
+
+      // Expanded-rail server list (Agent 23): the same
+      // sourcesList/probeMap, no new data path.
+      function renderRailServers(): void {
+        const host = status('rail-servers');
+        host.replaceChildren();
+        const up = sourcesList.filter(
+          (s) => s.enabled && probeMap.get(s.name)?.status === 'up',
+        ).length;
+        for (const s of sourcesList.slice(0, 5)) {
+          const p = probeMap.get(s.name);
+          const row = el(
+            'div',
+            'flex items-center gap-2 px-1 py-0.5 text-secondary',
+          );
+          row.append(
+            el(
+              'span',
+              'status-dot' +
+                (!s.enabled
+                  ? ' is-disabled'
+                  : p?.status === 'up'
+                    ? ' is-up'
+                    : p?.status === 'down'
+                      ? ' is-down'
+                      : ''),
+            ),
+            el('span', 'min-w-0 flex-1 truncate', s.name),
+          );
+          if (s.enabled && p?.status === 'up') {
+            row.append(
+              el('span', 'tabular-nums text-ink-3', p.latencyMs + ' ms'),
+            );
+          }
+          host.append(row);
+        }
+        host.append(
+          el(
+            'p',
+            'px-1 pt-1 text-caption text-ink-3',
+            up + ' of ' + sourcesList.length + ' online',
+          ),
+        );
       }
       async function loadProbes() {
         const results = await probeSources();
@@ -942,7 +1367,6 @@ import '../styles/global.css';
         const up = results.filter((r) => r.status === 'up').length;
         status('srv-status').textContent =
           up + ' of ' + results.length + ' servers online';
-        status('rail-servers').textContent = up + ' online';
         // Compact rail: server health survives as a dot on the
         // Servers nav item (Agent 12); words live in its label.
         const railDot = document.getElementById('rail-servers-dot');
@@ -961,20 +1385,58 @@ import '../styles/global.css';
               : 'No servers reachable — check the Servers tab';
         }
       }
+      // Add-server: honest minimal validation only (Agent 23) —
+      // non-empty name, non-empty whitespace-free address. No
+      // scheme or URL-parser gate: the engine accepts what it
+      // accepts, and a missing scheme earns a hint, not a block.
+      const srvNameEl = document.getElementById('srv-name') as HTMLInputElement;
+      const srvUrlEl = document.getElementById('srv-url') as HTMLInputElement;
+      const srvAddBtn = status('srv-add') as HTMLButtonElement;
+      function validateSrvForm(): void {
+        const ok =
+          srvNameEl.value.trim().length > 0 &&
+          srvUrlEl.value.trim().length > 0 &&
+          !/\s/.test(srvUrlEl.value.trim());
+        srvAddBtn.disabled = !ok;
+        status('srv-hint').classList.toggle(
+          'hidden',
+          !(srvUrlEl.value.trim().length > 0 && !srvUrlEl.value.includes('://')),
+        );
+      }
+      srvNameEl.addEventListener('input', validateSrvForm);
+      srvUrlEl.addEventListener('input', validateSrvForm);
+      srvAddBtn.addEventListener('click', async () => {
+        srvError('');
+        srvAddBtn.disabled = true;
+        srvAddBtn.textContent = 'Adding…';
+        try {
+          sourcesList = await addSource(srvNameEl.value, srvUrlEl.value);
+          const added = srvNameEl.value;
+          srvNameEl.value = '';
+          srvUrlEl.value = '';
+          renderServers();
+          void loadProbes();
+          toast('Server ' + added + ' added');
+        } catch (e) {
+          srvError(String(e));
+        } finally {
+          srvAddBtn.textContent = 'Add server';
+          validateSrvForm();
+        }
+      });
       document
-        .getElementById('srv-add')!
+        .getElementById('srv-refresh')!
         .addEventListener('click', async () => {
-          const nameEl = document.getElementById('srv-name') as HTMLInputElement;
-          const urlEl = document.getElementById('srv-url') as HTMLInputElement;
-          status('srv-error').textContent = '';
+          const btn = status('srv-refresh') as HTMLButtonElement;
+          btn.disabled = true;
+          btn.classList.add('is-busy');
+          btn.setAttribute('aria-busy', 'true');
           try {
-            sourcesList = await addSource(nameEl.value, urlEl.value);
-            nameEl.value = '';
-            urlEl.value = '';
-            renderServers();
-            void loadProbes();
-          } catch (e) {
-            status('srv-error').textContent = String(e);
+            await loadProbes();
+          } finally {
+            btn.disabled = false;
+            btn.classList.remove('is-busy');
+            btn.removeAttribute('aria-busy');
           }
         });
 
@@ -987,10 +1449,11 @@ import '../styles/global.css';
             window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
         document.querySelectorAll('.theme-btn').forEach((el) => {
-          (el as HTMLElement).classList.toggle(
-            'is-active',
-            (el as HTMLElement).dataset.themeChoice === choice,
-          );
+          const active =
+            (el as HTMLElement).dataset.themeChoice === choice;
+          (el as HTMLElement).classList.toggle('is-active', active);
+          el.setAttribute('aria-checked', String(active));
+          (el as HTMLElement).tabIndex = active ? 0 : -1;
         });
       }
       document.querySelectorAll('.theme-btn').forEach((el) => {
@@ -1033,6 +1496,64 @@ import '../styles/global.css';
       sel('set-language').addEventListener('change', () =>
         void persistSettings({ language: sel('set-language').value }),
       );
+
+      // Settings section nav (Agent 24): plain anchors, click
+      // marks the section active and smooth-scrolls; no scrollspy,
+      // no router.
+      document.querySelectorAll('.settings-nav-item').forEach((a) => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          document
+            .querySelectorAll('.settings-nav-item')
+            .forEach((x) => x.classList.toggle('is-active', x === a));
+          const target = document.getElementById(
+            (a as HTMLElement).dataset.sec!,
+          );
+          target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+
+      // Storage path copy buttons (Agent 24): Clipboard API
+      // first, hidden-textarea fallback for insecure web origins
+      // (Agent 30 — clipboard is undefined on http:// LAN IPs).
+      document.querySelectorAll('[data-copy-target]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const target = status(
+            (btn as HTMLElement).dataset.copyTarget!,
+          );
+          const text = target.textContent ?? '';
+          if (!text || text === '…') return;
+          let ok = false;
+          try {
+            await navigator.clipboard.writeText(text);
+            ok = true;
+          } catch {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.append(ta);
+            ta.select();
+            try {
+              ok = document.execCommand('copy');
+            } catch {
+              ok = false;
+            }
+            ta.remove();
+          }
+          if (ok) {
+            const use = btn.querySelector('use');
+            use?.setAttribute('href', '#i-check');
+            window.setTimeout(
+              () => use?.setAttribute('href', '#i-copy'),
+              1500,
+            );
+            toast('Copied to clipboard');
+          } else {
+            toast('Copy failed — the path is shown in Settings.', 'alert');
+          }
+        });
+      });
 
       // ---- library feed -------------------------------------------------------
       // The UX laws this implements (the Rune build broke all three):
@@ -1941,6 +2462,7 @@ import '../styles/global.css';
           return;
         }
         status('version').textContent = 'v' + boot.appVersion;
+        status('set-version').textContent = 'Version ' + boot.appVersion;
         status('set-dl-dir').textContent = boot.downloadsDir;
         status('set-data-dir').textContent = boot.dataDir;
         currentSettings = boot.settings;
@@ -1972,11 +2494,16 @@ import '../styles/global.css';
         void loadProbes();
         void loadLibrary(false);
         void checkUpdate().then((v) => {
-          status('set-update').textContent = v
-            ? 'LanFetch ' +
-              v +
-              ' is available — download it from the project’s Releases page. Your settings and downloads carry over.'
-            : 'You are on the latest version.';
+          status('set-update').replaceChildren(
+            icon(v ? 'arrow-up-circle' : 'check', 16),
+            document.createTextNode(
+              v
+                ? 'LanFetch ' +
+                    v +
+                    ' is available — download it from the project’s Releases page. Your settings and downloads carry over.'
+                : 'You are on the latest version.',
+            ),
+          );
         });
       }
       void main();
