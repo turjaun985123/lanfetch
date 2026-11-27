@@ -339,26 +339,34 @@ import '../styles/global.css';
               <button id="lib-banner-retry" class="btn btn-ghost btn-sm shrink-0"></button>
             </div>
           </div>
-          <div id="onboarding" class="hidden px-6 pt-5">
-            <div class="rounded-2xl border border-hairline bg-surface px-5 py-4">
-              <p class="text-[15px] font-semibold">Welcome to LanFetch</p>
-              <p class="mt-1 max-w-[560px] text-[12.5px] leading-relaxed text-ink-2">
+          <div id="onboarding" class="hidden px-6 pt-5 max-[767px]:px-4">
+            <div class="card px-5 py-4">
+              <p class="text-page font-semibold">Welcome to LanFetch</p>
+              <p class="mt-1 max-w-[560px] text-body leading-relaxed text-ink-2">
                 Your DhakaFlix servers are already set up — no configuration
                 needed. Browse the Library, open a title, and download with
                 byte-exact resume: pause anything, close the app, and it
                 continues where it left off.
               </p>
-              <div class="mt-3 flex gap-2">
-                <button
-                  id="ob-done"
-                  class="rounded-full bg-accent px-4 py-1.5 text-[12.5px] font-semibold text-white"
-                >
+              <ul class="mt-3 flex flex-col gap-1.5 text-body text-ink-2">
+                <li class="flex items-center gap-2">
+                  <svg class="ic ic-16 text-done" aria-hidden="true"><use href="#i-check" /></svg>
+                  Byte-exact resume — pause anything, continue where it left off
+                </li>
+                <li class="flex items-center gap-2">
+                  <svg class="ic ic-16 text-done" aria-hidden="true"><use href="#i-download" /></svg>
+                  Parallel segments for the fastest speed your network allows
+                </li>
+                <li class="flex items-center gap-2">
+                  <svg class="ic ic-16 text-done" aria-hidden="true"><use href="#i-servers" /></svg>
+                  Works out of the box — no configuration needed
+                </li>
+              </ul>
+              <div class="mt-4 flex gap-2">
+                <button id="ob-done" class="btn btn-primary btn-sm">
                   Start browsing
                 </button>
-                <button
-                  id="ob-check"
-                  class="rounded-full border border-hairline px-4 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
-                >
+                <button id="ob-check" class="btn btn-ghost btn-sm">
                   Check servers first
                 </button>
               </div>
@@ -656,6 +664,7 @@ import '../styles/global.css';
       </main>
     </div>
 
+    <div id="a11y-announcer" class="sr-only" role="status" aria-live="polite"></div>
     <div id="toast-region" class="toast-region"></div>
     <dialog
       id="confirm-dialog"
@@ -827,6 +836,19 @@ import '../styles/global.css';
       }
       const taskRows = new Map<number, TaskRow>();
       let trEmptyEl: HTMLElement | null = null;
+      const prevTaskStates = new Map<number, TaskDto['state']>();
+
+      // Screen-reader announcements (Agent 31): background
+      // transitions only — never progress ticks, speeds or badge
+      // counts. Click results are announced by their toasts.
+      function announce(msg: string): void {
+        const a = document.getElementById('a11y-announcer');
+        if (!a) return;
+        a.textContent = '';
+        window.setTimeout(() => {
+          a.textContent = msg;
+        }, 40);
+      }
 
       const STATE_ICON: Record<TaskDto['state'], string> = {
         queued: 'clock',
@@ -1150,6 +1172,22 @@ import '../styles/global.css';
             taskRows.delete(id);
           }
         }
+        // Announce background state transitions (Agent 31). The
+        // first render seeds the map silently — tasks that were
+        // already completed at boot are not news.
+        for (const t of tasks) {
+          const prev = prevTaskStates.get(t.id);
+          if (prev !== undefined && prev !== t.state) {
+            if (t.state === 'completed')
+              announce('Download complete: ' + t.name);
+            else if (t.state === 'failed')
+              announce('Download failed: ' + t.name);
+          }
+          prevTaskStates.set(t.id, t.state);
+        }
+        for (const id of [...prevTaskStates.keys()]) {
+          if (!seen.has(id)) prevTaskStates.delete(id);
+        }
       }
 
       // ---- live transfers: pushed, never polled --------------------------------
@@ -1442,12 +1480,20 @@ import '../styles/global.css';
 
       // ---- theme -------------------------------------------------------------
       function applyTheme(choice: string) {
+        // One-frame transition suppression (Agent 32): without
+        // it, every transition-colors control cross-fades muddy
+        // when the theme flips.
+        const root = document.documentElement;
+        root.classList.add('theme-switching');
         localStorage.setItem('lanfetch-theme', choice);
         const dark =
           choice === 'dark' ||
           (choice === 'system' &&
             window.matchMedia('(prefers-color-scheme: dark)').matches);
-        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        root.dataset.theme = dark ? 'dark' : 'light';
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => root.classList.remove('theme-switching'));
+        });
         document.querySelectorAll('.theme-btn').forEach((el) => {
           const active =
             (el as HTMLElement).dataset.themeChoice === choice;
@@ -1462,6 +1508,25 @@ import '../styles/global.css';
           applyTheme(choice);
           void persistSettings({ theme: choice });
         });
+      });
+      // Radiogroup arrows (Agent 31): Left/Right move and select,
+      // matching the radio pattern the markup declares.
+      status('theme-switch').addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        const btns = [
+          ...document.querySelectorAll('.theme-btn'),
+        ] as HTMLElement[];
+        const i = btns.findIndex(
+          (b) => b.getAttribute('aria-checked') === 'true',
+        );
+        if (i < 0) return;
+        const j =
+          e.key === 'ArrowRight'
+            ? (i + 1) % btns.length
+            : (i - 1 + btns.length) % btns.length;
+        e.preventDefault();
+        btns[j]!.focus();
+        btns[j]!.click();
       });
       applyTheme(localStorage.getItem('lanfetch-theme') ?? 'system');
 
@@ -2366,11 +2431,36 @@ import '../styles/global.css';
         status('detail-fav-label').textContent = fav ? 'Favorited' : 'Favorite';
       }
 
+      // Focus path (Agents 31/34): opening Detail moves focus to
+      // the title; closing returns it to the card that opened it.
+      let detailInvoker: HTMLElement | null = null;
+      function closeDetail(): void {
+        show('library');
+        const invoker = detailInvoker;
+        detailInvoker = null;
+        if (invoker && document.contains(invoker)) {
+          invoker.focus();
+        } else {
+          (
+            document.querySelector(
+              '#chips .chip[tabindex="0"]',
+            ) as HTMLElement | null
+          )?.focus();
+        }
+      }
+
       async function openDetail(t: TitleDto): Promise<void> {
         const gen = ++detailGen;
         detailTitle = t;
         detailFilesSig = '';
+        if (
+          document.activeElement instanceof HTMLElement &&
+          document.activeElement !== document.body
+        ) {
+          detailInvoker = document.activeElement;
+        }
         show('detail');
+        status('detail-title').focus({ preventScroll: true });
         // Snapshot paint: everything the DTO already knows renders
         // now; only the file list waits for hydration.
         status('detail-title').textContent = t.title;
@@ -2430,17 +2520,23 @@ import '../styles/global.css';
 
       document
         .getElementById('detail-back')!
-        .addEventListener('click', () => show('library'));
+        .addEventListener('click', () => closeDetail());
       document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
         const detail = document.querySelector('[data-screen="detail"]')!;
-        if (!detail.classList.contains('hidden')) show('library');
+        if (!detail.classList.contains('hidden')) closeDetail();
       });
       status('detail-fav').addEventListener('click', async () => {
         if (!detailTitle) return;
         const now = await toggleFavorite(detailTitle.folderUrl);
         detailTitle.isFavorite = now;
         paintFav();
+        if (now) {
+          const ic = status('detail-fav-icon');
+          ic.classList.remove('fav-pop');
+          void ic.offsetWidth;
+          ic.classList.add('fav-pop');
+        }
       });
 
       // ---- boot ---------------------------------------------------------------

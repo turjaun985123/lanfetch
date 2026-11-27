@@ -594,6 +594,10 @@ img {
   .field-error {
     @apply text-secondary font-medium text-failed;
   }
+  /* Press feedback (Agent 32): instant, untransitioned. */
+  .btn:active {
+    transform: translateY(0.5px);
+  }
 
   /* ---- overlays + transfers + servers + settings (R5) ---- */
   .toast-region {
@@ -618,6 +622,12 @@ img {
     @apply rounded-xl border border-hairline bg-surface p-5 text-ink shadow-pop;
     width: min(420px, calc(100vw - 32px));
     margin: auto;
+  }
+  .dialog[open] {
+    animation: lf-dialog-in var(--dur-med) var(--ease-out);
+  }
+  #detail-fav-icon.fav-pop svg {
+    animation: lf-pop var(--dur-med) var(--ease-out);
   }
   .dialog::backdrop {
     background: var(--overlay);
@@ -886,4 +896,35 @@ img {
   to {
     transform: rotate(360deg);
   }
+}
+
+@keyframes lf-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes lf-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Theme switching (Agent 32): component classes carry
+   transition-colors, so without this the whole UI cross-fades
+   muddy for a frame on theme change. applyTheme adds the class
+   for exactly two frames. Deliberate exception to the
+   no-!important rule — nothing else can suppress every
+   transition for one frame. Unlayered so it beats the layers. */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
 }
