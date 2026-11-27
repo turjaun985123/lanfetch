@@ -134,6 +134,18 @@ Room 2.8 in favour of this `dropAllTables` overload).
   committed), which left the 8→9 step untestable. Android CI now uploads
   the generated schemas as the `room-schemas` artifact on every build,
   so `9.json` can be committed from a verified generation.
+- **Schema-capture addendum (2026-11-28):** committing the generated
+  `9.json` was tried (commit `9becb49`) and **reverted the same day**:
+  with the current-version schema file present, `:app:kspDebugKotlin`
+  crashes deterministically with an `AbstractMethodError` on
+  `androidx.room.migration.bundle.FieldBundle$$serializer`
+  (`typeParametersSerializers()` missing) — a binary skew between
+  Room 2.8.5's bundled schema serializers and the kotlinx-serialization
+  runtime on the KSP classpath, exposed only when KSP actually loads
+  the v9 bundle. Until the toolchain upgrade (Kotlin/Room, tracked by
+  the pending Dependabot majors) resolves the skew, `9.json` stays
+  uncommitted and is taken from the CI artifact when needed. Schemas
+  4–8 remain committed and unaffected.
 
 ## 6. Rollback
 

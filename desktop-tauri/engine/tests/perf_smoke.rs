@@ -331,9 +331,12 @@ fn perf_parse_listing_5000_anchors() {
     const ANCHORS: usize = 5_000;
     let mut html = String::from("<html><body><table id=\"fb\">");
     for i in 1..=ANCHORS {
+        // Real listing pages carry whitespace between cells; it
+        // matters — the parser strips tags without inserting any,
+        // so back-to-back cells would fuse the date and size into
+        // one unparseable token ("10:001.5G").
         html.push_str(&format!(
-            "<tr><td class=\"fb-n\"><a href=\"Movie{i:04}.mkv\">Movie{i:04}.mkv</a></td>\
-             <td class=\"fb-d\">2026-11-27 10:00</td><td class=\"fb-s\">1.5G</td></tr>"
+            "<tr><td class=\"fb-n\"><a href=\"Movie{i:04}.mkv\">Movie{i:04}.mkv</a></td> <td class=\"fb-d\">2026-11-27 10:00</td> <td class=\"fb-s\">1.5G</td></tr>"
         ));
     }
     html.push_str("</table></body></html>");
