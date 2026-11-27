@@ -582,7 +582,7 @@ img {
     );
   }
   .detail-poster-frame {
-    @apply relative aspect-[2/3] overflow-hidden rounded-lg border border-strong bg-raised shadow-card;
+    @apply relative aspect-[2/3] overflow-hidden rounded-lg border border-border-strong bg-raised shadow-card;
   }
   .badge-meta {
     @apply inline-flex items-center rounded-full border border-hairline bg-surface px-2 py-0.5 text-secondary font-medium text-ink-2;
