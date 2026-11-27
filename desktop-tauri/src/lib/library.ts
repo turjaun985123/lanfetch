@@ -460,7 +460,11 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       ),
     ].sort();
     const sources = [
-      ...new Set(loadedTitles.map((t) => t.sourceName)),
+      ...new Set(
+        loadedTitles
+          .map((t) => t.sourceName)
+          .filter((s): s is string => !!s),
+      ),
     ].sort();
     const years = [
       ...new Set(
