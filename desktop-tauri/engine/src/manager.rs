@@ -68,6 +68,13 @@ pub struct Task {
     /// pre-V2 stored `ready` flag is what made probe-failed tasks
     /// permanently un-retryable (Wave 0 P0).
     pub pause_intent: bool,
+    /// Runtime only: a probe thread is in flight for this task.
+    /// pause() must know — a Queued task with a plan looks
+    /// identical whether it waits for a scheduler slot or for a
+    /// re-probe, but only the former may land Paused immediately;
+    /// the latter must defer to the probe's landing via
+    /// pause_intent, or the probe overwrites the pause (AF-4).
+    pub probing: bool,
     pub speed_bps: f64,
     last_tick_bytes: u64,
     last_tick_at: std::time::Instant,
@@ -326,6 +333,7 @@ impl Manager {
                         },
                         pause_flag: Arc::new(AtomicBool::new(true)),
                         pause_intent: false,
+                        probing: false,
                         progress,
                         speed_bps: 0.0,
                         last_tick_bytes: downloaded,
@@ -478,6 +486,7 @@ impl Manager {
                     error: None,
                     pause_flag: Arc::new(AtomicBool::new(false)),
                     pause_intent: false,
+                    probing: false,
                     progress: Arc::new(Progress::new(0)),
                     speed_bps: 0.0,
                     last_tick_bytes: 0,
@@ -507,10 +516,14 @@ impl Manager {
     /// task removed meanwhile is left alone.
     fn probe_task(self: &Arc<Self>, id: u64) {
         let url = {
-            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(t) = tasks.iter().find(|t| t.id == id) else {
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(t) = tasks.iter_mut().find(|t| t.id == id) else {
                 return;
             };
+            // AF-4: mark the probe in flight synchronously, before
+            // the thread spawns, so a pause() can never slip into
+            // the gap and be overwritten by the probe's landing.
+            t.probing = true;
             t.url.clone()
         };
         let mgr = Arc::clone(self);
@@ -561,6 +574,7 @@ impl Manager {
                             t.total = total;
                             t.validator = probe.validator.clone();
                             t.progress.total.store(total, Ordering::SeqCst);
+                            t.probing = false;
                             paused_intent = t.pause_intent;
                             t.pause_intent = false;
                             if paused_intent {
@@ -582,6 +596,7 @@ impl Manager {
                         {
                             let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                             if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                                t.probing = false;
                                 t.state = DlState::Failed;
                                 t.error = Some(e.clone());
                                 failed_name = t.name.clone();
@@ -605,6 +620,7 @@ impl Manager {
                     let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                         if t.state == DlState::Queued {
+                            t.probing = false;
                             t.state = DlState::Failed;
                             t.error = Some(PANIC_ERROR.to_string());
                         }
@@ -635,7 +651,17 @@ impl Manager {
                 return;
             };
             match t.state {
-                DlState::Running | DlState::Completed => Act::Nothing,
+                DlState::Completed => Act::Nothing,
+                // AF-4: resuming a Running task means "rescind the
+                // pause that is still unwinding" — clear the flag.
+                // Workers that have not exited yet simply keep
+                // going; if they already exited, the supervisor's
+                // landing reads the cleared flag and requeues
+                // instead of landing Paused.
+                DlState::Running => {
+                    t.pause_flag.store(false, Ordering::SeqCst);
+                    Act::Nothing
+                }
                 // "Resume" of a still-queued task only cancels a
                 // pending pause intent recorded during its probe.
                 DlState::Queued => {
@@ -861,6 +887,13 @@ impl Manager {
                                 .unwrap_or_else(|e| e.into_inner())
                                 .clone()
                         });
+                    } else if !pause_flag.load(Ordering::SeqCst) {
+                        // AF-4: the pause was rescinded by a resume
+                        // while the workers unwound — requeue; the
+                        // pump below relaunches the task with the
+                        // plan the engine returned.
+                        t.state = DlState::Queued;
+                        t.speed_bps = 0.0;
                     } else {
                         t.state = DlState::Paused;
                         t.speed_bps = 0.0;
@@ -903,8 +936,14 @@ impl Manager {
                     // The pre-V2 code set only the flag here, and
                     // pump() cleared it at launch — the pause was
                     // silently discarded.
+                    // AF-4: "still probing" is the explicit
+                    // `probing` flag, not plan emptiness — a
+                    // re-probe of a planned task (retry) has
+                    // segments AND a probe in flight, and landing
+                    // Paused immediately let the probe's landing
+                    // overwrite it back to Queued.
                     DlState::Queued => {
-                        if t.segments.is_empty() {
+                        if t.probing || t.segments.is_empty() {
                             t.pause_intent = true;
                         } else {
                             t.state = DlState::Paused;

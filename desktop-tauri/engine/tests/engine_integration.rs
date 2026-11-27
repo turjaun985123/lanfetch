@@ -258,6 +258,50 @@ fn lying_range_server(body: Arc<Vec<u8>>) -> Handler {
     })
 }
 
+/// AF-4 race (a): a two-faced server. While `lie` is set, segment
+/// GETs answer 206 with a Content-Range shifted by +100 (the
+/// download fails, its plan intact). While `slow_head` is set,
+/// HEAD takes ~900 ms, so a re-probe stays in flight long enough
+/// to pause in the middle of it.
+fn flaky_server(body: Arc<Vec<u8>>, lie: Arc<AtomicBool>, slow_head: Arc<AtomicBool>) -> Handler {
+    Arc::new(move |req: &Req| {
+        let total = body.len() as u64;
+        if req.method == "HEAD" {
+            if slow_head.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(900));
+            }
+            return Resp {
+                status: 200,
+                headers: vec![
+                    h("Content-Length", total),
+                    h("Accept-Ranges", "bytes"),
+                    h("ETag", "\"v1\""),
+                ],
+                body: Vec::new(),
+                drip: false,
+            };
+        }
+        let (start, end) = req.range.unwrap_or((0, None));
+        let end = end.unwrap_or(total - 1).min(total - 1);
+        let slice = body[start as usize..=end as usize].to_vec();
+        let (cs, ce) = if lie.load(Ordering::SeqCst) {
+            (start + 100, end + 100)
+        } else {
+            (start, end)
+        };
+        Resp {
+            status: 206,
+            headers: vec![
+                h("Content-Length", slice.len()),
+                h("Content-Range", format!("bytes {cs}-{ce}/{total}")),
+                h("ETag", "\"v1\""),
+            ],
+            body: slice,
+            drip: false,
+        }
+    })
+}
+
 /// A server that answers correctly, then goes silent mid-body:
 /// headers promise the full range, no byte ever arrives.
 fn stall_server(total: u64) -> Handler {
@@ -613,4 +657,73 @@ fn same_filename_from_two_servers_both_survive() {
     wait_for(&mgr, ids[1], DlState::Completed, Duration::from_secs(60));
     assert_eq!(final_bytes(&home, "same.mkv"), *body_a);
     assert_eq!(final_bytes(&home, "same (2).mkv"), *body_b);
+}
+
+#[test]
+fn pause_during_reprobe_of_planned_task_is_honored() {
+    // Audit AF-4 (a): a retry re-probes a task that already has a
+    // plan. pause() used to read "has segments" as "not probing"
+    // and land Paused immediately — the probe's landing then
+    // overwrote it to Queued and the download started anyway.
+    let home = fresh_home("reprobe-pause");
+    let body = Arc::new(body_pattern(120_000));
+    let lie = Arc::new(AtomicBool::new(true));
+    let slow_head = Arc::new(AtomicBool::new(false));
+    let server = TestServer::start(flaky_server(
+        Arc::clone(&body),
+        Arc::clone(&lie),
+        Arc::clone(&slow_head),
+    ));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("movie.mkv"), "movie.mkv".to_string());
+    let id = only_task_id(&mgr);
+    // Lying GETs fail the download; the plan survives the failure.
+    wait_for(&mgr, id, DlState::Failed, Duration::from_secs(60));
+    // Retry against the now-honest server, with a slow HEAD so
+    // the re-probe is still in flight when the pause lands.
+    lie.store(false, Ordering::SeqCst);
+    slow_head.store(true, Ordering::SeqCst);
+    mgr.start(id);
+    mgr.pause(id);
+    // The probe lands ~900 ms later and must honor the pause.
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(task_state(&mgr, id), Some(DlState::Paused));
+    // The plan survived the whole dance: resuming completes.
+    slow_head.store(false, Ordering::SeqCst);
+    mgr.start(id);
+    wait_for(&mgr, id, DlState::Completed, Duration::from_secs(60));
+    assert_eq!(final_bytes(&home, "movie.mkv"), *body);
+}
+
+#[test]
+fn resume_during_pause_unwind_is_honored() {
+    // Audit AF-4 (b): pausing a stalled download starts an unwind
+    // that takes seconds (5 s read timeout). A resume in that
+    // window used to be a no-op — start() saw Running and did
+    // nothing, the flag stayed set, and the task landed Paused
+    // despite the user's last action being Resume.
+    let _home = fresh_home("unwind-resume");
+    let server = TestServer::start(stall_server(4_000_000));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("big.mkv"), "big.mkv".to_string());
+    let id = only_task_id(&mgr);
+    wait_for(&mgr, id, DlState::Running, Duration::from_secs(30));
+    mgr.pause(id);
+    mgr.start(id);
+    // Watch for a full 15 s: Paused must never appear. The task
+    // either never stopped (workers saw the cleared flag first)
+    // or was relaunched by the landing's requeue.
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(15) {
+        assert_ne!(
+            task_state(&mgr, id),
+            Some(DlState::Paused),
+            "task landed Paused despite the resume during unwind"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(task_state(&mgr, id), Some(DlState::Running));
+    // Cleanup: a final pause with no rescind lands Paused.
+    mgr.pause(id);
+    wait_for(&mgr, id, DlState::Paused, Duration::from_secs(30));
 }
