@@ -1022,10 +1022,7 @@ fn feed_open(state: &AppState, category: Option<String>) -> Result<FeedPageDto, 
         }
         catalog.generation += 1;
         (
-            lanfetch_engine::catalog::FeedSession::new(
-                &catalog.categories,
-                category.as_deref(),
-            ),
+            lanfetch_engine::catalog::FeedSession::new(&catalog.categories, category.as_deref()),
             catalog.generation,
         )
     };

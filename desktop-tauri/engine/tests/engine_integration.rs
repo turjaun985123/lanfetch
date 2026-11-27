@@ -110,7 +110,11 @@ fn handle_conn(mut stream: TcpStream, handler: Handler) {
             }
         }
     }
-    let resp = handler(&Req { method, path, range });
+    let resp = handler(&Req {
+        method,
+        path,
+        range,
+    });
     let mut out = format!("HTTP/1.1 {} X\r\nConnection: close\r\n", resp.status);
     for (k, v) in &resp.headers {
         out.push_str(&format!("{k}: {v}\r\n"));
