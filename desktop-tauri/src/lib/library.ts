@@ -93,6 +93,64 @@ export function cardAriaLabel(t: TitleDto): string {
   );
 }
 
+/** Library filters (user request, post-V2): applied client-side
+ * to the titles loaded so far — feed pages, favorites and search
+ * results all flow through the same loaded set. Pure — unit-tested. */
+export interface TitleFilters {
+  kind: string; // 'all' | 'movie' | 'series'
+  quality: string; // 'any' | a bestQuality value ('2160p', 'CAM', …)
+  language: string; // 'any' | an exact TitleDto.language
+  year: string; // 'any' | '2020s' | '2010s' | '2000s' | 'older'
+  sort: string; // 'feed' | 'az' | 'year-desc' | 'year-asc'
+}
+
+export const DEFAULT_FILTERS: TitleFilters = {
+  kind: 'all',
+  quality: 'any',
+  language: 'any',
+  year: 'any',
+  sort: 'feed',
+};
+
+export function filtersActive(f: TitleFilters): boolean {
+  return (
+    f.kind !== 'all' ||
+    f.quality !== 'any' ||
+    f.language !== 'any' ||
+    f.year !== 'any' ||
+    f.sort !== 'feed'
+  );
+}
+
+export function titleMatchesFilters(t: TitleDto, f: TitleFilters): boolean {
+  if (f.kind !== 'all' && t.kind !== f.kind) return false;
+  if (f.quality !== 'any' && t.bestQuality !== f.quality) return false;
+  if (f.language !== 'any' && t.language !== f.language) return false;
+  if (f.year !== 'any') {
+    if (t.year === null) return false;
+    const y = t.year;
+    if (f.year === '2020s' && !(y >= 2020 && y <= 2029)) return false;
+    if (f.year === '2010s' && !(y >= 2010 && y <= 2019)) return false;
+    if (f.year === '2000s' && !(y >= 2000 && y <= 2009)) return false;
+    if (f.year === 'older' && !(y < 2000)) return false;
+  }
+  return true;
+}
+
+/** Filter + sort a loaded title list without mutating it. */
+export function applyTitleFilters(
+  titles: TitleDto[],
+  f: TitleFilters,
+): TitleDto[] {
+  const out = titles.filter((t) => titleMatchesFilters(t, f));
+  if (f.sort === 'az') out.sort((a, b) => a.title.localeCompare(b.title));
+  else if (f.sort === 'year-desc')
+    out.sort((a, b) => (b.year ?? -1) - (a.year ?? -1));
+  else if (f.sort === 'year-asc')
+    out.sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999));
+  return out;
+}
+
 export function createLibrary(ctx: LibraryCtx): LibraryScreen {
   // ---- library feed -------------------------------------------------------
   // The UX laws this implements (the Rune build broke all three):
@@ -105,6 +163,21 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
   let pageLoading = false;
   let currentCategory: string | null = null;
   let titleCount = 0;
+
+  // ---- title filters ------------------------------------------------------
+  // Every title painted this generation is retained in
+  // loadedTitles so a filter change can repaint from memory
+  // without another server round-trip. titleCount counts the
+  // loaded set; paintedCount counts what survived the filters.
+  let filters: TitleFilters = { ...DEFAULT_FILTERS };
+  let loadedTitles: TitleDto[] = [];
+  let paintedCount = 0;
+  let statusBase = '';
+  function renderStatus(): void {
+    ctx.status('lib-status').textContent = filtersActive(filters)
+      ? paintedCount + ' of ' + titleCount + ' titles shown · filters on'
+      : statusBase;
+  }
 
   // ---- library banner + empty states (Agents 16/25) ---------------------
   // Errors are banners with Retry, never gray footnotes in the
@@ -141,7 +214,7 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
 
   let emptyAction: (() => void) | null = null;
   function setEmpty(
-    variant: 'feed' | 'search' | 'favorites' | 'nocats',
+    variant: 'feed' | 'search' | 'favorites' | 'nocats' | 'filters',
   ): void {
     const wrap = ctx.status('lib-empty');
     wrap.classList.remove('hidden');
@@ -163,6 +236,13 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
         'Nothing on the servers matches that title. Check the spelling, or try a shorter search.';
       action.textContent = 'Clear search';
       emptyAction = () => clearSearch();
+    } else if (variant === 'filters') {
+      iconSpan.replaceChildren(icon('film', 24));
+      title.textContent = 'No titles match these filters';
+      body.textContent =
+        'The filters apply to the titles loaded so far. Scroll to load more, widen the filters, or clear them.';
+      action.textContent = 'Clear filters';
+      emptyAction = () => clearFilters();
     } else if (variant === 'favorites') {
       iconSpan.replaceChildren(icon('star', 24));
       title.textContent = 'No favorites yet';
@@ -305,18 +385,103 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     return true;
   }
 
+  /** Repaint the whole loaded set through the current filters.
+   * Returns false when superseded mid-paint, like paintTitles. */
+  async function repaintLoaded(gen: number): Promise<boolean> {
+    const view = applyTitleFilters(loadedTitles, filters);
+    paintedCount = view.length;
+    return paintTitles(view, gen, true);
+  }
+
+  function syncFilterChrome(): void {
+    ctx
+      .status('lib-filter-clear')
+      .classList.toggle('hidden', !filtersActive(filters));
+    // Language options follow what has actually loaded; the
+    // current selection is always kept so the control never
+    // silently resets while paging.
+    const sel = ctx.status('lib-filter-language') as HTMLSelectElement;
+    const langs = [
+      ...new Set(
+        loadedTitles
+          .map((t) => t.language)
+          .filter((l): l is string => !!l),
+      ),
+    ].sort();
+    const want = [...new Set(['any', filters.language, ...langs])];
+    const current = [...sel.options].map((o) => o.value);
+    if (
+      current.length !== want.length ||
+      current.some((v) => !want.includes(v))
+    ) {
+      sel.replaceChildren();
+      for (const v of want) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v === 'any' ? 'Any language' : v;
+        sel.append(o);
+      }
+      sel.value = filters.language;
+    }
+  }
+
+  async function applyFiltersAndRepaint(): Promise<void> {
+    const gen = libGen;
+    if (!(await repaintLoaded(gen))) return;
+    renderStatus();
+    syncFilterChrome();
+    if (loadedTitles.length > 0 && paintedCount === 0) setEmpty('filters');
+    else if (loadedTitles.length > 0) hideEmpty();
+  }
+
+  function readFilterControls(): void {
+    filters = {
+      kind: (ctx.status('lib-filter-kind') as HTMLSelectElement).value,
+      quality: (ctx.status('lib-filter-quality') as HTMLSelectElement)
+        .value,
+      language: (ctx.status('lib-filter-language') as HTMLSelectElement)
+        .value,
+      year: (ctx.status('lib-filter-year') as HTMLSelectElement).value,
+      sort: (ctx.status('lib-filter-sort') as HTMLSelectElement).value,
+    };
+  }
+
+  function clearFilters(): void {
+    filters = { ...DEFAULT_FILTERS };
+    (ctx.status('lib-filter-kind') as HTMLSelectElement).value = 'all';
+    (ctx.status('lib-filter-quality') as HTMLSelectElement).value = 'any';
+    (ctx.status('lib-filter-language') as HTMLSelectElement).value = 'any';
+    (ctx.status('lib-filter-year') as HTMLSelectElement).value = 'any';
+    (ctx.status('lib-filter-sort') as HTMLSelectElement).value = 'feed';
+    void applyFiltersAndRepaint();
+  }
+
   async function appendPage(
     page: FeedPageDto,
     gen: number,
     first: boolean,
   ): Promise<void> {
     feedHasMore = page.hasMore;
-    if (!(await paintTitles(page.titles, gen, first))) return;
+    loadedTitles.push(...page.titles);
     titleCount += page.titles.length;
-    ctx.status('lib-status').textContent =
+    if (filters.sort !== 'feed') {
+      // A non-feed sort is a whole-set ordering: repaint from
+      // memory instead of appending an out-of-order page.
+      if (!(await repaintLoaded(gen))) return;
+    } else {
+      const view = page.titles.filter((t) =>
+        titleMatchesFilters(t, filters),
+      );
+      if (!(await paintTitles(view, gen, first))) return;
+      paintedCount = first ? view.length : paintedCount + view.length;
+    }
+    statusBase =
       titleCount + ' titles' + (feedHasMore ? ' · scroll for more' : '');
+    renderStatus();
+    syncFilterChrome();
     if (first) {
       if (titleCount === 0) setEmpty('feed');
+      else if (paintedCount === 0) setEmpty('filters');
       else hideEmpty();
       hideBanner();
     }
@@ -327,6 +492,8 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     activeQuery = '';
     favoritesActive = false;
     titleCount = 0;
+    loadedTitles = [];
+    paintedCount = 0;
     pageLoading = true;
     paintChips();
     showSkeletons();
@@ -389,6 +556,8 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     activeQuery = '';
     feedHasMore = false;
     titleCount = 0;
+    loadedTitles = [];
+    paintedCount = 0;
     pageLoading = true;
     paintChips();
     showSkeletons();
@@ -398,10 +567,14 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     try {
       const favs = await api.getFavorites();
       if (gen !== libGen) return;
-      if (!(await paintTitles(favs, gen, true))) return;
+      loadedTitles = favs;
+      if (!(await repaintLoaded(gen))) return;
       titleCount = favs.length;
-      ctx.status('lib-status').textContent = favs.length + ' favorites';
+      statusBase = favs.length + ' favorites';
+      renderStatus();
+      syncFilterChrome();
       if (favs.length === 0) setEmpty('favorites');
+      else if (paintedCount === 0) setEmpty('filters');
       else hideEmpty();
       hideBanner();
     } catch {
@@ -557,6 +730,8 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     favoritesActive = false;
     feedHasMore = false;
     titleCount = 0;
+    loadedTitles = [];
+    paintedCount = 0;
     pageLoading = true;
     paintChips();
     showSkeletons();
@@ -565,11 +740,14 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     try {
       const results = await api.searchTitles(q);
       if (gen !== libGen) return;
-      if (!(await paintTitles(results, gen, true))) return;
+      loadedTitles = results;
+      if (!(await repaintLoaded(gen))) return;
       titleCount = results.length;
-      ctx.status('lib-status').textContent =
-        results.length + ' results for “' + q + '”';
+      statusBase = results.length + ' results for “' + q + '”';
+      renderStatus();
+      syncFilterChrome();
       if (results.length === 0) setEmpty('search');
+      else if (paintedCount === 0) setEmpty('filters');
       else hideEmpty();
       hideBanner();
     } catch {
@@ -682,6 +860,21 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     ctx.status('lib-clear').addEventListener('click', onClearClick);
     searchInput.addEventListener('input', onSearchInput);
     searchInput.addEventListener('keydown', onSearchKeys);
+    const onFilterChange = () => {
+      readFilterControls();
+      void applyFiltersAndRepaint();
+    };
+    const onFilterClear = () => clearFilters();
+    const filterIds = [
+      'lib-filter-kind',
+      'lib-filter-quality',
+      'lib-filter-language',
+      'lib-filter-year',
+      'lib-filter-sort',
+    ];
+    for (const id of filterIds)
+      ctx.status(id).addEventListener('change', onFilterChange);
+    ctx.status('lib-filter-clear').addEventListener('click', onFilterClear);
     return () => {
       ctx
         .status('lib-banner-retry')
@@ -698,6 +891,11 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       ctx.status('lib-clear').removeEventListener('click', onClearClick);
       searchInput.removeEventListener('input', onSearchInput);
       searchInput.removeEventListener('keydown', onSearchKeys);
+      for (const id of filterIds)
+        ctx.status(id).removeEventListener('change', onFilterChange);
+      ctx
+        .status('lib-filter-clear')
+        .removeEventListener('click', onFilterClear);
     };
   }
 

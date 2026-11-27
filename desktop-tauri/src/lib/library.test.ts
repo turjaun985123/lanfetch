@@ -4,7 +4,15 @@
 // through.
 import { describe, expect, it } from 'vitest';
 import type { TitleDto } from './api';
-import { cardAriaLabel, cardBadge, chipActive } from './library';
+import {
+  applyTitleFilters,
+  cardAriaLabel,
+  cardBadge,
+  chipActive,
+  DEFAULT_FILTERS,
+  filtersActive,
+  titleMatchesFilters,
+} from './library';
 
 const movie: TitleDto = {
   folderUrl: 'http://srv/Movies/Film/',
@@ -80,5 +88,84 @@ describe('cardAriaLabel', () => {
   });
   it('yearless titles omit the year segment', () => {
     expect(cardAriaLabel({ ...movie, year: null })).toBe('Film, 1080p');
+  });
+});
+
+describe('title filters', () => {
+  const oldBn: TitleDto = {
+    ...movie,
+    title: 'Purono Film',
+    year: 1998,
+    language: 'BN',
+    bestQuality: '480p',
+  };
+  const noYear: TitleDto = { ...movie, title: 'Mystery', year: null };
+
+  it('the defaults match everything and count as inactive', () => {
+    expect(filtersActive(DEFAULT_FILTERS)).toBe(false);
+    expect(titleMatchesFilters(movie, DEFAULT_FILTERS)).toBe(true);
+    expect(titleMatchesFilters(series, DEFAULT_FILTERS)).toBe(true);
+    expect(titleMatchesFilters(noYear, DEFAULT_FILTERS)).toBe(true);
+  });
+
+  it('kind, quality and language match exactly', () => {
+    const f = { ...DEFAULT_FILTERS, kind: 'series' };
+    expect(filtersActive(f)).toBe(true);
+    expect(titleMatchesFilters(series, f)).toBe(true);
+    expect(titleMatchesFilters(movie, f)).toBe(false);
+    expect(
+      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, quality: '720p' }),
+    ).toBe(false);
+    expect(
+      titleMatchesFilters(oldBn, { ...DEFAULT_FILTERS, language: 'BN' }),
+    ).toBe(true);
+    expect(
+      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, language: 'BN' }),
+    ).toBe(false);
+  });
+
+  it('year bands include their edges and exclude yearless titles', () => {
+    const y2020s = { ...DEFAULT_FILTERS, year: '2020s' };
+    expect(titleMatchesFilters(movie, y2020s)).toBe(true); // 2024
+    expect(titleMatchesFilters(oldBn, y2020s)).toBe(false); // 1998
+    expect(titleMatchesFilters(noYear, y2020s)).toBe(false);
+    expect(
+      titleMatchesFilters(oldBn, { ...DEFAULT_FILTERS, year: 'older' }),
+    ).toBe(true);
+    expect(
+      titleMatchesFilters(
+        { ...movie, year: 2000 },
+        { ...DEFAULT_FILTERS, year: '2000s' },
+      ),
+    ).toBe(true);
+    expect(
+      titleMatchesFilters(
+        { ...movie, year: 2000 },
+        { ...DEFAULT_FILTERS, year: 'older' },
+      ),
+    ).toBe(false);
+  });
+
+  it('applyTitleFilters filters, sorts and never mutates its input', () => {
+    const input = [series, oldBn, movie];
+    const snapshot = [...input];
+    expect(applyTitleFilters(input, DEFAULT_FILTERS)).toEqual(input);
+    expect(
+      applyTitleFilters(input, { ...DEFAULT_FILTERS, sort: 'az' }).map(
+        (t) => t.title,
+      ),
+    ).toEqual(['Film', 'Purono Film', 'Show']);
+    expect(
+      applyTitleFilters(input, {
+        ...DEFAULT_FILTERS,
+        sort: 'year-desc',
+      }).map((t) => t.title),
+    ).toEqual(['Show', 'Film', 'Purono Film']);
+    expect(
+      applyTitleFilters(input, { ...DEFAULT_FILTERS, kind: 'movie' }).map(
+        (t) => t.title,
+      ),
+    ).toEqual(['Purono Film', 'Film']);
+    expect(input).toEqual(snapshot);
   });
 });
