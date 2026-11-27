@@ -735,6 +735,7 @@ import '../styles/global.css';
       import { confirmDialog, el, icon, toast } from '../lib/ui';
       import { createTransfers } from '../lib/transfers';
       import { createServers } from '../lib/servers';
+      import { createSettings } from '../lib/settings';
 
       const status = (id: string) => document.getElementById(id)!;
 
@@ -879,175 +880,13 @@ import '../styles/global.css';
       const loadProbes = servers.loadProbes;
       servers.mount();
 
-      // ---- theme -------------------------------------------------------------
-      function applyTheme(choice: string) {
-        // One-frame transition suppression (Agent 32): without
-        // it, every transition-colors control cross-fades muddy
-        // when the theme flips.
-        const root = document.documentElement;
-        root.classList.add('theme-switching');
-        // Storage can throw (blocked cookies, strict private
-        // modes) — the theme must still apply (Agent 46).
-        try {
-          localStorage.setItem('lanfetch-theme', choice);
-        } catch {
-          /* pre-paint cache only; settings.json is the truth */
-        }
-        const dark =
-          choice === 'dark' ||
-          (choice === 'system' &&
-            window.matchMedia('(prefers-color-scheme: dark)').matches);
-        root.dataset.theme = dark ? 'dark' : 'light';
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => root.classList.remove('theme-switching'));
-        });
-        document.querySelectorAll('.theme-btn').forEach((el) => {
-          const active =
-            (el as HTMLElement).dataset.themeChoice === choice;
-          (el as HTMLElement).classList.toggle('is-active', active);
-          el.setAttribute('aria-checked', String(active));
-          (el as HTMLElement).tabIndex = active ? 0 : -1;
-        });
-      }
-      document.querySelectorAll('.theme-btn').forEach((el) => {
-        el.addEventListener('click', () => {
-          const choice = (el as HTMLElement).dataset.themeChoice!;
-          applyTheme(choice);
-          void persistSettings({ theme: choice });
-        });
-      });
-      // Radiogroup arrows (Agent 31): Left/Right move and select,
-      // matching the radio pattern the markup declares.
-      status('theme-switch').addEventListener('keydown', (e) => {
-        if (
-          e.key !== 'ArrowRight' &&
-          e.key !== 'ArrowLeft' &&
-          e.key !== 'ArrowDown' &&
-          e.key !== 'ArrowUp'
-        )
-          return;
-        const btns = [
-          ...document.querySelectorAll('.theme-btn'),
-        ] as HTMLElement[];
-        const i = btns.findIndex(
-          (b) => b.getAttribute('aria-checked') === 'true',
-        );
-        if (i < 0) return;
-        const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
-        const j = forward
-          ? (i + 1) % btns.length
-          : (i - 1 + btns.length) % btns.length;
-        e.preventDefault();
-        btns[j]!.focus();
-        btns[j]!.click();
-      });
-      let savedTheme = 'system';
-      try {
-        savedTheme = localStorage.getItem('lanfetch-theme') ?? 'system';
-      } catch {
-        /* storage unavailable — fall back to system */
-      }
-      applyTheme(savedTheme);
-
-      // ---- settings ---------------------------------------------------------------
-      let currentSettings: SettingsDto | null = null;
-      async function persistSettings(
-        patch: Partial<SettingsDto>,
-      ): Promise<void> {
-        if (!currentSettings) return;
-        try {
-          currentSettings = await updateSettings({
-            ...currentSettings,
-            ...patch,
-          });
-        } catch {
-          // Browser preview or IPC failure: the local UI state the
-          // user just set stays as they left it.
-        }
-      }
-      const sel = (id: string) =>
-        document.getElementById(id) as HTMLSelectElement;
-      sel('set-connections').addEventListener('change', () =>
-        void persistSettings({
-          connections: parseInt(sel('set-connections').value, 10),
-        }),
-      );
-      sel('set-concurrent').addEventListener('change', () =>
-        void persistSettings({
-          maxConcurrent: parseInt(sel('set-concurrent').value, 10),
-        }),
-      );
-      sel('set-language').addEventListener('change', () =>
-        void persistSettings({ language: sel('set-language').value }),
-      );
-
-      // Settings section nav (Agent 24): plain anchors, click
-      // marks the section active and smooth-scrolls; no scrollspy,
-      // no router.
-      document.querySelectorAll('.settings-nav-item').forEach((a) => {
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          document.querySelectorAll('.settings-nav-item').forEach((x) => {
-            x.classList.toggle('is-active', x === a);
-            if (x === a) x.setAttribute('aria-current', 'true');
-            else x.removeAttribute('aria-current');
-          });
-          const target = document.getElementById(
-            (a as HTMLElement).dataset.sec!,
-          );
-          // JS smooth scrolling ignores the CSS reduced-motion
-          // rule — honor the preference here (Agent 44).
-          const reduce = window.matchMedia(
-            '(prefers-reduced-motion: reduce)',
-          ).matches;
-          target?.scrollIntoView({
-            behavior: reduce ? 'auto' : 'smooth',
-            block: 'start',
-          });
-        });
-      });
-
-      // Storage path copy buttons (Agent 24): Clipboard API
-      // first, hidden-textarea fallback for insecure web origins
-      // (Agent 30 — clipboard is undefined on http:// LAN IPs).
-      document.querySelectorAll('[data-copy-target]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const target = status(
-            (btn as HTMLElement).dataset.copyTarget!,
-          );
-          const text = target.textContent ?? '';
-          if (!text || text === '…') return;
-          let ok = false;
-          try {
-            await navigator.clipboard.writeText(text);
-            ok = true;
-          } catch {
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.append(ta);
-            ta.select();
-            try {
-              ok = document.execCommand('copy');
-            } catch {
-              ok = false;
-            }
-            ta.remove();
-          }
-          if (ok) {
-            const use = btn.querySelector('use');
-            use?.setAttribute('href', '#i-check');
-            window.setTimeout(
-              () => use?.setAttribute('href', '#i-copy'),
-              1500,
-            );
-            toast('Copied to clipboard');
-          } else {
-            toast('Copy failed — the path is shown in Settings.', 'alert');
-          }
-        });
-      });
+      // Settings screen (V2 Wave 4, theme included): implementation
+      // in src/lib/settings.ts behind a state factory. Aliases keep
+      // the boot call sites below unchanged.
+      const settingsScreen = createSettings({ status });
+      const applyTheme = settingsScreen.applyTheme;
+      const persistSettings = settingsScreen.persistSettings;
+      settingsScreen.mount();
 
       // ---- library feed -------------------------------------------------------
       // The UX laws this implements (the Rune build broke all three):
@@ -2055,7 +1894,7 @@ import '../styles/global.css';
         status('set-version').textContent = 'Version ' + boot.appVersion;
         status('set-dl-dir').textContent = boot.downloadsDir;
         status('set-data-dir').textContent = boot.dataDir;
-        currentSettings = boot.settings;
+        settingsScreen.setSettings(boot.settings);
         servers.setSources(boot.sources);
         renderServers();
         sel('set-connections').value = String(boot.settings.connections);
