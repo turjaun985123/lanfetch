@@ -332,11 +332,13 @@ export function createDetail(ctx: DetailCtx): DetailScreen {
       renderFiles(detail);
       if (main) main.scrollTop = top;
       if (focusUrl) {
-        ctx.status('detail-files')
-          .querySelector(
-            '[data-file-url="' + CSS.escape(focusUrl) + '"] button',
-          )
-          ?.focus({ preventScroll: true });
+        (
+          ctx
+            .status('detail-files')
+            .querySelector(
+              '[data-file-url="' + CSS.escape(focusUrl) + '"] button',
+            ) as HTMLElement | null
+        )?.focus({ preventScroll: true });
       }
     } catch {
       // keep the current paint; the next event retries
@@ -395,7 +397,7 @@ export function createDetail(ctx: DetailCtx): DetailScreen {
     const meta = ctx.status('detail-meta');
     meta.replaceChildren();
     const chips: string[] = [];
-    if (t.year) chips.push(t.year);
+    if (t.year) chips.push(String(t.year));
     chips.push(t.category, t.sourceName);
     if (t.language) chips.push(t.language);
     if (t.copies > 1) chips.push(t.copies + ' copies');
