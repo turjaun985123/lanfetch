@@ -1,7 +1,53 @@
-// Typed Tauri invoke wrappers — the only place command names appear
-// in the frontend. Types mirror src-tauri/src/dto.rs and are pinned
+// Typed command wrappers — the only place command names appear in
+// the frontend. Types mirror src-tauri/src/dto.rs and are pinned
 // by the golden-fixture contract tests (QA plan).
-import { invoke } from '@tauri-apps/api/core';
+//
+// Transport is chosen once at runtime: inside the desktop app the
+// calls go over Tauri IPC; in a browser (web mode, `lanfetch
+// --serve`) the identical commands are POSTed to the server's
+// /api/* endpoints, and the downloads-changed event arrives over
+// SSE instead of a Tauri event. Nothing else in the UI knows or
+// cares which transport is live.
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+
+const isTauri =
+  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+async function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (isTauri) return tauriInvoke<T>(cmd, args);
+  const res = await fetch('/api/' + cmd, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args ?? {}),
+  });
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message =
+      data && typeof data === 'object' && 'error' in data
+        ? String((data as { error: unknown }).error)
+        : 'request failed: ' + res.status;
+    throw new Error(message);
+  }
+  return data as T;
+}
+
+/** Subscribe to the manager's downloads-changed stamp, over
+ * whichever transport is live. */
+export function onDownloadsChanged(cb: (stamp: number) => void): void {
+  if (isTauri) {
+    void listen<number>('downloads-changed', (e) => cb(e.payload));
+    return;
+  }
+  const source = new EventSource('/api/events');
+  source.onmessage = (e) => {
+    const stamp = Number(e.data);
+    if (Number.isFinite(stamp)) cb(stamp);
+  };
+}
 
 export interface SettingsDto {
   connections: number;

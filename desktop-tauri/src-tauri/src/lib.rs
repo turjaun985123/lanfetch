@@ -13,6 +13,7 @@ pub mod dto;
 pub mod manager;
 pub mod meta;
 pub mod poster_service;
+pub mod serve;
 pub mod store;
 
 use commands::AppState;

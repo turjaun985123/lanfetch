@@ -325,7 +325,6 @@ import '../styles/global.css';
     </style>
 
     <script>
-      import { listen } from '@tauri-apps/api/event';
       import {
         addSource,
         clearCompletedDownloads,
@@ -335,6 +334,7 @@ import '../styles/global.css';
         getCategories,
         getDownloads,
         getTitleDetail,
+        onDownloadsChanged,
         pauseDownload,
         posterSrcs,
         probeSources,
@@ -570,8 +570,8 @@ import '../styles/global.css';
           }
         }
       }
-      void listen<number>('downloads-changed', (e) => {
-        if (e.payload > lastStamp) void refreshDownloads();
+      onDownloadsChanged((stamp) => {
+        if (stamp > lastStamp) void refreshDownloads();
       });
       document
         .getElementById('tr-clear')!
