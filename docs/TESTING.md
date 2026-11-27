@@ -83,19 +83,19 @@ pass/fail. Mapping to the V2 brief Part 5 acceptance criteria:
 | 4 | Segmented download | `segmented_download_byte_exact` — N ranges assembled in order, checksum match |
 | 5 | Range unsupported | `range_ignored_falls_back_to_single_stream` — server answers 200 to Range requests |
 | 6 | Range falsely advertised | `range_206_wrong_content_range_rejected` — 206 with mismatched `Content-Range` must fail, never complete corrupt |
-| 7 | Pause/resume | `pause_then_resume_completes` — pause mid-transfer, resume, checksum match; `pause_responsiveness_bounded` — pause during a stalled read takes effect within the documented bound |
+| 7 | Pause/resume | `pause_then_resume_completes` — pause mid-transfer, resume, checksum match; `pause_during_stalled_read_bounded` — pause during a stalled read takes effect within the documented bound |
 | 8 | Retry after failure | `retry_after_probe_failure` — first probe fails (server down), retry after server up must re-probe and complete (regression test for the Wave 0 P0 ready-flag deadlock); `retry_after_mid_download_failure` |
 | 9 | Recovery after restart | `kill_and_reload_resumes_from_checkpoint` — drop the manager mid-download, reload from the store, complete byte-exact |
 | 10 | Server file changed | `validator_change_restarts_safely` — ETag/Last-Modified or length changes between probe and resume → plan resets, no mixed-content file |
-| 11 | Redirects | `redirect_same_host_followed`, `redirect_cross_host_rejected`, `redirect_https_to_http_rejected` |
+| 11 | Redirects | `redirect_same_host_followed`, `redirect_cross_host_rejected`, `redirect_policy_rejects_cross_host_and_downgrade` (unit; the downgrade case needs a TLS endpoint the std-only harness cannot serve) |
 | 12 | Authentication failures | `status_401_403_fail_with_typed_error` — no retry loop, error kind surfaces to the DTO |
 | 13 | Rate limiting | `status_429_honors_retry_after` — bounded backoff, eventually completes or fails typed, never hammers |
 | 14 | Disk-full | `disk_full_fails_cleanly` — target on a size-capped tmpfs (or write-failure injection): task fails typed, `.part` state stays consistent, no false completion |
 | 15 | No corrupt completions | Property across all tests above: a task may reach Completed **only** with byte count == known total and checksum == source; `part_deleted_while_closed_is_reconciled` — `.part` truncated/deleted while the app is closed → missing ranges re-fetched, never zero-filled holes |
 | 16 | No duplicate workers | `duplicate_enqueue_same_url_single_task` — concurrent enqueues of one URL yield one task, one worker set |
 | 17 | Bounded resources | `many_tasks_respect_concurrency_cap` — running workers never exceed `max_concurrent`; connection/thread counts asserted |
-| 18 | No permanently stuck tasks | `stalled_server_eventually_fails` — drip server that stops making progress → task fails typed within the documented deadline; `pause_during_probe_honored` |
-| 19 | Task persistence | `store_roundtrip_preserves_tasks` — queue, segments, validators, states survive save/load; `corrupt_store_falls_back_to_bak`; `legacy_store_still_loads` — a 1.6.0-format fixture loads without dropping tasks |
+| 18 | No permanently stuck tasks | `stalled_server_eventually_fails` — drip server that stops making progress → task fails typed within the documented deadline; `pause_during_reprobe_of_planned_task_is_honored` |
+| 19 | Task persistence | `store_roundtrip_preserves_tasks` — queue, segments, validators, states survive save/load; `corrupt_main_falls_back_to_bak`; `legacy_store_still_loads` — a 1.6.0-format fixture loads without dropping tasks |
 | 20 | Error reporting | `errors_are_typed_not_strings` — each failure mode asserts its error kind/code, not a message substring |
 
 Plus lifecycle unit tests for the state machine itself: every legal
