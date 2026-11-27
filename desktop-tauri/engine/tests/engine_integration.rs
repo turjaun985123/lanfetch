@@ -586,3 +586,31 @@ fn feed_page_bounded_against_stalling_listings() {
         "unfetched folders remain, has_more must stay honest"
     );
 }
+
+#[test]
+fn same_filename_from_two_servers_both_survive() {
+    // Audit H1: identical filenames from different URLs used to
+    // share one .part and one final path — interleaved bytes and
+    // silent overwrites. The second task now gets a counter name.
+    let home = fresh_home("collision");
+    let body_a = Arc::new(body_pattern(120_000));
+    let mut raw_b = body_pattern(90_000);
+    raw_b.reverse();
+    let body_b = Arc::new(raw_b);
+    let server_a = TestServer::start(range_server(Arc::clone(&body_a)));
+    let server_b = TestServer::start(range_server(Arc::clone(&body_b)));
+    let mgr = Manager::load();
+    mgr.enqueue(server_a.url("same.mkv"), "same.mkv".to_string());
+    mgr.enqueue(server_b.url("same.mkv"), "same.mkv".to_string());
+    let ids: Vec<u64> = {
+        let tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].name, "same.mkv");
+        assert_eq!(tasks[1].name, "same (2).mkv");
+        tasks.iter().map(|t| t.id).collect()
+    };
+    wait_for(&mgr, ids[0], DlState::Completed, Duration::from_secs(60));
+    wait_for(&mgr, ids[1], DlState::Completed, Duration::from_secs(60));
+    assert_eq!(final_bytes(&home, "same.mkv"), *body_a);
+    assert_eq!(final_bytes(&home, "same (2).mkv"), *body_b);
+}

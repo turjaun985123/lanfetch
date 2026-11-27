@@ -153,6 +153,31 @@ fn state_file() -> PathBuf {
     data_dir().join("downloads.json")
 }
 
+/// Audit H1: every on-disk path (`.part`, final file, remove)
+/// derives from the task name alone, so two tasks must never
+/// share one — the same filename from two servers otherwise
+/// interleaves bytes in a single `.part` and the second
+/// completion silently overwrites the first. When the desired
+/// name is taken, insert a browser-style counter before the
+/// extension: `movie.mkv` → `movie (2).mkv` → `movie (3).mkv`.
+fn unique_name(desired: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(desired) {
+        return desired.to_string();
+    }
+    let (stem, ext) = match desired.rfind('.') {
+        Some(i) if i > 0 => (&desired[..i], &desired[i..]),
+        _ => (desired, ""),
+    };
+    let mut n = 2;
+    loop {
+        let candidate = format!("{stem} ({n}){ext}");
+        if !taken(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 /// CP-4 reconciliation: clamp a task's segment plan to what the .part
 /// file actually holds, and return the (possibly adjusted) plan. The
 /// file — not the persisted JSON — is ground truth: bytes the file
@@ -221,7 +246,16 @@ impl Manager {
         if let Some(saved) = saved {
             {
                 let mut tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                // H1: a pre-fix downloads.json can hold duplicate
+                // names (two tasks sharing one .part). Rename the
+                // later duplicates with the counter scheme; their
+                // old shared .part stays with the first task, and
+                // CP-4 reconciliation zeroes the renamed task's
+                // unprovable progress on its next launch.
+                let mut used_names: Vec<String> = Vec::new();
                 for p in saved {
+                    let unique = unique_name(&p.name, |n| used_names.iter().any(|u| u == n));
+                    used_names.push(unique.clone());
                     let downloaded: u64 = p.segments.iter().map(|s| s.done).sum();
                     let was_ready = !p.segments.is_empty();
                     let progress = Arc::new(Progress::new(p.total));
@@ -230,7 +264,7 @@ impl Manager {
                     tasks.push(Task {
                         id: p.id,
                         url: p.url,
-                        name: p.name,
+                        name: unique,
                         total: p.total,
                         validator: p.validator,
                         segments: p.segments,
@@ -374,10 +408,14 @@ impl Manager {
                 Act::Retry(t.id)
             } else {
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                // H1: the stored name must be unique across all
+                // tasks — every path derives from it.
+                let clean = sanitize_keep_ext(&name);
+                let unique = unique_name(&clean, |n| tasks.iter().any(|t| t.name == n));
                 tasks.push(Task {
                     id,
                     url: url.clone(),
-                    name: sanitize_keep_ext(&name),
+                    name: unique,
                     total: 0,
                     validator: None,
                     segments: Vec::new(),
@@ -855,6 +893,33 @@ impl Manager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unique_name_counters_collisions() {
+        // H1: free names pass through; collisions get the
+        // browser-style counter before the extension.
+        let none: Vec<String> = Vec::new();
+        assert_eq!(
+            unique_name("movie.mkv", |n| none.iter().any(|u| u == n)),
+            "movie.mkv"
+        );
+        let one = vec!["movie.mkv".to_string()];
+        assert_eq!(
+            unique_name("movie.mkv", |n| one.iter().any(|u| u == n)),
+            "movie (2).mkv"
+        );
+        let two = vec!["movie.mkv".to_string(), "movie (2).mkv".to_string()];
+        assert_eq!(
+            unique_name("movie.mkv", |n| two.iter().any(|u| u == n)),
+            "movie (3).mkv"
+        );
+        // Extensionless names counter at the end.
+        let plain = vec!["README".to_string()];
+        assert_eq!(
+            unique_name("README", |n| plain.iter().any(|u| u == n)),
+            "README (2)"
+        );
+    }
 
     #[test]
     fn stamp_advances_on_transitions() {
