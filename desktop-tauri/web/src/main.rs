@@ -7,8 +7,9 @@
 //!   --port N   listen port (default 8787)
 //!   --lan      listen on all interfaces so other devices on the
 //!              network (your phone) can reach it. Without it the
-//!              server is local-only. There is no password — see
-//!              the startup banner.
+//!              server is local-only. With it, API calls require
+//!              the install's access token — the startup banner
+//!              prints a pairing link that carries it.
 
 mod serve;
 

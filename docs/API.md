@@ -14,6 +14,11 @@ All request/response field names are camelCase, exactly as serialized by
 `engine/src/dto.rs`. Types below are the wire types (Rust `u64`/`usize` →
 JSON number, `Option<T>` → `T | null`).
 
+Mutations (POST/PUT/PATCH) on either HTTP surface must declare
+`Content-Type: application/json`; the server answers 415 otherwise. That
+requirement doubles as the CSRF guard: a cross-origin browser page cannot
+set the header without a preflight, and this server never grants one.
+
 ## Compatibility rule (non-negotiable)
 
 The legacy surface is **frozen**: `POST /api/<cmd>`, `GET /api/events`, and

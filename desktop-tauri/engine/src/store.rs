@@ -138,6 +138,105 @@ pub fn save_settings(s: &Settings) {
     }
 }
 
+// ------------------------------------------------------------- web token
+
+/// The web API access token (ADR-003): 256-bit, hex-encoded, stored
+/// as `web-token` in the data dir with owner-only permissions. The
+/// web server requires it on every `/api/*` call when bound
+/// non-loopback (`--lan`); loopback stays tokenless. Written directly
+/// (not via `write_atomic`) so no `.bak` copy of the secret ever
+/// lands on disk with looser permissions.
+pub fn web_token_path() -> PathBuf {
+    dir().join("web-token")
+}
+
+fn generate_token() -> String {
+    let mut bytes = [0u8; 32];
+    let filled = std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| {
+            use std::io::Read;
+            f.read_exact(&mut bytes)
+        })
+        .is_ok();
+    if !filled {
+        // Last-resort mixing if /dev/urandom is somehow unavailable
+        // (no shipped target allows that): time + pid, never a
+        // constant — a predictable token would be worse than none.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (now >> ((i % 8) * 8)) as u8
+                ^ (std::process::id() as u8)
+                    .wrapping_mul(31)
+                    .wrapping_add(i as u8);
+        }
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn read_token_at(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let t = raw.trim().to_string();
+    if t.len() >= 32 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+fn write_token_at(path: &std::path::Path, token: &str) {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    if let Ok(mut f) = opts.open(path) {
+        let _ = f.write_all(token.as_bytes());
+        let _ = f.sync_all();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+fn load_or_create_token_at(path: &std::path::Path) -> String {
+    if let Some(t) = read_token_at(path) {
+        return t;
+    }
+    let token = generate_token();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    write_token_at(path, &token);
+    token
+}
+
+/// Load the install's web token, generating and persisting one on
+/// first run. Idempotent: an existing valid token is returned as-is.
+pub fn load_or_create_web_token() -> String {
+    load_or_create_token_at(&web_token_path())
+}
+
+/// Replace the web token, invalidating every paired browser.
+pub fn regenerate_web_token() -> String {
+    let token = generate_token();
+    let _ = std::fs::create_dir_all(dir());
+    write_token_at(&web_token_path(), &token);
+    token
+}
+
+/// The current web token, if one has been created.
+pub fn current_web_token() -> Option<String> {
+    read_token_at(&web_token_path())
+}
+
 // ----------------------------------------------------------------- sources
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +321,24 @@ mod tests {
         );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(bak_path(&path));
+    }
+
+    #[test]
+    fn web_token_lifecycle() {
+        let dir = std::env::temp_dir().join(format!("lanfetch-tok-{}", std::process::id()));
+        let path = dir.join("web-token");
+        let _ = std::fs::remove_dir_all(&dir);
+        let first = load_or_create_token_at(&path);
+        assert_eq!(first.len(), 64, "256-bit token, hex-encoded");
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        // Idempotent: a second load returns the same token.
+        assert_eq!(load_or_create_token_at(&path), first);
+        // A corrupt file is replaced, never trusted.
+        std::fs::write(&path, "not-a-token").unwrap();
+        let healed = load_or_create_token_at(&path);
+        assert_ne!(healed, first);
+        assert_eq!(healed.len(), 64);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

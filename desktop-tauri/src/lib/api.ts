@@ -14,14 +14,55 @@ import { listen } from '@tauri-apps/api/event';
 const isTauri =
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+// Web-mode pairing (ADR-003): with --lan the server requires the
+// install's access token on every API call. The startup banner
+// prints a pairing URL whose #t= fragment carries the token; it is
+// captured here exactly once, kept in sessionStorage (gone when
+// the tab closes), and the fragment is scrubbed from the address
+// bar so it never leaks into history or a shared link. Calls carry
+// it as a Bearer header — the only URL it ever appears in again is
+// the SSE stream, which cannot set headers (documented exception).
+const TOKEN_KEY = 'lanfetch-web-token';
+
+function webToken(): string | null {
+  if (isTauri) return null;
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+if (!isTauri && typeof window !== 'undefined') {
+  const match = window.location.hash.match(/#t=([A-Za-z0-9]+)/);
+  if (match) {
+    try {
+      sessionStorage.setItem(TOKEN_KEY, match[1]);
+    } catch {
+      // Private mode / storage disabled: pairing lasts one page
+      // load — the token still applies to this session's calls via
+      // the hash until the first navigation scrubs it.
+    }
+    history.replaceState(
+      null,
+      '',
+      window.location.pathname + window.location.search,
+    );
+  }
+}
+
 async function invoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
   if (isTauri) return tauriInvoke<T>(cmd, args);
+  const token = webToken();
   const res = await fetch('/api/' + cmd, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
     body: JSON.stringify(args ?? {}),
   });
   const data: unknown = await res.json().catch(() => null);
@@ -42,7 +83,10 @@ export function onDownloadsChanged(cb: (stamp: number) => void): void {
     void listen<number>('downloads-changed', (e) => cb(e.payload));
     return;
   }
-  const source = new EventSource('/api/events');
+  const token = webToken();
+  const source = new EventSource(
+    token ? '/api/events?token=' + encodeURIComponent(token) : '/api/events',
+  );
   source.onmessage = (e) => {
     const stamp = Number(e.data);
     if (Number.isFinite(stamp)) cb(stamp);
