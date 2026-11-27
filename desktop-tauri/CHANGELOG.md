@@ -21,6 +21,12 @@ architecture:
   over IPC — and download progress arrives as pushed events,
   not polling.
 
+Two editions ship from one codebase, sharing one engine crate:
+the desktop app (this .deb), and **lanfetch-web** — a single
+self-contained binary with the UI embedded and no GUI libraries,
+for running headless and driving from any browser
+(`lanfetch-web --lan`, then open the printed address).
+
 Everything the Rune build had works here: poster grid with
 search and favorites, season-grouped detail with per-file
 quality, live transfers with speed and ETA, pause/resume per

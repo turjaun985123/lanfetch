@@ -1,0 +1,22 @@
+[package]
+name = "lanfetch-web"
+version = "1.6.0"
+edition = "2021"
+license = "MIT"
+description = "LanFetch Web — the single-binary web edition: engine + embedded UI, no GUI dependencies"
+
+[[bin]]
+name = "lanfetch-web"
+path = "src/main.rs"
+
+[dependencies]
+lanfetch-engine = { path = "../engine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+include_dir = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

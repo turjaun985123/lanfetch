@@ -2035,10 +2035,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lanfetch-engine"
+version = "1.6.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "lanfetch-tauri"
 version = "1.6.0"
 dependencies = [
- "include_dir",
+ "lanfetch-engine",
  "regex",
  "serde",
  "serde_json",
@@ -2046,6 +2056,16 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "ureq",
+]
+
+[[package]]
+name = "lanfetch-web"
+version = "1.6.0"
+dependencies = [
+ "include_dir",
+ "lanfetch-engine",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

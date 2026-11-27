@@ -6,15 +6,12 @@
 //! the shell is new: `dto` defines the IPC shapes and `commands` the
 //! Tauri command surface over the carried engine.
 
-pub mod catalog;
 pub mod commands;
-pub mod core;
-pub mod dto;
-pub mod manager;
-pub mod meta;
-pub mod poster_service;
-pub mod serve;
-pub mod store;
+
+/// The engine lives in its own crate (shared with the standalone
+/// web binary); re-exported at the crate root so existing paths
+/// (`crate::catalog`, `crate::manager`, ...) keep working.
+pub use lanfetch_engine::{catalog, core, dto, manager, meta, poster_service, store};
 
 use commands::AppState;
 use std::sync::{Arc, Mutex};

@@ -1,4 +1,4 @@
-//! Web mode — `lanfetch --serve [--port 8787] [--lan]`.
+//! LanFetch Web server — `lanfetch-web [--port 8787] [--lan]`.
 //!
 //! The same engine, the same Astro UI, served over HTTP so the app
 //! runs in a browser: on this machine, or (with --lan) on a phone
@@ -25,15 +25,15 @@ use std::time::Duration;
 use include_dir::{include_dir, Dir};
 use serde_json::{json, Value};
 
-use crate::commands::{AppState, CatalogState};
-use crate::core;
-use crate::dto::{
+use lanfetch_engine::core;
+use lanfetch_engine::dto::{
     BootstrapDto, CategoryDto, DownloadListDto, FeedPageDto, SettingsDto, SourceDto,
     SourceProbeDto, TaskDto, TitleDetailDto, TitleDto,
 };
-use crate::manager::{DlState, Manager};
-use crate::poster_service;
-use crate::store::SourceItem;
+use lanfetch_engine::manager::{DlState, Manager};
+use lanfetch_engine::poster_service;
+use lanfetch_engine::state::{AppState, CatalogState};
+use lanfetch_engine::store::SourceItem;
 
 static DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../dist");
 
@@ -59,8 +59,8 @@ pub fn run(port: u16, lan: bool) -> ! {
     }
     let state = Arc::new(AppState {
         manager,
-        sources: Mutex::new(crate::store::load_sources()),
-        favorites: Mutex::new(crate::store::load_favorites()),
+        sources: Mutex::new(lanfetch_engine::store::load_sources()),
+        favorites: Mutex::new(lanfetch_engine::store::load_favorites()),
         posters: Arc::new(poster_service::PosterService::new()),
         catalog: Arc::new(Mutex::new(CatalogState::default())),
     });
@@ -338,10 +338,12 @@ fn dispatch(state: &AppState, cmd: &str, args: &Value) -> Result<Value, String> 
             sources: sources_dto(state),
             favorites: lock(&state.favorites).clone(),
             downloads: download_list(&state.manager),
-            downloads_dir: crate::manager::downloads_dir()
+            downloads_dir: lanfetch_engine::manager::downloads_dir()
                 .to_string_lossy()
                 .into_owned(),
-            data_dir: crate::manager::data_dir().to_string_lossy().into_owned(),
+            data_dir: lanfetch_engine::manager::data_dir()
+                .to_string_lossy()
+                .into_owned(),
         }),
         "poster_srcs" => {
             let urls: Vec<String> = args
@@ -440,7 +442,7 @@ fn dispatch(state: &AppState, cmd: &str, args: &Value) -> Result<Value, String> 
         }
         "redownload_download" => to_json(redownload(state, arg_u64(args, "id")?)?),
         "update_settings" => {
-            let settings = crate::store::Settings {
+            let settings = lanfetch_engine::store::Settings {
                 connections: (arg_u64(args, "connections")? as u32).clamp(1, 32),
                 max_concurrent: (arg_u64(args, "maxConcurrent")? as u32).clamp(1, 16),
                 theme: arg_str(args, "theme")?,
@@ -461,7 +463,11 @@ fn dispatch(state: &AppState, cmd: &str, args: &Value) -> Result<Value, String> 
             arg_str(args, "name")?,
             arg_bool(args, "enabled"),
         )?),
-        "check_update" => to_json(crate::catalog::check_desktop_update().ok().flatten()),
+        "check_update" => to_json(
+            lanfetch_engine::catalog::check_desktop_update()
+                .ok()
+                .flatten(),
+        ),
         _ => Err(format!("unknown command: {cmd}")),
     }
 }
@@ -526,9 +532,9 @@ fn get_categories(state: &AppState, refresh: bool) -> Vec<CategoryDto> {
     }
     let sources = enabled_sources(state);
     if refresh {
-        crate::catalog::clear_listing_cache();
+        lanfetch_engine::catalog::clear_listing_cache();
     }
-    let categories = crate::catalog::discover_categories(&sources);
+    let categories = lanfetch_engine::catalog::discover_categories(&sources);
     let dtos: Vec<CategoryDto> = categories.iter().map(CategoryDto::from).collect();
     let mut catalog = lock(&state.catalog);
     catalog.categories = categories;
@@ -545,7 +551,8 @@ fn feed_open(state: &AppState, category: Option<String>) -> Result<FeedPageDto, 
     }
     catalog.generation += 1;
     let generation = catalog.generation;
-    let mut feed = crate::catalog::FeedSession::new(&catalog.categories, category.as_deref());
+    let mut feed =
+        lanfetch_engine::catalog::FeedSession::new(&catalog.categories, category.as_deref());
     let page = feed.next_page(FEED_PAGE_SIZE);
     for t in &page {
         catalog.titles.insert(t.folder_url.clone(), t.clone());
@@ -598,7 +605,7 @@ fn feed_next(state: &AppState, generation: u64) -> FeedPageDto {
 fn search_titles(state: &AppState, query: &str) -> Vec<TitleDto> {
     let sources = enabled_sources(state);
     let favorites = favorites_set(state);
-    let results = crate::catalog::search(&sources, query);
+    let results = lanfetch_engine::catalog::search(&sources, query);
     {
         let mut catalog = lock(&state.catalog);
         for t in &results {
@@ -621,7 +628,7 @@ fn get_title_detail(state: &AppState, folder_url: &str) -> Result<TitleDetailDto
             .cloned()
             .ok_or_else(|| "title is not in the current session".to_string())?
     };
-    let hydrated = crate::catalog::hydrate_and_load_files(title);
+    let hydrated = lanfetch_engine::catalog::hydrate_and_load_files(title);
     {
         let mut catalog = lock(&state.catalog);
         catalog
@@ -631,7 +638,7 @@ fn get_title_detail(state: &AppState, folder_url: &str) -> Result<TitleDetailDto
     let files = hydrated
         .files
         .iter()
-        .map(|f| crate::dto::FileDto::new(f, state.manager.task_by_url(&f.file_url)))
+        .map(|f| lanfetch_engine::dto::FileDto::new(f, state.manager.task_by_url(&f.file_url)))
         .collect();
     Ok(TitleDetailDto {
         title: TitleDto::new(&hydrated, favorites.contains(&hydrated.folder_url)),
@@ -652,26 +659,27 @@ fn toggle_favorite(state: &AppState, folder_url: String) -> bool {
     };
     {
         let favorites = lock(&state.favorites);
-        crate::store::save_favorites(&favorites);
+        lanfetch_engine::store::save_favorites(&favorites);
     }
-    let mut snapshots = crate::store::load_favorite_titles();
+    let mut snapshots = lanfetch_engine::store::load_favorite_titles();
     snapshots.retain(|s| s.folder_url != folder_url);
     if now_favorite {
         let catalog = lock(&state.catalog);
         if let Some(title) = catalog.titles.get(&folder_url) {
-            snapshots.push(crate::store::FavTitle::from(title));
+            snapshots.push(lanfetch_engine::store::FavTitle::from(title));
         }
     }
-    crate::store::save_favorite_titles(&snapshots);
+    lanfetch_engine::store::save_favorite_titles(&snapshots);
     now_favorite
 }
 
 fn get_favorites(state: &AppState) -> Vec<TitleDto> {
     let favorites = favorites_set(state);
-    let mut snapshots: Vec<crate::store::FavTitle> = crate::store::load_favorite_titles()
-        .into_iter()
-        .filter(|s| favorites.contains(&s.folder_url))
-        .collect();
+    let mut snapshots: Vec<lanfetch_engine::store::FavTitle> =
+        lanfetch_engine::store::load_favorite_titles()
+            .into_iter()
+            .filter(|s| favorites.contains(&s.folder_url))
+            .collect();
     snapshots.sort_by_key(|a| a.title.to_lowercase());
     {
         let mut catalog = lock(&state.catalog);
@@ -679,7 +687,7 @@ fn get_favorites(state: &AppState) -> Vec<TitleDto> {
             catalog
                 .titles
                 .entry(s.folder_url.clone())
-                .or_insert_with(|| crate::catalog::Title {
+                .or_insert_with(|| lanfetch_engine::catalog::Title {
                     folder_url: s.folder_url.clone(),
                     source_name: s.source_name.clone(),
                     category: s.category.clone(),
@@ -731,7 +739,10 @@ fn redownload(state: &AppState, id: u64) -> Result<DownloadListDto, String> {
         if task.state != DlState::Completed {
             return Err("only a completed download can be redownloaded".to_string());
         }
-        if crate::manager::downloads_dir().join(&task.name).exists() {
+        if lanfetch_engine::manager::downloads_dir()
+            .join(&task.name)
+            .exists()
+        {
             return Err("the file is still in the downloads folder".to_string());
         }
         (task.url.clone(), task.name.clone())
@@ -764,7 +775,7 @@ fn add_source(state: &AppState, name: String, root_url: String) -> Result<Vec<So
             enabled: true,
             custom: true,
         });
-        crate::store::save_sources(&sources);
+        lanfetch_engine::store::save_sources(&sources);
     }
     invalidate_catalog(state);
     Ok(sources_dto(state))
@@ -781,7 +792,7 @@ fn remove_source(state: &AppState, name: String) -> Result<Vec<SourceDto>, Strin
             _ => {}
         }
         sources.retain(|s| s.name != name);
-        crate::store::save_sources(&sources);
+        lanfetch_engine::store::save_sources(&sources);
     }
     invalidate_catalog(state);
     Ok(sources_dto(state))
@@ -798,7 +809,7 @@ fn set_source_enabled(
             None => return Err("No such server.".to_string()),
             Some(s) => s.enabled = enabled,
         }
-        crate::store::save_sources(&sources);
+        lanfetch_engine::store::save_sources(&sources);
     }
     invalidate_catalog(state);
     Ok(sources_dto(state))
