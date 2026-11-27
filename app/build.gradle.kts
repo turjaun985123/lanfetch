@@ -13,8 +13,8 @@ android {
         applicationId = "com.lanfetch.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.3.10"
+        versionCode = 15
+        versionName = "1.3.11"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
