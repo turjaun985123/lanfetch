@@ -420,7 +420,12 @@ impl Segment {
         if self.end == u64::MAX {
             u64::MAX
         } else {
-            self.end - self.start + 1
+            // Checked: corrupt geometry (end < start) — only
+            // reachable via hand-edited persisted state — must
+            // not wrap in release or panic in debug builds
+            // (audit slices 1 + 8). Invalid geometry has no
+            // length; restore validation drops such plans.
+            self.end.checked_sub(self.start).map_or(0, |d| d + 1)
         }
     }
     pub fn remaining(&self) -> u64 {
@@ -850,6 +855,30 @@ pub fn run_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segment_len_never_wraps_on_corrupt_geometry() {
+        // Audit slices 1 + 8: end < start must yield 0, not a
+        // wrapped huge length (release) or a panic (debug).
+        let bad = Segment {
+            start: 100,
+            end: 50,
+            done: 0,
+        };
+        assert_eq!(bad.len(), 0);
+        let ok = Segment {
+            start: 10,
+            end: 19,
+            done: 3,
+        };
+        assert_eq!(ok.len(), 10);
+        let open = Segment {
+            start: 0,
+            end: u64::MAX,
+            done: 0,
+        };
+        assert_eq!(open.len(), u64::MAX);
+    }
 
     #[test]
     fn eta_formats_minutes_hours_and_none() {

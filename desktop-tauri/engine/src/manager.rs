@@ -166,6 +166,24 @@ fn catch_engine_panic<T>(f: impl FnOnce() -> T) -> Option<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).ok()
 }
 
+/// Audit (slices 1 + 2): a persisted segment plan is untrusted
+/// input. Structurally invalid geometry (end before start) drops
+/// the whole plan — the task then follows the existing no-plan
+/// restore paths and re-probes; merely optimistic `done` values
+/// are clamped to the segment's real length.
+fn validate_plan(mut segments: Vec<Segment>) -> Vec<Segment> {
+    for s in &mut segments {
+        if s.end != u64::MAX && s.end < s.start {
+            return Vec::new();
+        }
+        let len = s.len();
+        if s.done > len {
+            s.done = len;
+        }
+    }
+    segments
+}
+
 /// Audit H1: every on-disk path (`.part`, final file, remove)
 /// derives from the task name alone, so two tasks must never
 /// share one — the same filename from two servers otherwise
@@ -269,8 +287,11 @@ impl Manager {
                 for p in saved {
                     let unique = unique_name(&p.name, |n| used_names.iter().any(|u| u == n));
                     used_names.push(unique.clone());
-                    let downloaded: u64 = p.segments.iter().map(|s| s.done).sum();
-                    let was_ready = !p.segments.is_empty();
+                    // Validate before anything sums or trusts the
+                    // plan (audit slices 1 + 2).
+                    let segments = validate_plan(p.segments);
+                    let downloaded: u64 = segments.iter().map(|s| s.done).sum();
+                    let was_ready = !segments.is_empty();
                     let progress = Arc::new(Progress::new(p.total));
                     progress.downloaded.store(downloaded, Ordering::SeqCst);
                     mgr.next_id.fetch_max(p.id + 1, Ordering::SeqCst);
@@ -280,7 +301,7 @@ impl Manager {
                         name: unique,
                         total: p.total,
                         validator: p.validator,
-                        segments: p.segments,
+                        segments,
                         // RC-3 restore mapping: mid-flight at exit
                         // comes back Paused when a plan exists to
                         // resume from; interrupted before its probe
@@ -378,7 +399,28 @@ impl Manager {
                 name: t.name.clone(),
                 total: t.total,
                 validator: t.validator.clone(),
-                segments: t.segments.clone(),
+                segments: {
+                    // RC-1 (audit slice 2): a Running task's real
+                    // progress lives in Progress::live_segments,
+                    // refreshed after every chunk — persist THAT,
+                    // or the 5 s checkpoint saves the launch-time
+                    // plan and a kill loses everything downloaded
+                    // since launch.
+                    if t.state == DlState::Running {
+                        let live = t
+                            .progress
+                            .live_segments
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if live.is_empty() {
+                            t.segments.clone()
+                        } else {
+                            live.clone()
+                        }
+                    } else {
+                        t.segments.clone()
+                    }
+                },
                 state: t.state,
                 error: t.error.clone(),
             })
@@ -948,6 +990,33 @@ impl Manager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_plan_drops_invalid_geometry_and_clamps_done() {
+        // Audit slices 1 + 2: persisted plans are untrusted.
+        let invalid = vec![Segment {
+            start: 100,
+            end: 50,
+            done: 0,
+        }];
+        assert!(validate_plan(invalid).is_empty());
+        let optimistic = vec![Segment {
+            start: 0,
+            end: 99,
+            done: 10_000,
+        }];
+        let fixed = validate_plan(optimistic);
+        assert_eq!(fixed.len(), 1);
+        assert_eq!(fixed[0].done, 100);
+        // The open-ended (unknown length) segment is valid and
+        // its done is not clamped against the sentinel length.
+        let open = vec![Segment {
+            start: 0,
+            end: u64::MAX,
+            done: 500,
+        }];
+        assert_eq!(validate_plan(open)[0].done, 500);
+    }
 
     #[test]
     fn panic_containment_returns_none_and_keeps_values() {

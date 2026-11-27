@@ -127,8 +127,24 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    /// The write-path bounds (API.md: connections 1–32,
+    /// max_concurrent 1–16), applied on load as well as on write.
+    /// A hand-edited or corrupt settings.json must not be able to
+    /// spin the probe planner (connections = u32::MAX would plan
+    /// ~4 billion segments) or silently remove the scheduler cap
+    /// (audit slices 2 + 10).
+    pub fn clamped(mut self) -> Self {
+        self.connections = self.connections.clamp(1, 32);
+        self.max_concurrent = self.max_concurrent.clamp(1, 16);
+        self
+    }
+}
+
 pub fn load_settings() -> Settings {
-    read_json(&dir().join("settings.json")).unwrap_or_default()
+    read_json(&dir().join("settings.json"))
+        .unwrap_or_default()
+        .clamped()
 }
 
 pub fn save_settings(s: &Settings) {
@@ -321,6 +337,23 @@ mod tests {
         );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(bak_path(&path));
+    }
+
+    #[test]
+    fn settings_clamped_to_write_path_bounds() {
+        // Audit slices 2 + 10: values from disk get the same
+        // clamps the API write paths apply.
+        let wild = Settings {
+            connections: u32::MAX,
+            max_concurrent: 0,
+            ..Settings::default()
+        }
+        .clamped();
+        assert_eq!(wild.connections, 32);
+        assert_eq!(wild.max_concurrent, 1);
+        let sane = Settings::default().clamped();
+        assert_eq!(sane.connections, 8);
+        assert_eq!(sane.max_concurrent, 3);
     }
 
     #[test]
