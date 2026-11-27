@@ -48,6 +48,8 @@
   --on-accent-container: #171f99;
   --overlay: #ffffff;
   --scrim: rgb(20 24 26 / 0.4);
+  --hero-fade: rgb(243 244 245 / 0.45);
+  --hero-fade-strong: rgb(243 244 245 / 0.88);
   --focus: #2b39f0;
   --skeleton: #e2e7e5;
   --skeleton-shine: #eef1f0;
@@ -63,7 +65,7 @@
   --surface: #17191c;
   --raised: #202327;
   --hairline: #2a2e32;
-  --border-strong: #565f66;
+  --border-strong: #616a71;
   --ink: #ecefef;
   --ink-2: #a5adac;
   --ink-3: #8a9392;
@@ -74,6 +76,8 @@
   --on-accent-container: #d9ddff;
   --overlay: #26292e;
   --scrim: rgb(0 0 0 / 0.56);
+  --hero-fade: rgb(0 0 0 / 0.3);
+  --hero-fade-strong: rgb(0 0 0 / 0.62);
   --focus: #b3baff;
   --skeleton: #1d2024;
   --skeleton-shine: #262a2f;
@@ -453,10 +457,28 @@ img {
       min-height: 40px;
     }
     .btn-sm {
-      min-height: 36px;
+      min-height: 40px;
     }
     .nav-item {
       min-height: 44px;
+    }
+    .icon-btn {
+      min-width: 40px;
+      min-height: 40px;
+    }
+    .theme-btn {
+      min-height: 40px;
+    }
+    .switch {
+      width: 44px;
+      height: 24px;
+    }
+    .switch::after {
+      width: 18px;
+      height: 18px;
+    }
+    .switch:checked::after {
+      transform: translateX(20px);
     }
   }
 
@@ -567,19 +589,11 @@ img {
     inset: 0;
     background: linear-gradient(
       to bottom,
-      rgb(243 244 245 / 0.45),
-      rgb(243 244 245 / 0.88) 62%,
+      var(--hero-fade),
+      var(--hero-fade-strong) 62%,
       var(--canvas)
     );
     pointer-events: none;
-  }
-  [data-theme='dark'] .hero-scrim {
-    background: linear-gradient(
-      to bottom,
-      rgb(0 0 0 / 0.3),
-      rgb(0 0 0 / 0.62) 62%,
-      var(--canvas)
-    );
   }
   .detail-poster-frame {
     @apply relative aspect-[2/3] overflow-hidden rounded-lg border border-border-strong bg-raised shadow-card;
@@ -601,7 +615,8 @@ img {
 
   /* ---- overlays + transfers + servers + settings (R5) ---- */
   .toast-region {
-    @apply pointer-events-none fixed right-4 flex flex-col items-end gap-2;
+    @apply pointer-events-none fixed flex flex-col items-end gap-2;
+    right: max(16px, env(safe-area-inset-right, 0px));
     bottom: 16px;
     z-index: var(--z-toast);
   }
@@ -630,7 +645,7 @@ img {
     animation: lf-pop var(--dur-med) var(--ease-out);
   }
   .dialog::backdrop {
-    background: var(--overlay);
+    background: var(--scrim);
   }
   .stat {
     @apply rounded-lg border border-hairline bg-surface px-3.5 py-3 shadow-card;
@@ -709,7 +724,7 @@ img {
   @media (min-width: 1280px) {
     .settings-layout {
       flex-direction: row;
-      max-width: none;
+      max-width: 1600px;
     }
     .settings-nav {
       @apply flex w-[208px] shrink-0 flex-col gap-0.5 self-start;
@@ -852,7 +867,8 @@ img {
       flex-direction: row;
       flex: 1;
       gap: 4px;
-      padding: 4px 8px;
+      padding: 4px max(8px, env(safe-area-inset-right, 0px)) 4px
+        max(8px, env(safe-area-inset-left, 0px));
     }
     #nav .nav-item {
       flex: 1;

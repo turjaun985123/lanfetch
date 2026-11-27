@@ -1,5 +1,5 @@
 // Typed command wrappers — the only place command names appear in
-// the frontend. Types mirror src-tauri/src/dto.rs and are pinned
+// the frontend. Types mirror engine/src/dto.rs and are pinned
 // by the golden-fixture contract tests (QA plan).
 //
 // Transport is chosen once at runtime: inside the desktop app the

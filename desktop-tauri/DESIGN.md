@@ -31,7 +31,9 @@ frozen (see Agent 01/04 reports, goal workspace).
 - Radius character: engineered, not bubbly — xs 4 / sm 6 / md 8
   (buttons, inputs, nav rows) / lg 10 (cards, rows, posters) /
   xl 14 (dialogs, sheets). Pills are reserved for exactly three
-  things: category chips, the search field, status badges.
+  things: category chips, the search field, status badges —
+  plus geometric cases that are round by nature: progress
+  tracks, status dots, the switch, the count badge (QA 43).
 
 ## Tokens (all in `src/styles/global.css`, the single source)
 
@@ -120,9 +122,11 @@ dots pair with labels; disabled server = hollow dot.
   poster block + two text bars; distinct empty states for empty
   catalog / no search results / no favorites / offline, each with
   an action; errors are banners with Retry, never gray footnotes.
-- **Detail:** cinematic hero — blurred poster wash (dark:
-  blur 48, saturate .65, brightness .5) under a scrim gradient,
-  no text below 88% opacity zone; sharp poster floats left;
+- **Detail:** cinematic hero — blurred poster wash under a
+  scrim gradient (shrink-then-scale per Agent 33: the wash is a
+  240px layout box, blur 12px, scaled to cover; dark: saturate
+  .65, brightness .5), no text below 88% opacity zone; sharp
+  poster floats left;
   meta as chips; file rows show every FileDto field incl.
   `sourceTag`; a paused file can be resumed in place (via
   `start_download` dedup — verify engine behavior in R4); file

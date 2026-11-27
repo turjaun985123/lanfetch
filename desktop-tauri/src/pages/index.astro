@@ -294,7 +294,7 @@ import '../styles/global.css';
         <section data-screen="library">
           <header class="screen-header">
             <div class="flex flex-wrap items-center gap-2">
-              <h1 class="page-title">Library</h1>
+              <h1 class="page-title" tabindex="-1">Library</h1>
               <div class="search-wrap relative min-w-0 flex-1 max-[767px]:order-3 max-[767px]:w-full max-[767px]:flex-none md:ml-auto md:max-w-[420px]">
                 <svg class="ic ic-16 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden="true"><use href="#i-search" /></svg>
                 <label class="sr-only" for="lib-search">Search titles</label>
@@ -337,6 +337,9 @@ import '../styles/global.css';
               <span id="lib-banner-icon" class="text-failed"></span>
               <p id="lib-banner-text" class="min-w-0 flex-1 text-body"></p>
               <button id="lib-banner-retry" class="btn btn-ghost btn-sm shrink-0"></button>
+              <button id="lib-banner-close" class="icon-btn shrink-0" aria-label="Dismiss">
+                <svg class="ic ic-16" aria-hidden="true"><use href="#i-close" /></svg>
+              </button>
             </div>
           </div>
           <div id="onboarding" class="hidden px-6 pt-5 max-[767px]:px-4">
@@ -378,13 +381,14 @@ import '../styles/global.css';
             role="group"
             aria-label="Titles"
           ></div>
-          <div id="lib-empty" class="empty-state hidden" role="status">
-            <span id="lib-empty-icon" class="text-ink-3"></span>
-            <h3 id="lib-empty-title" class="mt-3 text-heading font-semibold"></h3>
-            <p id="lib-empty-body" class="mt-1 max-w-[420px] text-body text-ink-2"></p>
+          <div id="lib-empty" class="empty-state hidden">
+            <div role="status" class="flex flex-col items-center">
+              <span id="lib-empty-icon" class="text-ink-3"></span>
+              <h3 id="lib-empty-title" class="mt-3 text-heading font-semibold"></h3>
+              <p id="lib-empty-body" class="mt-1 max-w-[420px] text-body text-ink-2"></p>
+            </div>
             <div class="mt-4 flex gap-2">
               <button id="lib-empty-action" class="btn btn-primary btn-sm"></button>
-              <button id="lib-empty-action-2" class="btn btn-ghost btn-sm hidden"></button>
             </div>
           </div>
           <div id="sentinel" class="h-2"></div>
@@ -443,7 +447,7 @@ import '../styles/global.css';
               </div>
             </div>
           </div>
-          <div class="px-6 py-5 max-[767px]:px-4">
+          <div class="mx-auto w-full max-w-[1600px] px-6 py-5 max-[767px]:px-4">
             <h3 id="detail-files-heading" class="text-heading font-semibold">Files</h3>
             <div id="detail-files" class="mt-3 flex flex-col gap-2"></div>
           </div>
@@ -453,7 +457,7 @@ import '../styles/global.css';
         <section data-screen="transfers" class="hidden">
           <header class="screen-header">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <h1 class="page-title">Transfers</h1>
+              <h1 class="page-title" tabindex="-1">Transfers</h1>
               <div class="flex gap-1.5 max-[767px]:order-3 max-[767px]:w-full max-[767px]:overflow-x-auto">
                 <button id="tr-pause-all" class="btn btn-ghost btn-sm shrink-0">
                   <svg class="ic ic-16" aria-hidden="true"><use href="#i-pause" /></svg>
@@ -492,14 +496,14 @@ import '../styles/global.css';
               </div>
             </div>
           </div>
-          <div class="flex flex-col gap-2.5 px-6 py-5 max-[767px]:px-4" id="tasks"></div>
+          <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-2.5 px-6 py-5 max-[767px]:px-4" id="tasks"></div>
         </section>
 
         <!-- Servers -->
         <section data-screen="servers" class="hidden">
           <header class="screen-header">
             <div class="flex items-center justify-between gap-2">
-              <h1 class="page-title">Servers</h1>
+              <h1 class="page-title" tabindex="-1">Servers</h1>
               <button
                 id="srv-refresh"
                 class="icon-btn"
@@ -542,18 +546,18 @@ import '../styles/global.css';
               <p id="srv-error" class="field-error hidden w-full" role="alert"></p>
             </div>
           </div>
-          <div class="flex flex-col gap-2 px-6 py-5 max-[767px]:px-4" id="probes"></div>
+          <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-2 px-6 py-5 max-[767px]:px-4" id="probes"></div>
         </section>
 
         <!-- Settings -->
         <section data-screen="settings" class="hidden">
           <header class="screen-header">
-            <h1 class="page-title">Settings</h1>
+            <h1 class="page-title" tabindex="-1">Settings</h1>
             <p class="status-line">Applies immediately — no Save button.</p>
           </header>
-          <div class="settings-layout px-6 py-5 max-[767px]:px-4">
+          <div class="settings-layout mx-auto w-full px-6 py-5 max-[767px]:px-4">
             <nav class="settings-nav" aria-label="Settings sections">
-              <a href="#set-sec-appearance" class="settings-nav-item is-active" data-sec="set-sec-appearance">Appearance</a>
+              <a href="#set-sec-appearance" class="settings-nav-item is-active" data-sec="set-sec-appearance" aria-current="true">Appearance</a>
               <a href="#set-sec-engine" class="settings-nav-item" data-sec="set-sec-engine">Download engine</a>
               <a href="#set-sec-language" class="settings-nav-item" data-sec="set-sec-language">Language</a>
               <a href="#set-sec-storage" class="settings-nav-item" data-sec="set-sec-storage">Storage</a>
@@ -740,6 +744,21 @@ import '../styles/global.css';
             (el as HTMLElement).dataset.screen !== view,
           );
         });
+        // Focus hygiene (Agent 37): if focus sat inside the
+        // section just hidden, it would drop to <body> — move it
+        // to the target screen's heading instead. Nav clicks are
+        // unaffected (focus is on the rail, outside any section).
+        const ae = document.activeElement as HTMLElement | null;
+        if (ae && ae !== document.body) {
+          const sec = ae.closest('[data-screen]') as HTMLElement | null;
+          if (sec && sec.dataset.screen !== view) {
+            document
+              .querySelector(
+                '[data-screen="' + view + '"] .page-title',
+              )
+              ?.focus({ preventScroll: true });
+          }
+        }
         // The detail screen belongs to the Library tab.
         const navView = view === 'detail' ? 'library' : view;
         document.querySelectorAll('#nav .nav-item').forEach((el) => {
@@ -759,20 +778,30 @@ import '../styles/global.css';
       function applyRail() {
         const w = window.innerWidth;
         let mode = 'expanded';
+        let savedRail: string | null = null;
+        try {
+          savedRail = localStorage.getItem('lanfetch-rail');
+        } catch {
+          /* storage unavailable */
+        }
         if (w >= 768 && w < 1024) mode = 'compact';
-        else if (
-          w >= 1024 &&
-          localStorage.getItem('lanfetch-rail') === 'compact'
-        )
-          mode = 'compact';
+        else if (w >= 1024 && savedRail === 'compact') mode = 'compact';
         document.documentElement.dataset.rail = mode;
         if (railToggle) {
           railToggle.setAttribute(
             'aria-expanded',
             mode === 'expanded' ? 'true' : 'false',
           );
-          const label =
-            mode === 'expanded' ? 'Collapse sidebar' : 'Expand sidebar';
+          // In the 768–1023 band the compact rail is forced, so
+          // the toggle cannot change anything there — disable it
+          // rather than letting it silently no-op (Agent 38).
+          const forced = w >= 768 && w < 1024;
+          (railToggle as HTMLButtonElement).disabled = forced;
+          const label = forced
+            ? 'Sidebar is compact at this window width'
+            : mode === 'expanded'
+              ? 'Collapse sidebar'
+              : 'Expand sidebar';
           railToggle.setAttribute('aria-label', label);
           railToggle.setAttribute('title', label);
         }
@@ -796,13 +825,20 @@ import '../styles/global.css';
       });
       document.addEventListener('keydown', (e) => {
         if (!(e.ctrlKey || e.metaKey)) return;
-        if (e.key === '1') show('library');
-        else if (e.key === '2') show('transfers');
-        else if (e.key === '3') show('servers');
-        else if (e.key === ',') show('settings');
-        else if (e.key === 'k' || e.key === 'f') {
+        // Never hijack keys while a modal dialog is open (Agent 49).
+        if (document.querySelector('dialog[open]')) return;
+        const key = e.key.toLowerCase();
+        if (key === '1') show('library');
+        else if (key === '2') show('transfers');
+        else if (key === '3') show('servers');
+        else if (key === ',') show('settings');
+        else if (key === 'k' || key === 'f') {
           e.preventDefault();
-          show('library');
+          // Leave Detail through closeDetail so its focus state
+          // stays truthful (Agent 49).
+          const detail = document.querySelector('[data-screen="detail"]')!;
+          if (!detail.classList.contains('hidden')) closeDetail();
+          else show('library');
           document.getElementById('lib-search')!.focus();
         }
       });
@@ -825,14 +861,19 @@ import '../styles/global.css';
         meta: HTMLElement;
         error: HTMLElement;
         actions: HTMLElement;
+        stateIconEl: HTMLElement;
+        stateTextNode: Text;
         actionSig: string;
         lastName: string;
         lastStateText: string;
+        lastStateIcon: string;
         lastMeta: string;
         lastError: string;
         lastPct: number;
         lastSegSig: string;
         lastSegFills: string;
+        lastBarMode: string;
+        lastSegCls: string;
       }
       const taskRows = new Map<number, TaskRow>();
       let trEmptyEl: HTMLElement | null = null;
@@ -860,6 +901,7 @@ import '../styles/global.css';
 
       function buildTaskRow(t: TaskDto): TaskRow {
         const root = el('div', 'card px-4 py-3.5');
+        root.tabIndex = -1;
         const top = el('div', 'flex items-baseline gap-3');
         const name = el('span', 'min-w-0 flex-1 truncate text-row font-medium');
         name.title = t.name;
@@ -867,9 +909,16 @@ import '../styles/global.css';
           'span',
           'flex items-center gap-1.5 text-secondary font-medium text-ink-2',
         );
+        // Persistent icon + text nodes (Agents 39/45): a percent
+        // tick patches the text node only — zero node creation in
+        // steady state.
+        const stateIconEl = el('span', 'flex shrink-0');
+        const stateTextNode = document.createTextNode('');
+        state.append(stateIconEl, stateTextNode);
         top.append(name, state);
         const barWrap = el('div', 'mt-2.5');
         barWrap.setAttribute('role', 'progressbar');
+        barWrap.setAttribute('aria-label', t.name);
         barWrap.setAttribute('aria-valuemin', '0');
         barWrap.setAttribute('aria-valuemax', '100');
         const segbar = el('div', 'segbar hidden');
@@ -893,14 +942,19 @@ import '../styles/global.css';
           meta,
           error,
           actions,
+          stateIconEl,
+          stateTextNode,
           actionSig: '',
           lastName: '',
           lastStateText: '',
+          lastStateIcon: '',
           lastMeta: '',
           lastError: '',
           lastPct: -1,
           lastSegSig: '',
           lastSegFills: '',
+          lastBarMode: '',
+          lastSegCls: '',
         };
       }
 
@@ -909,9 +963,13 @@ import '../styles/global.css';
         iconName: string,
         danger: boolean,
         fn: () => Promise<DownloadListDto>,
+        taskName: string,
       ): HTMLButtonElement {
         const b = document.createElement('button');
         b.className = 'btn btn-sm ' + (danger ? 'btn-danger' : 'btn-ghost');
+        b.dataset.act = label;
+        // Row actions carry the task name for AT (Agent 37).
+        b.setAttribute('aria-label', label + ' ' + taskName);
         b.replaceChildren(icon(iconName, 16), document.createTextNode(label));
         b.addEventListener('click', async () => {
           b.disabled = true;
@@ -937,12 +995,13 @@ import '../styles/global.css';
         const stateText =
           STATE_LABEL[t.state] +
           (t.state === 'running' || t.state === 'paused' ? ' · ' + pct + '%' : '');
+        if (row.lastStateIcon !== STATE_ICON[t.state]) {
+          row.lastStateIcon = STATE_ICON[t.state];
+          row.stateIconEl.replaceChildren(icon(STATE_ICON[t.state], 16));
+        }
         if (row.lastStateText !== stateText) {
           row.lastStateText = stateText;
-          row.state.replaceChildren(
-            icon(STATE_ICON[t.state], 16),
-            document.createTextNode(stateText),
-          );
+          row.stateTextNode.data = stateText;
         }
         if (row.lastPct !== pct) {
           row.lastPct = pct;
@@ -956,10 +1015,14 @@ import '../styles/global.css';
         // the engine reports them against a known total; the
         // simple bar covers everything else.
         const segmented = t.segments.length > 0 && t.total > 0;
-        row.segbar.classList.toggle('hidden', !segmented);
-        row.simpleBar.classList.toggle('hidden', segmented);
+        const barMode = segmented ? 'seg' : 'simple';
+        if (row.lastBarMode !== barMode) {
+          row.lastBarMode = barMode;
+          row.segbar.classList.toggle('hidden', !segmented);
+          row.simpleBar.classList.toggle('hidden', segmented);
+        }
         if (segmented) {
-          row.segbar.className =
+          const segCls =
             'segbar' +
             (t.state === 'paused'
               ? ' is-paused'
@@ -968,6 +1031,10 @@ import '../styles/global.css';
                 : t.state === 'completed'
                   ? ' is-done'
                   : '');
+          if (row.lastSegCls !== segCls) {
+            row.lastSegCls = segCls;
+            row.segbar.className = segCls;
+          }
           const geoSig = t.segments
             .map((s) => s.start + ':' + (s.end ?? t.total))
             .join(';');
@@ -998,9 +1065,15 @@ import '../styles/global.css';
               (fill as HTMLElement).style.width = (parts[i] ?? '0') + '%';
             });
           }
-        } else if (row.simpleFill.style.width !== pct + '%') {
-          row.simpleFill.style.width = pct + '%';
-          row.simpleFill.className =
+        } else {
+          if (row.simpleFill.style.width !== pct + '%') {
+            row.simpleFill.style.width = pct + '%';
+          }
+          // The state colour patches independently of the width
+          // (Agent 39): pausing freezes the fraction, so nesting
+          // this inside the width guard left a paused bar wearing
+          // the running colour forever.
+          const fillCls =
             'progress-fill' +
             (t.state === 'paused'
               ? ' is-paused'
@@ -1009,6 +1082,9 @@ import '../styles/global.css';
                 : t.state === 'completed'
                   ? ' is-done'
                   : '');
+          if (row.simpleFill.className !== fillCls) {
+            row.simpleFill.className = fillCls;
+          }
         }
         const metaText =
           fmtBytes(t.downloaded) +
@@ -1034,20 +1110,26 @@ import '../styles/global.css';
         const actionSig = t.state + '|' + t.fileMissing;
         if (row.actionSig !== actionSig) {
           row.actionSig = actionSig;
+          // Rebuilding the buttons deletes the focused one
+          // (Agent 39): remember which action held focus and
+          // restore it to the equivalent new button afterwards.
+          const ae = document.activeElement as HTMLElement | null;
+          const focusAct =
+            ae && row.actions.contains(ae) ? ae.dataset.act : undefined;
           row.actions.replaceChildren();
           if (t.state === 'running' || t.state === 'queued') {
             row.actions.append(
-              taskActionBtn('Pause', 'pause', false, () => pauseDownload(t.id)),
+              taskActionBtn('Pause', 'pause', false, () => pauseDownload(t.id), t.name),
             );
           }
           if (t.state === 'paused') {
             row.actions.append(
-              taskActionBtn('Resume', 'play', false, () => resumeDownload(t.id)),
+              taskActionBtn('Resume', 'play', false, () => resumeDownload(t.id), t.name),
             );
           }
           if (t.state === 'failed') {
             row.actions.append(
-              taskActionBtn('Retry', 'retry', false, () => resumeDownload(t.id)),
+              taskActionBtn('Retry', 'retry', false, () => resumeDownload(t.id), t.name),
             );
           }
           if (t.state === 'completed' && t.fileMissing) {
@@ -1059,7 +1141,7 @@ import '../styles/global.css';
             row.actions.append(
               note,
               taskActionBtn('Redownload', 'redownload', false, () =>
-                redownloadDownload(t.id),
+                redownloadDownload(t.id), t.name,
               ),
             );
           }
@@ -1067,6 +1149,8 @@ import '../styles/global.css';
           // dialog, not the plain action path (Agent 02 #7).
           const rm = document.createElement('button');
           rm.className = 'btn btn-sm btn-danger';
+          rm.dataset.act = 'Remove';
+          rm.setAttribute('aria-label', 'Remove ' + t.name);
           rm.replaceChildren(icon('trash', 16), document.createTextNode('Remove'));
           rm.addEventListener('click', async () => {
             const ok = await confirmDialog({
@@ -1085,11 +1169,20 @@ import '../styles/global.css';
             }
           });
           row.actions.append(rm);
+          if (focusAct) {
+            const next = row.actions.querySelector(
+              '[data-act="' + focusAct + '"]',
+            ) as HTMLElement | null;
+            (next ?? row.root).focus();
+          }
         }
       }
 
       function renderDownloads(list: DownloadListDto) {
-        if (list.stamp > lastStamp) lastStamp = list.stamp;
+        // A stale list (older stamp arriving late) never renders
+        // (Agent 39) — it could regress state and re-announce.
+        if (list.stamp < lastStamp) return;
+        lastStamp = list.stamp;
         const wrap = status('tasks');
         const tasks = list.tasks;
         status('tr-status').textContent =
@@ -1139,6 +1232,7 @@ import '../styles/global.css';
         // Empty state: created once, toggled (Agents 21/25).
         if (!trEmptyEl) {
           trEmptyEl = el('div', 'empty-state');
+          trEmptyEl.setAttribute('role', 'status');
           const ic = el('span', 'text-ink-3');
           ic.append(icon('transfers', 24));
           trEmptyEl.append(
@@ -1152,19 +1246,25 @@ import '../styles/global.css';
           );
         }
         trEmptyEl.classList.toggle('hidden', tasks.length !== 0);
-        wrap.append(trEmptyEl);
-        // Keyed rows in list order: appending an existing node
-        // moves it, never recreates it.
+        // Keyed rows in list order. An already-ordered render
+        // moves nothing (Agent 39): a node is only re-inserted
+        // when its predecessor is wrong.
         const seen = new Set<number>();
         for (const t of tasks) {
           seen.add(t.id);
-          let row = taskRows.get(t.id);
-          if (!row) {
-            row = buildTaskRow(t);
-            taskRows.set(t.id, row);
+          if (!taskRows.has(t.id)) taskRows.set(t.id, buildTaskRow(t));
+          patchTaskRow(taskRows.get(t.id)!, t);
+        }
+        let anchor: ChildNode | null = null;
+        const ordered: HTMLElement[] = [
+          trEmptyEl,
+          ...tasks.map((t) => taskRows.get(t.id)!.root),
+        ];
+        for (const node of ordered) {
+          if (node.parentNode !== wrap || node.previousSibling !== anchor) {
+            wrap.insertBefore(node, anchor ? anchor.nextSibling : wrap.firstChild);
           }
-          patchTaskRow(row, t);
-          wrap.append(row.root);
+          anchor = node;
         }
         for (const [id, row] of taskRows) {
           if (!seen.has(id)) {
@@ -1174,17 +1274,21 @@ import '../styles/global.css';
         }
         // Announce background state transitions (Agent 31). The
         // first render seeds the map silently — tasks that were
-        // already completed at boot are not news.
+        // already completed at boot are not news. Simultaneous
+        // transitions join into one announcement so none is
+        // overwritten (Agent 39).
+        const notes: string[] = [];
         for (const t of tasks) {
           const prev = prevTaskStates.get(t.id);
           if (prev !== undefined && prev !== t.state) {
             if (t.state === 'completed')
-              announce('Download complete: ' + t.name);
+              notes.push('Download complete: ' + t.name);
             else if (t.state === 'failed')
-              announce('Download failed: ' + t.name);
+              notes.push('Download failed: ' + t.name);
           }
           prevTaskStates.set(t.id, t.state);
         }
+        if (notes.length > 0) announce(notes.join(' '));
         for (const id of [...prevTaskStates.keys()]) {
           if (!seen.has(id)) prevTaskStates.delete(id);
         }
@@ -1485,7 +1589,13 @@ import '../styles/global.css';
         // when the theme flips.
         const root = document.documentElement;
         root.classList.add('theme-switching');
-        localStorage.setItem('lanfetch-theme', choice);
+        // Storage can throw (blocked cookies, strict private
+        // modes) — the theme must still apply (Agent 46).
+        try {
+          localStorage.setItem('lanfetch-theme', choice);
+        } catch {
+          /* pre-paint cache only; settings.json is the truth */
+        }
         const dark =
           choice === 'dark' ||
           (choice === 'system' &&
@@ -1512,7 +1622,13 @@ import '../styles/global.css';
       // Radiogroup arrows (Agent 31): Left/Right move and select,
       // matching the radio pattern the markup declares.
       status('theme-switch').addEventListener('keydown', (e) => {
-        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        if (
+          e.key !== 'ArrowRight' &&
+          e.key !== 'ArrowLeft' &&
+          e.key !== 'ArrowDown' &&
+          e.key !== 'ArrowUp'
+        )
+          return;
         const btns = [
           ...document.querySelectorAll('.theme-btn'),
         ] as HTMLElement[];
@@ -1520,15 +1636,21 @@ import '../styles/global.css';
           (b) => b.getAttribute('aria-checked') === 'true',
         );
         if (i < 0) return;
-        const j =
-          e.key === 'ArrowRight'
-            ? (i + 1) % btns.length
-            : (i - 1 + btns.length) % btns.length;
+        const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+        const j = forward
+          ? (i + 1) % btns.length
+          : (i - 1 + btns.length) % btns.length;
         e.preventDefault();
         btns[j]!.focus();
         btns[j]!.click();
       });
-      applyTheme(localStorage.getItem('lanfetch-theme') ?? 'system');
+      let savedTheme = 'system';
+      try {
+        savedTheme = localStorage.getItem('lanfetch-theme') ?? 'system';
+      } catch {
+        /* storage unavailable — fall back to system */
+      }
+      applyTheme(savedTheme);
 
       // ---- settings ---------------------------------------------------------------
       let currentSettings: SettingsDto | null = null;
@@ -1568,13 +1690,23 @@ import '../styles/global.css';
       document.querySelectorAll('.settings-nav-item').forEach((a) => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
-          document
-            .querySelectorAll('.settings-nav-item')
-            .forEach((x) => x.classList.toggle('is-active', x === a));
+          document.querySelectorAll('.settings-nav-item').forEach((x) => {
+            x.classList.toggle('is-active', x === a);
+            if (x === a) x.setAttribute('aria-current', 'true');
+            else x.removeAttribute('aria-current');
+          });
           const target = document.getElementById(
             (a as HTMLElement).dataset.sec!,
           );
-          target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // JS smooth scrolling ignores the CSS reduced-motion
+          // rule — honor the preference here (Agent 44).
+          const reduce = window.matchMedia(
+            '(prefers-reduced-motion: reduce)',
+          ).matches;
+          target?.scrollIntoView({
+            behavior: reduce ? 'auto' : 'smooth',
+            block: 'start',
+          });
         });
       });
 
@@ -1667,17 +1799,26 @@ import '../styles/global.css';
         hideBanner();
         retry?.();
       });
+      status('lib-banner-close').addEventListener('click', () => hideBanner());
 
       let emptyAction: (() => void) | null = null;
-      function setEmpty(variant: 'feed' | 'search' | 'favorites'): void {
+      function setEmpty(
+        variant: 'feed' | 'search' | 'favorites' | 'nocats',
+      ): void {
         const wrap = status('lib-empty');
         wrap.classList.remove('hidden');
         const iconSpan = status('lib-empty-icon');
         const title = status('lib-empty-title');
         const body = status('lib-empty-body');
         const action = status('lib-empty-action') as HTMLButtonElement;
-        status('lib-empty-action-2').classList.add('hidden');
-        if (variant === 'search') {
+        if (variant === 'nocats') {
+          iconSpan.replaceChildren(icon('servers', 24));
+          title.textContent = 'No categories found';
+          body.textContent =
+            'Your servers returned no categories. Check that at least one server is enabled and reachable.';
+          action.textContent = 'Open Servers';
+          emptyAction = () => show('servers');
+        } else if (variant === 'search') {
           iconSpan.replaceChildren(icon('search', 24));
           title.textContent = 'No results for “' + activeQuery + '”';
           body.textContent =
@@ -1754,7 +1895,8 @@ import '../styles/global.css';
             (t.year ? ', ' + t.year : '') +
             (t.kind === 'series'
               ? ', series' +
-                (t.seasonCount > 1 ? ', ' + t.seasonCount + ' seasons' : '')
+                (t.seasonCount > 1 ? ', ' + t.seasonCount + ' seasons' : '') +
+                (t.bestQuality ? ', ' + t.bestQuality : '')
               : t.bestQuality
                 ? ', ' + t.bestQuality
                 : '') +
@@ -1899,6 +2041,7 @@ import '../styles/global.css';
         }
       }
 
+      let pageErrorGen = -1;
       async function loadMore(): Promise<void> {
         if (pageLoading || !feedHasMore) return;
         pageLoading = true;
@@ -1908,8 +2051,15 @@ import '../styles/global.css';
           if (gen !== libGen || page.superseded) return;
           await appendPage(page, gen, false);
         } catch {
-          // A failed page is not fatal: the sentinel will retry on
-          // the next scroll pass.
+          // Not fatal — the sentinel retries on the next scroll
+          // pass — but a persistent failure must surface
+          // somewhere (Agent 41): banner, once per generation.
+          if (pageErrorGen !== gen) {
+            pageErrorGen = gen;
+            showBanner('error', 'Could not load more titles.', 'Retry', () =>
+              void loadMore(),
+            );
+          }
         } finally {
           pageLoading = false;
         }
@@ -2056,10 +2206,14 @@ import '../styles/global.css';
         try {
           const categories = await getCategories(refresh);
           if (categories.length === 0) {
-            status('lib-status').textContent =
-              'No categories found — check the Servers tab';
+            // An empty catalog is an empty state, not a status
+            // line footnote (Agents 25/41).
+            status('lib-status').textContent = '';
+            status('grid').replaceChildren();
+            setEmpty('nocats');
             return;
           }
+          hideEmpty();
           hideBanner();
           renderChips(categories);
           void openFeed();
@@ -2227,6 +2381,11 @@ import '../styles/global.css';
               b.replaceChildren(icon('download', 16), document.createTextNode('Download'));
               b.disabled = false;
           }
+          // The accessible name carries the file (Agent 37).
+          b.setAttribute(
+            'aria-label',
+            (b.textContent ?? '') + ' — ' + f.fileName,
+          );
         };
         paint();
         b.addEventListener('click', async () => {
@@ -2259,6 +2418,9 @@ import '../styles/global.css';
             paint();
           } finally {
             pendingFileClicks.delete(f.fileUrl);
+            // Drain any refresh that deferred while this click
+            // was in flight (Agent 40).
+            void refreshDetailFiles();
           }
         });
         return b;
@@ -2269,6 +2431,7 @@ import '../styles/global.css';
         wrap.replaceChildren();
         if (detail.files.length === 0) {
           const empty = el('div', 'empty-state');
+          empty.setAttribute('role', 'status');
           const ic = el('span', 'text-ink-3');
           ic.append(icon('film', 24));
           const h = el('h4', 'mt-3 text-heading font-semibold', 'No downloadable files');
@@ -2312,15 +2475,25 @@ import '../styles/global.css';
                 all.disabled = true;
                 all.textContent = 'Queueing…';
                 let last: DownloadListDto | null = null;
-                for (const f of actionable) {
-                  try {
-                    last = await startDownload(f.fileUrl, f.fileName);
-                  } catch {
-                    // one bad file must not stop the season
+                try {
+                  for (const f of actionable) {
+                    try {
+                      last = await startDownload(f.fileUrl, f.fileName);
+                    } catch {
+                      // one bad file must not stop the season
+                    }
                   }
+                  if (last) renderDownloads(last);
+                } finally {
+                  // If every start failed, restore the button —
+                  // otherwise it wedges on "Queueing…" until the
+                  // next re-render (Agent 40).
+                  if (!last) {
+                    all.disabled = false;
+                    all.textContent = 'Download all';
+                  }
+                  void refreshDetailFiles();
                 }
-                if (last) renderDownloads(last);
-                void refreshDetailFiles();
               });
               head.append(all);
             }
@@ -2331,6 +2504,7 @@ import '../styles/global.css';
               'div',
               'row-card relative flex items-center gap-3 overflow-hidden px-3.5 py-3',
             );
+            row.dataset.fileUrl = f.fileUrl;
             const text = el('div', 'min-w-0 flex-1');
             const name = el('p', 'truncate text-row font-medium', f.fileName);
             name.title = f.fileName;
@@ -2392,6 +2566,12 @@ import '../styles/global.css';
         const section = document.querySelector('[data-screen="detail"]');
         if (!detailTitle || !section || section.classList.contains('hidden'))
           return;
+        // Never clobber an in-flight file click (Agent 40): the
+        // click's finally re-invokes this once it settles.
+        if (pendingFileClicks.size > 0) {
+          detailDirty = true;
+          return;
+        }
         if (detailRefreshInFlight) {
           detailDirty = true;
           return;
@@ -2409,8 +2589,26 @@ import '../styles/global.css';
             'Files · ' + detail.files.length;
           const main = document.querySelector('main');
           const top = main?.scrollTop ?? 0;
+          // renderFiles rebuilds the rows: if focus sat on a
+          // file button, restore it to the same file's new
+          // button afterwards (Agent 40).
+          const ae = document.activeElement as HTMLElement | null;
+          const focusRow = ae?.closest('[data-file-url]') as
+            | HTMLElement
+            | null;
+          const focusUrl =
+            focusRow && status('detail-files').contains(focusRow)
+              ? focusRow.dataset.fileUrl
+              : undefined;
           renderFiles(detail);
           if (main) main.scrollTop = top;
+          if (focusUrl) {
+            status('detail-files')
+              .querySelector(
+                '[data-file-url="' + CSS.escape(focusUrl) + '"] button',
+              )
+              ?.focus({ preventScroll: true });
+          }
         } catch {
           // keep the current paint; the next event retries
         } finally {
@@ -2483,18 +2681,17 @@ import '../styles/global.css';
         if (t.posterUrl) {
           const [src] = await posterSrcs([t.posterUrl]);
           if (gen === detailGen && src) {
+            // Property assignment, not addEventListener: these
+            // elements persist across Detail visits and listeners
+            // would accumulate (Agent 45).
+            poster.onerror = () => poster.classList.add('hidden');
             poster.src = src;
             poster.classList.remove('hidden');
-            poster.addEventListener('error', () => poster.classList.add('hidden'), {
-              once: true,
-            });
             // The hero wash reuses the same resolved poster src —
             // the frontend never constructs poster URLs (Agent 30).
+            wash.onerror = () => wash.classList.add('hidden');
             wash.src = src;
             wash.classList.remove('hidden');
-            wash.addEventListener('error', () => wash.classList.add('hidden'), {
-              once: true,
-            });
           }
         }
         paintFav();

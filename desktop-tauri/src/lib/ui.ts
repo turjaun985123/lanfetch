@@ -47,7 +47,16 @@ export function toast(
   node.setAttribute('role', kind === 'alert' ? 'alert' : 'status');
   node.textContent = message;
   region.append(node);
-  window.setTimeout(() => node.remove(), 4000);
+  if (kind === 'alert') {
+    // Failures must not vanish on a timer (Agent 37): alert
+    // toasts stay until dismissed by click.
+    node.title = 'Click to dismiss';
+    node.style.pointerEvents = 'auto';
+    node.style.cursor = 'pointer';
+    node.addEventListener('click', () => node.remove());
+  } else {
+    window.setTimeout(() => node.remove(), 4000);
+  }
 }
 
 /** Destructive-action confirmation on the native <dialog>
@@ -62,7 +71,7 @@ export function confirmDialog(opts: {
   const dlg = document.getElementById(
     'confirm-dialog',
   ) as HTMLDialogElement | null;
-  if (!dlg || typeof dlg.showModal !== 'function')
+  if (!dlg || typeof dlg.showModal !== 'function' || dlg.open)
     return Promise.resolve(false);
   document.getElementById('confirm-title')!.textContent = opts.title;
   document.getElementById('confirm-body')!.textContent = opts.body;
@@ -81,6 +90,9 @@ export function confirmDialog(opts: {
       resolve(false);
     };
     dlg.oncancel = () => resolve(false);
+    // Any other dismissal path settles as "not confirmed"
+    // instead of leaving the caller hanging (Agent 37).
+    dlg.addEventListener('close', () => resolve(false), { once: true });
     dlg.showModal();
     cancel.focus();
   });
