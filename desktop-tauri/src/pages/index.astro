@@ -287,30 +287,52 @@ import '../styles/global.css';
         <!-- Library -->
         <section data-screen="library">
           <header class="screen-header">
-            <div class="flex items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2">
               <h1 class="page-title">Library</h1>
-              <div class="flex items-center gap-2">
+              <div class="search-wrap relative min-w-0 flex-1 max-[767px]:order-3 max-[767px]:w-full max-[767px]:flex-none md:ml-auto md:max-w-[420px]">
+                <svg class="ic ic-16 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden="true"><use href="#i-search" /></svg>
+                <label class="sr-only" for="lib-search">Search titles</label>
                 <input
                   id="lib-search"
-                  type="text"
+                  type="search"
                   placeholder="Search titles…"
                   autocomplete="off"
-                  class="w-56 rounded-full border border-hairline bg-raised px-3.5 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3 focus:border-accent"
+                  class="w-full rounded-full border border-border-strong bg-surface py-1.5 pl-9 pr-16 text-control text-ink outline-none placeholder:text-ink-3 focus:border-accent"
                 />
                 <button
-                  id="lib-refresh"
-                  class="rounded-full border border-hairline px-3 py-1 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-raised"
+                  id="lib-clear"
+                  type="button"
+                  class="icon-btn absolute right-1 top-1/2 hidden h-7 w-7 -translate-y-1/2"
+                  aria-label="Clear search"
                 >
-                  Refresh
+                  <svg class="ic ic-16" aria-hidden="true"><use href="#i-close" /></svg>
                 </button>
+                <kbd class="search-hint pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-sm border border-hairline bg-raised px-1.5 py-0.5 text-caption text-ink-3">Ctrl K</kbd>
               </div>
+              <button
+                id="lib-refresh"
+                class="icon-btn max-[767px]:order-2 max-[767px]:ml-auto"
+                aria-label="Refresh catalog"
+                title="Refresh catalog"
+              >
+                <svg class="ic" aria-hidden="true"><use href="#i-refresh" /></svg>
+              </button>
             </div>
-            <p class="status-line" id="lib-status">…</p>
+            <p class="status-line" id="lib-status" role="status" aria-live="polite">…</p>
             <div
               id="chips"
-              class="mt-3 flex gap-1.5 overflow-x-auto pb-1"
+              class="mt-3 flex gap-2 overflow-x-auto pb-1"
+              role="group"
+              aria-label="Categories"
             ></div>
           </header>
+          <div class="px-6 max-[767px]:px-4">
+            <div id="lib-banner" class="banner mt-4 hidden" role="alert">
+              <span id="lib-banner-icon" class="text-failed"></span>
+              <p id="lib-banner-text" class="min-w-0 flex-1 text-body"></p>
+              <button id="lib-banner-retry" class="btn btn-ghost btn-sm shrink-0"></button>
+            </div>
+          </div>
           <div id="onboarding" class="hidden px-6 pt-5">
             <div class="rounded-2xl border border-hairline bg-surface px-5 py-4">
               <p class="text-[15px] font-semibold">Welcome to LanFetch</p>
@@ -338,14 +360,18 @@ import '../styles/global.css';
           </div>
           <div
             id="grid"
-            class="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-x-4 gap-y-5 px-6 py-5"
+            class="poster-grid"
+            role="group"
+            aria-label="Titles"
           ></div>
-          <div id="lib-empty" class="hidden px-6 py-16 text-center">
-            <p class="text-[15px] font-semibold">Nothing here yet</p>
-            <p class="mx-auto mt-1.5 max-w-[420px] text-[12px] leading-relaxed text-ink-2">
-              No titles in this category right now. If the servers just
-              came online, Refresh reloads the catalog.
-            </p>
+          <div id="lib-empty" class="empty-state hidden" role="status">
+            <span id="lib-empty-icon" class="text-ink-3"></span>
+            <h3 id="lib-empty-title" class="mt-3 text-heading font-semibold"></h3>
+            <p id="lib-empty-body" class="mt-1 max-w-[420px] text-body text-ink-2"></p>
+            <div class="mt-4 flex gap-2">
+              <button id="lib-empty-action" class="btn btn-primary btn-sm"></button>
+              <button id="lib-empty-action-2" class="btn btn-ghost btn-sm hidden"></button>
+            </div>
           </div>
           <div id="sentinel" class="h-2"></div>
         </section>
@@ -575,6 +601,7 @@ import '../styles/global.css';
         fmtSpeed,
         initials,
       } from '../lib/format';
+      import { el, icon } from '../lib/ui';
 
       const status = (id: string) => document.getElementById(id)!;
 
@@ -1001,28 +1028,153 @@ import '../styles/global.css';
       let currentCategory: string | null = null;
       let titleCount = 0;
 
-      function makeCard(t: TitleDto, posterSrc: string | null): HTMLElement {
-        const card = document.createElement('div');
-        card.className = 'cursor-pointer';
-        const frame = document.createElement('div');
-        frame.className =
-          'relative aspect-[2/3] overflow-hidden rounded-xl border border-hairline bg-raised';
-        const fallback = document.createElement('div');
-        fallback.className =
-          'absolute inset-0 flex items-center justify-center text-[26px] font-semibold text-ink-3';
-        fallback.textContent = initials(t.title);
+      // ---- library banner + empty states (Agents 16/25) ---------------------
+      // Errors are banners with Retry, never gray footnotes in the
+      // status line; empty results are calm empty states. The two
+      // never substitute for each other.
+      let bannerRetry: (() => void) | null = null;
+      function showBanner(
+        kind: 'error' | 'info',
+        msg: string,
+        retryLabel: string | null,
+        retry: (() => void) | null,
+      ): void {
+        const banner = status('lib-banner');
+        banner.classList.remove('hidden');
+        const iconSpan = status('lib-banner-icon');
+        iconSpan.className = kind === 'error' ? 'text-failed' : 'text-ink-2';
+        iconSpan.replaceChildren(icon(kind === 'error' ? 'warning' : 'info', 20));
+        status('lib-banner-text').textContent = msg;
+        const btn = status('lib-banner-retry') as HTMLButtonElement;
+        bannerRetry = retry;
+        if (retry && retryLabel) {
+          btn.classList.remove('hidden');
+          btn.replaceChildren(icon('retry', 16), document.createTextNode(retryLabel));
+        } else {
+          btn.classList.add('hidden');
+        }
+      }
+      function hideBanner(): void {
+        status('lib-banner').classList.add('hidden');
+        bannerRetry = null;
+      }
+      status('lib-banner-retry').addEventListener('click', () => {
+        const retry = bannerRetry;
+        hideBanner();
+        retry?.();
+      });
+
+      let emptyAction: (() => void) | null = null;
+      function setEmpty(variant: 'feed' | 'search' | 'favorites'): void {
+        const wrap = status('lib-empty');
+        wrap.classList.remove('hidden');
+        const iconSpan = status('lib-empty-icon');
+        const title = status('lib-empty-title');
+        const body = status('lib-empty-body');
+        const action = status('lib-empty-action') as HTMLButtonElement;
+        status('lib-empty-action-2').classList.add('hidden');
+        if (variant === 'search') {
+          iconSpan.replaceChildren(icon('search', 24));
+          title.textContent = 'No results for “' + activeQuery + '”';
+          body.textContent =
+            'Nothing on the servers matches that title. Check the spelling, or try a shorter search.';
+          action.textContent = 'Clear search';
+          emptyAction = () => clearSearch();
+        } else if (variant === 'favorites') {
+          iconSpan.replaceChildren(icon('star', 24));
+          title.textContent = 'No favorites yet';
+          body.textContent =
+            'Open a title and tap the star to keep it here. Favorites are saved on this device.';
+          action.textContent = 'Browse library';
+          emptyAction = () => {
+            currentCategory = null;
+            favoritesActive = false;
+            void openFeed();
+          };
+        } else {
+          iconSpan.replaceChildren(icon('film', 24));
+          title.textContent = 'Nothing here yet';
+          body.textContent =
+            'No titles in this category right now. If the servers just came online, Refresh reloads the catalog.';
+          action.textContent = 'Refresh';
+          emptyAction = () => void loadLibrary(true);
+        }
+      }
+      function hideEmpty(): void {
+        status('lib-empty').classList.add('hidden');
+      }
+      status('lib-empty-action').addEventListener('click', () => {
+        emptyAction?.();
+      });
+
+      function showSkeletons(): void {
+        const grid = status('grid');
+        grid.replaceChildren();
+        grid.setAttribute('aria-busy', 'true');
+        for (let i = 0; i < 12; i++) {
+          const card = el('div', 'skeleton-card');
+          card.setAttribute('aria-hidden', 'true');
+          const frame = el('div', 'skeleton skeleton-poster');
+          const bar1 = el('div', 'skeleton mt-2 h-3 w-[85%]');
+          const bar2 = el('div', 'skeleton mt-1 h-2.5 w-[55%]');
+          card.append(frame, bar1, bar2);
+          grid.append(card);
+        }
+      }
+
+      // Poster failures are delegated (Agent 33): one capturing
+      // listener instead of one per card. A failed poster reveals
+      // the glyph tile underneath — and because failures are not
+      // remembered server-side, the next visit can still succeed.
+      status('grid').addEventListener(
+        'error',
+        (e) => {
+          if (e.target instanceof HTMLImageElement) e.target.remove();
+        },
+        true,
+      );
+
+      function makeCard(
+        t: TitleDto,
+        posterSrc: string | null,
+        eager = false,
+      ): HTMLElement {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'poster-card';
+        // The accessible name carries everything the badges show
+        // visually (Agent 17): badges themselves are decorative.
+        card.setAttribute(
+          'aria-label',
+          t.title +
+            (t.year ? ', ' + t.year : '') +
+            (t.kind === 'series'
+              ? ', series' +
+                (t.seasonCount > 1 ? ', ' + t.seasonCount + ' seasons' : '')
+              : t.bestQuality
+                ? ', ' + t.bestQuality
+                : '') +
+            (t.isFavorite ? ', favorited' : ''),
+        );
+        const frame = el('span', 'poster-frame');
+        const fallback = el('span', 'poster-fallback');
+        fallback.setAttribute('aria-hidden', 'true');
+        const glyph = icon('logo', 32);
+        glyph.style.opacity = '0.35';
+        fallback.append(glyph);
         frame.append(fallback);
         if (posterSrc) {
           const img = document.createElement('img');
-          img.className = 'absolute inset-0 h-full w-full object-cover';
-          img.loading = 'lazy';
+          img.className = 'poster-img';
+          img.loading = eager ? 'eager' : 'lazy';
+          if (eager) img.setAttribute('fetchpriority', 'high');
+          img.decoding = 'async';
           img.draggable = false;
           img.alt = '';
+          img.addEventListener('load', () => img.classList.add('is-loaded'));
           img.src = posterSrc;
-          // A failed poster reveals the initials tile underneath —
-          // and because failures are not remembered server-side, the
-          // next visit can still succeed.
-          img.addEventListener('error', () => img.remove());
+          if (img.complete && img.naturalWidth > 0)
+            img.classList.add('is-loaded');
           frame.append(img);
         }
         const badgeText =
@@ -1032,29 +1184,29 @@ import '../styles/global.css';
               : 'Series'
             : t.bestQuality;
         if (badgeText) {
-          const badge = document.createElement('span');
-          badge.className =
-            'absolute bottom-1.5 left-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white';
-          badge.textContent = badgeText;
+          const badge = el(
+            'span',
+            'badge badge-scrim absolute bottom-1.5 left-1.5',
+            badgeText,
+          );
+          badge.setAttribute('aria-hidden', 'true');
           frame.append(badge);
         }
         if (t.isFavorite) {
-          const fav = document.createElement('span');
-          fav.className =
-            'absolute right-1.5 top-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white';
-          fav.textContent = '★';
+          const fav = el('span', 'badge badge-scrim absolute right-1.5 top-1.5');
+          fav.setAttribute('aria-hidden', 'true');
+          fav.append(icon('star-filled', 16));
           frame.append(fav);
         }
-        const name = document.createElement('p');
-        name.className =
-          'mt-2 line-clamp-2 text-[12.5px] font-medium leading-snug';
-        name.textContent = t.title;
-        const meta = document.createElement('p');
-        meta.className = 'mt-0.5 text-[11px] tabular-nums text-ink-3';
-        meta.textContent =
+        const name = el('span', 'poster-title', t.title);
+        const meta = el(
+          'span',
+          'poster-meta',
           (t.year ? t.year + ' · ' : '') +
-          t.sourceName +
-          (t.copies > 1 ? ' · ' + t.copies + ' copies' : '');
+            (t.language ? t.language + ' · ' : '') +
+            t.sourceName +
+            (t.copies > 1 ? ' · ' + t.copies + ' copies' : ''),
+        );
         card.append(frame, name, meta);
         card.addEventListener('click', () => void openDetail(t));
         return card;
@@ -1079,11 +1231,18 @@ import '../styles/global.css';
           if (gen !== libGen) return false; // superseded while registering
           withPosters.forEach((t, i) => srcByUrl.set(t.posterUrl!, srcs[i]!));
         }
-        for (const t of titles) {
-          grid.append(
-            makeCard(t, t.posterUrl ? (srcByUrl.get(t.posterUrl) ?? null) : null),
+        const frag = document.createDocumentFragment();
+        titles.forEach((t, i) => {
+          frag.append(
+            makeCard(
+              t,
+              t.posterUrl ? (srcByUrl.get(t.posterUrl) ?? null) : null,
+              first && i < 12,
+            ),
           );
-        }
+        });
+        grid.append(frag);
+        if (first) grid.removeAttribute('aria-busy');
         return true;
       }
 
@@ -1097,10 +1256,11 @@ import '../styles/global.css';
         titleCount += page.titles.length;
         status('lib-status').textContent =
           titleCount + ' titles' + (feedHasMore ? ' · scroll for more' : '');
-        status('lib-empty').classList.toggle(
-          'hidden',
-          !(titleCount === 0 && !pageLoading),
-        );
+        if (first) {
+          if (titleCount === 0) setEmpty('feed');
+          else hideEmpty();
+          hideBanner();
+        }
       }
 
       async function openFeed(): Promise<void> {
@@ -1109,15 +1269,10 @@ import '../styles/global.css';
         favoritesActive = false;
         titleCount = 0;
         pageLoading = true;
-        const grid = status('grid');
-        grid.replaceChildren();
-        for (let i = 0; i < 12; i++) {
-          const sk = document.createElement('div');
-          sk.className =
-            'aspect-[2/3] animate-pulse rounded-xl border border-hairline bg-raised';
-          grid.append(sk);
-        }
-        status('lib-empty').classList.add('hidden');
+        paintChips();
+        showSkeletons();
+        hideEmpty();
+        syncSearchChrome();
         status('lib-status').textContent = 'Loading…';
         try {
           const page = await feedOpen(currentCategory);
@@ -1126,9 +1281,14 @@ import '../styles/global.css';
           await appendPage(page, gen, true);
         } catch {
           if (gen === libGen) {
-            grid.replaceChildren();
-            status('lib-status').textContent =
-              'Could not load the catalog — are the servers reachable?';
+            status('grid').replaceChildren();
+            status('grid').removeAttribute('aria-busy');
+            showBanner(
+              'error',
+              'Could not load the catalog — are the servers reachable?',
+              'Retry',
+              () => void openFeed(),
+            );
           }
         } finally {
           if (gen === libGen) pageLoading = false;
@@ -1159,8 +1319,10 @@ import '../styles/global.css';
         feedHasMore = false;
         titleCount = 0;
         pageLoading = true;
-        status('grid').replaceChildren();
-        status('lib-empty').classList.add('hidden');
+        paintChips();
+        showSkeletons();
+        hideEmpty();
+        syncSearchChrome();
         status('lib-status').textContent = 'Loading favorites…';
         try {
           const favs = await getFavorites();
@@ -1168,50 +1330,122 @@ import '../styles/global.css';
           if (!(await paintTitles(favs, gen, true))) return;
           titleCount = favs.length;
           status('lib-status').textContent = favs.length + ' favorites';
-          status('lib-empty').classList.toggle('hidden', favs.length !== 0);
+          if (favs.length === 0) setEmpty('favorites');
+          else hideEmpty();
+          hideBanner();
         } catch {
           if (gen === libGen) {
-            status('lib-status').textContent = 'Could not load favorites.';
+            status('grid').removeAttribute('aria-busy');
+            showBanner('error', 'Could not load favorites.', 'Retry', () =>
+              void openFavorites(),
+            );
           }
         } finally {
           if (gen === libGen) pageLoading = false;
         }
       }
 
+      // Chip state is derived, never toggled ad hoc (Agent 18):
+      // paintChips() re-derives is-active / aria-pressed / roving
+      // tabindex from (activeQuery, favoritesActive, currentCategory)
+      // — including after a search, which selects no chip. That is
+      // the fix for the old bug where searching from Favorites left
+      // the Favorites chip highlighted.
+      function paintChips(scroll = false): void {
+        const wrap = status('chips');
+        let roving: HTMLElement | null = null;
+        let fallback: HTMLElement | null = null;
+        wrap.querySelectorAll('.chip').forEach((el) => {
+          const b = el as HTMLElement;
+          const kind = b.dataset.chipKind;
+          const active =
+            activeQuery !== ''
+              ? false
+              : kind === 'fav'
+                ? favoritesActive
+                : kind === 'cat' &&
+                  !favoritesActive &&
+                  (b.dataset.chipValue ?? '') === (currentCategory ?? '');
+          b.classList.toggle('is-active', active);
+          b.setAttribute('aria-pressed', String(active));
+          if (active) roving = b;
+          if (
+            kind === 'cat' &&
+            (b.dataset.chipValue ?? '') === (currentCategory ?? '')
+          )
+            fallback = b;
+        });
+        const target = roving ?? fallback ?? wrap.querySelector('.chip');
+        wrap.querySelectorAll('.chip').forEach((el) => {
+          (el as HTMLElement).tabIndex = el === target ? 0 : -1;
+        });
+        const favIcon = wrap.querySelector('.fav-chip-icon');
+        if (favIcon)
+          favIcon.replaceChildren(
+            icon(favoritesActive ? 'star-filled' : 'star', 16),
+          );
+        if (scroll && target)
+          (target as HTMLElement).scrollIntoView({
+            block: 'nearest',
+            inline: 'nearest',
+          });
+      }
+
       function renderChips(categories: CategoryDto[]): void {
         const wrap = status('chips');
         wrap.replaceChildren();
-        const activate = (b: HTMLElement) => {
-          wrap.querySelectorAll('.chip').forEach((el) => {
-            el.classList.toggle('is-active', el === b);
-          });
-        };
-        const mk = (label: string, value: string | null) => {
+        const mk = (
+          label: string,
+          value: string | null,
+          sources?: string[],
+        ) => {
           const b = document.createElement('button');
-          b.className =
-            'chip' +
-            (currentCategory === value && !favoritesActive ? ' is-active' : '');
+          b.className = 'chip';
+          b.dataset.chipKind = 'cat';
+          b.dataset.chipValue = value ?? '';
           b.textContent = label;
+          if (sources && sources.length > 0)
+            b.title = 'On: ' + sources.join(', ');
           b.addEventListener('click', () => {
             if (currentCategory === value && !favoritesActive) return;
             currentCategory = value;
             favoritesActive = false;
-            activate(b);
             void openFeed();
           });
           return b;
         };
         wrap.append(mk('All', null));
         const favChip = document.createElement('button');
-        favChip.className = 'chip' + (favoritesActive ? ' is-active' : '');
-        favChip.textContent = '★ Favorites';
+        favChip.className = 'chip';
+        favChip.dataset.chipKind = 'fav';
+        const favIcon = el('span', 'fav-chip-icon');
+        favIcon.setAttribute('aria-hidden', 'true');
+        favChip.append(favIcon, document.createTextNode('Favorites'));
         favChip.addEventListener('click', () => {
           if (favoritesActive) return;
-          activate(favChip);
           void openFavorites();
         });
         wrap.append(favChip);
-        for (const c of categories) wrap.append(mk(c.name, c.name));
+        for (const c of categories) wrap.append(mk(c.name, c.name, c.sources));
+        // Roving tabindex (Agent 18): arrows move focus only,
+        // Enter/Space activate via the native click.
+        wrap.onkeydown = (e) => {
+          const chips = [...wrap.querySelectorAll('.chip')] as HTMLElement[];
+          const i = chips.indexOf(document.activeElement as HTMLElement);
+          if (i < 0) return;
+          let j: number | null = null;
+          if (e.key === 'ArrowRight') j = (i + 1) % chips.length;
+          else if (e.key === 'ArrowLeft')
+            j = (i - 1 + chips.length) % chips.length;
+          else if (e.key === 'Home') j = 0;
+          else if (e.key === 'End') j = chips.length - 1;
+          if (j !== null) {
+            e.preventDefault();
+            chips.forEach((c, k) => (c.tabIndex = k === j ? 0 : -1));
+            chips[j]!.focus();
+          }
+        };
+        paintChips();
       }
 
       async function loadLibrary(refresh: boolean): Promise<void> {
@@ -1222,17 +1456,34 @@ import '../styles/global.css';
               'No categories found — check the Servers tab';
             return;
           }
+          hideBanner();
           renderChips(categories);
           void openFeed();
         } catch {
-          status('lib-status').textContent =
-            'Could not load categories — are the servers reachable?';
+          showBanner(
+            'error',
+            'Could not load categories — are the servers reachable?',
+            'Retry',
+            () => void loadLibrary(true),
+          );
         }
       }
 
       document
         .getElementById('lib-refresh')!
-        .addEventListener('click', () => void loadLibrary(true));
+        .addEventListener('click', async () => {
+          const btn = status('lib-refresh') as HTMLButtonElement;
+          btn.disabled = true;
+          btn.classList.add('is-busy');
+          btn.setAttribute('aria-busy', 'true');
+          try {
+            await loadLibrary(true);
+          } finally {
+            btn.disabled = false;
+            btn.classList.remove('is-busy');
+            btn.removeAttribute('aria-busy');
+          }
+        });
 
       new IntersectionObserver(
         (entries) => {
@@ -1254,15 +1505,9 @@ import '../styles/global.css';
         feedHasMore = false;
         titleCount = 0;
         pageLoading = true;
-        const grid = status('grid');
-        grid.replaceChildren();
-        for (let i = 0; i < 12; i++) {
-          const sk = document.createElement('div');
-          sk.className =
-            'aspect-[2/3] animate-pulse rounded-xl border border-hairline bg-raised';
-          grid.append(sk);
-        }
-        status('lib-empty').classList.add('hidden');
+        paintChips();
+        showSkeletons();
+        hideEmpty();
         status('lib-status').textContent = 'Searching…';
         try {
           const results = await searchTitles(q);
@@ -1271,11 +1516,18 @@ import '../styles/global.css';
           titleCount = results.length;
           status('lib-status').textContent =
             results.length + ' results for “' + q + '”';
-          status('lib-empty').classList.toggle('hidden', results.length !== 0);
+          if (results.length === 0) setEmpty('search');
+          else hideEmpty();
+          hideBanner();
         } catch {
           if (gen === libGen) {
-            status('lib-status').textContent =
-              'Search failed — are the servers reachable?';
+            status('grid').removeAttribute('aria-busy');
+            showBanner(
+              'error',
+              'Search failed — are the servers reachable?',
+              'Retry',
+              () => void runSearch(q),
+            );
           }
         } finally {
           if (gen === libGen) pageLoading = false;
@@ -1284,7 +1536,26 @@ import '../styles/global.css';
       const searchInput = document.getElementById(
         'lib-search',
       ) as HTMLInputElement;
+      // Clear button + Ctrl-K hint visibility follows the field.
+      function syncSearchChrome(): void {
+        const hasText = searchInput.value.length > 0;
+        status('lib-clear').classList.toggle('hidden', !hasText);
+        document
+          .querySelector('.search-hint')
+          ?.classList.toggle('hidden', hasText);
+      }
+      function clearSearch(): void {
+        window.clearTimeout(searchTimer);
+        searchInput.value = '';
+        syncSearchChrome();
+        if (activeQuery !== '') void openFeed();
+      }
+      status('lib-clear').addEventListener('click', () => {
+        clearSearch();
+        searchInput.focus();
+      });
       searchInput.addEventListener('input', () => {
+        syncSearchChrome();
         const q = searchInput.value.trim();
         window.clearTimeout(searchTimer);
         if (q.length === 0) {
@@ -1299,8 +1570,7 @@ import '../styles/global.css';
           window.clearTimeout(searchTimer);
           if (q) void runSearch(q);
         } else if (e.key === 'Escape') {
-          searchInput.value = '';
-          if (activeQuery !== '') void openFeed();
+          clearSearch();
         }
       });
 
@@ -1477,8 +1747,16 @@ import '../styles/global.css';
         try {
           boot = await getBootstrap();
         } catch {
-          status('lib-status').textContent =
-            'Not running inside Tauri — this is the browser preview.';
+          // No backend answered: a static preview, an unreachable
+          // web server, or a failed IPC bridge (Agent 30). Say that
+          // honestly and offer a real retry — a reload re-runs boot
+          // cleanly in both transports.
+          showBanner(
+            'info',
+            'Could not reach the LanFetch backend. If this is a preview, start the desktop app or the web server, then retry.',
+            'Retry',
+            () => location.reload(),
+          );
           return;
         }
         status('version').textContent = 'v' + boot.appVersion;
