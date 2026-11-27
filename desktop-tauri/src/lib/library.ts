@@ -16,7 +16,7 @@
 // observer.
 import * as api from './api';
 import type { CategoryDto, FeedPageDto, TitleDto } from './api';
-import { el, icon } from './ui';
+import { createDropdown, el, icon, type Dropdown } from './ui';
 
 export interface LibraryCtx {
   /** The shell's element-by-id helper. */
@@ -93,46 +93,73 @@ export function cardAriaLabel(t: TitleDto): string {
   );
 }
 
-/** Library filters (user request, post-V2): applied client-side
- * to the titles loaded so far — feed pages, favorites and search
- * results all flow through the same loaded set. Pure — unit-tested. */
+/** Library filters (user request, post-V2; redesigned after the
+ * user's "too minimalistic / system-default" verdict): applied
+ * client-side to the titles loaded so far — feed pages, favorites
+ * and search results all flow through the same loaded set. The
+ * controls are custom dropdowns (ui.ts createDropdown), never
+ * native selects. Pure core — unit-tested. */
 export interface TitleFilters {
   kind: string; // 'all' | 'movie' | 'series'
-  quality: string; // 'any' | a bestQuality value ('2160p', 'CAM', …)
+  quality: string; // 'any' | exact ('1080p', 'CAM', …) | 'min:720p'
   language: string; // 'any' | an exact TitleDto.language
-  year: string; // 'any' | '2020s' | '2010s' | '2000s' | 'older'
-  sort: string; // 'feed' | 'az' | 'year-desc' | 'year-asc'
+  source: string; // 'any' | an exact TitleDto.sourceName
+  yearFrom: string; // 'any' | a year, e.g. '2015' (inclusive)
+  yearTo: string; // 'any' | a year (inclusive)
+  sort: string; // 'feed' | 'az' | 'year-desc' | 'year-asc' | 'quality'
 }
 
 export const DEFAULT_FILTERS: TitleFilters = {
   kind: 'all',
   quality: 'any',
   language: 'any',
-  year: 'any',
+  source: 'any',
+  yearFrom: 'any',
+  yearTo: 'any',
   sort: 'feed',
 };
+
+/** The catalog's quality ladder, worst → best (mirrors the
+ * ranking in engine catalog.rs). Unknown/absent quality ranks -1. */
+export const QUALITY_LADDER = [
+  'CAM',
+  '360p',
+  '480p',
+  '720p',
+  '1080p',
+  '2160p',
+];
+
+export function qualityRank(q: string | null): number {
+  return q === null ? -1 : QUALITY_LADDER.indexOf(q);
+}
 
 export function filtersActive(f: TitleFilters): boolean {
   return (
     f.kind !== 'all' ||
     f.quality !== 'any' ||
     f.language !== 'any' ||
-    f.year !== 'any' ||
+    f.source !== 'any' ||
+    f.yearFrom !== 'any' ||
+    f.yearTo !== 'any' ||
     f.sort !== 'feed'
   );
 }
 
 export function titleMatchesFilters(t: TitleDto, f: TitleFilters): boolean {
   if (f.kind !== 'all' && t.kind !== f.kind) return false;
-  if (f.quality !== 'any' && t.bestQuality !== f.quality) return false;
+  if (f.quality !== 'any') {
+    if (f.quality.startsWith('min:')) {
+      if (qualityRank(t.bestQuality) < qualityRank(f.quality.slice(4)))
+        return false;
+    } else if (t.bestQuality !== f.quality) return false;
+  }
   if (f.language !== 'any' && t.language !== f.language) return false;
-  if (f.year !== 'any') {
+  if (f.source !== 'any' && t.sourceName !== f.source) return false;
+  if (f.yearFrom !== 'any' || f.yearTo !== 'any') {
     if (t.year === null) return false;
-    const y = t.year;
-    if (f.year === '2020s' && !(y >= 2020 && y <= 2029)) return false;
-    if (f.year === '2010s' && !(y >= 2010 && y <= 2019)) return false;
-    if (f.year === '2000s' && !(y >= 2000 && y <= 2009)) return false;
-    if (f.year === 'older' && !(y < 2000)) return false;
+    if (f.yearFrom !== 'any' && t.year < Number(f.yearFrom)) return false;
+    if (f.yearTo !== 'any' && t.year > Number(f.yearTo)) return false;
   }
   return true;
 }
@@ -148,6 +175,12 @@ export function applyTitleFilters(
     out.sort((a, b) => (b.year ?? -1) - (a.year ?? -1));
   else if (f.sort === 'year-asc')
     out.sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999));
+  else if (f.sort === 'quality')
+    out.sort(
+      (a, b) =>
+        qualityRank(b.bestQuality) - qualityRank(a.bestQuality) ||
+        a.title.localeCompare(b.title),
+    );
   return out;
 }
 
@@ -170,6 +203,25 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
   // without another server round-trip. titleCount counts the
   // loaded set; paintedCount counts what survived the filters.
   let filters: TitleFilters = { ...DEFAULT_FILTERS };
+  type FilterField =
+    | 'kind'
+    | 'quality'
+    | 'language'
+    | 'source'
+    | 'yearFrom'
+    | 'yearTo'
+    | 'sort';
+  /** Custom dropdown instances, created in mount() (loaders only
+   * run after mount, so the nulls are never observed). */
+  const filterDds: Record<FilterField, Dropdown | null> = {
+    kind: null,
+    quality: null,
+    language: null,
+    source: null,
+    yearFrom: null,
+    yearTo: null,
+    sort: null,
+  };
   let loadedTitles: TitleDto[] = [];
   let paintedCount = 0;
   let statusBase = '';
@@ -393,36 +445,84 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     return paintTitles(view, gen, true);
   }
 
+  let dynOptSig = '';
   function syncFilterChrome(): void {
     ctx
       .status('lib-filter-clear')
       .classList.toggle('hidden', !filtersActive(filters));
-    // Language options follow what has actually loaded; the
-    // current selection is always kept so the control never
-    // silently resets while paging.
-    const sel = ctx.status('lib-filter-language') as HTMLSelectElement;
+    // Dynamic options (language, server, years) follow what has
+    // actually loaded; the current selection is always kept in
+    // the set so a control never silently resets while paging.
+    // A signature cache keeps paging from re-rendering the lists.
     const langs = [
       ...new Set(
-        loadedTitles
-          .map((t) => t.language)
-          .filter((l): l is string => !!l),
+        loadedTitles.map((t) => t.language).filter((l) => !!l),
       ),
     ].sort();
-    const want = [...new Set(['any', filters.language, ...langs])];
-    const current = [...sel.options].map((o) => o.value);
-    if (
-      current.length !== want.length ||
-      current.some((v) => !want.includes(v))
-    ) {
-      sel.replaceChildren();
-      for (const v of want) {
-        const o = document.createElement('option');
-        o.value = v;
-        o.textContent = v === 'any' ? 'Any language' : v;
-        sel.append(o);
-      }
-      sel.value = filters.language;
-    }
+    const sources = [
+      ...new Set(loadedTitles.map((t) => t.sourceName)),
+    ].sort();
+    const years = [
+      ...new Set(
+        loadedTitles
+          .map((t) => t.year)
+          .filter((y): y is number => y !== null),
+      ),
+    ]
+      .sort((a, b) => a - b)
+      .map(String);
+    const sig = [
+      langs.join(','),
+      sources.join(','),
+      years.join(','),
+      filters.language,
+      filters.source,
+      filters.yearFrom,
+      filters.yearTo,
+    ].join('|');
+    if (sig === dynOptSig) return;
+    dynOptSig = sig;
+    const withCurrent = (
+      base: { value: string; label: string },
+      values: string[],
+      current: string,
+    ) => {
+      const opts = [base];
+      for (const v of values)
+        if (!opts.some((o) => o.value === v))
+          opts.push({ value: v, label: v });
+      if (current !== 'any' && !opts.some((o) => o.value === current))
+        opts.push({ value: current, label: current });
+      return opts;
+    };
+    filterDds.language?.setOptions(
+      withCurrent(
+        { value: 'any', label: 'Any language' },
+        langs,
+        filters.language,
+      ),
+    );
+    filterDds.source?.setOptions(
+      withCurrent(
+        { value: 'any', label: 'Any server' },
+        sources,
+        filters.source,
+      ),
+    );
+    filterDds.yearFrom?.setOptions(
+      withCurrent(
+        { value: 'any', label: 'Year from' },
+        years,
+        filters.yearFrom,
+      ),
+    );
+    filterDds.yearTo?.setOptions(
+      withCurrent(
+        { value: 'any', label: 'Year to' },
+        years,
+        filters.yearTo,
+      ),
+    );
   }
 
   async function applyFiltersAndRepaint(): Promise<void> {
@@ -436,23 +536,25 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
 
   function readFilterControls(): void {
     filters = {
-      kind: (ctx.status('lib-filter-kind') as HTMLSelectElement).value,
-      quality: (ctx.status('lib-filter-quality') as HTMLSelectElement)
-        .value,
-      language: (ctx.status('lib-filter-language') as HTMLSelectElement)
-        .value,
-      year: (ctx.status('lib-filter-year') as HTMLSelectElement).value,
-      sort: (ctx.status('lib-filter-sort') as HTMLSelectElement).value,
+      kind: filterDds.kind?.value() ?? DEFAULT_FILTERS.kind,
+      quality: filterDds.quality?.value() ?? DEFAULT_FILTERS.quality,
+      language: filterDds.language?.value() ?? DEFAULT_FILTERS.language,
+      source: filterDds.source?.value() ?? DEFAULT_FILTERS.source,
+      yearFrom: filterDds.yearFrom?.value() ?? DEFAULT_FILTERS.yearFrom,
+      yearTo: filterDds.yearTo?.value() ?? DEFAULT_FILTERS.yearTo,
+      sort: filterDds.sort?.value() ?? DEFAULT_FILTERS.sort,
     };
   }
 
   function clearFilters(): void {
     filters = { ...DEFAULT_FILTERS };
-    (ctx.status('lib-filter-kind') as HTMLSelectElement).value = 'all';
-    (ctx.status('lib-filter-quality') as HTMLSelectElement).value = 'any';
-    (ctx.status('lib-filter-language') as HTMLSelectElement).value = 'any';
-    (ctx.status('lib-filter-year') as HTMLSelectElement).value = 'any';
-    (ctx.status('lib-filter-sort') as HTMLSelectElement).value = 'feed';
+    filterDds.kind?.setValue('all');
+    filterDds.quality?.setValue('any');
+    filterDds.language?.setValue('any');
+    filterDds.source?.setValue('any');
+    filterDds.yearFrom?.setValue('any');
+    filterDds.yearTo?.setValue('any');
+    filterDds.sort?.setValue('feed');
     void applyFiltersAndRepaint();
   }
 
@@ -865,16 +967,68 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       void applyFiltersAndRepaint();
     };
     const onFilterClear = () => clearFilters();
-    const filterIds = [
-      'lib-filter-kind',
-      'lib-filter-quality',
-      'lib-filter-language',
-      'lib-filter-year',
-      'lib-filter-sort',
-    ];
-    for (const id of filterIds)
-      ctx.status(id).addEventListener('change', onFilterChange);
+    const mkDropdown = (
+      field: FilterField,
+      mountId: string,
+      label: string,
+      options: { value: string; label: string }[],
+      value: string,
+    ) => {
+      const dd = createDropdown({
+        id: mountId + '-dd',
+        label,
+        options,
+        value,
+        onChange: onFilterChange,
+      });
+      filterDds[field] = dd;
+      ctx.status(mountId).append(dd.root);
+    };
+    mkDropdown('kind', 'lib-filter-kind', 'Filter by type', [
+      { value: 'all', label: 'All types' },
+      { value: 'movie', label: 'Movies' },
+      { value: 'series', label: 'TV Series' },
+    ], filters.kind);
+    mkDropdown('quality', 'lib-filter-quality', 'Filter by quality', [
+      { value: 'any', label: 'Any quality' },
+      { value: 'min:1080p', label: '1080p & up' },
+      { value: 'min:720p', label: '720p & up' },
+      { value: '2160p', label: '2160p · 4K' },
+      { value: '1080p', label: '1080p' },
+      { value: '720p', label: '720p' },
+      { value: '480p', label: '480p' },
+      { value: '360p', label: '360p' },
+      { value: 'CAM', label: 'CAM' },
+    ], filters.quality);
+    mkDropdown('language', 'lib-filter-language', 'Filter by language', [
+      { value: 'any', label: 'Any language' },
+    ], filters.language);
+    mkDropdown('source', 'lib-filter-source', 'Filter by server', [
+      { value: 'any', label: 'Any server' },
+    ], filters.source);
+    mkDropdown(
+      'yearFrom',
+      'lib-filter-year-from',
+      'Filter by earliest year',
+      [{ value: 'any', label: 'Year from' }],
+      filters.yearFrom,
+    );
+    mkDropdown(
+      'yearTo',
+      'lib-filter-year-to',
+      'Filter by latest year',
+      [{ value: 'any', label: 'Year to' }],
+      filters.yearTo,
+    );
+    mkDropdown('sort', 'lib-filter-sort', 'Sort titles', [
+      { value: 'feed', label: 'Sort: Server order' },
+      { value: 'az', label: 'Sort: A–Z' },
+      { value: 'year-desc', label: 'Sort: Newest first' },
+      { value: 'year-asc', label: 'Sort: Oldest first' },
+      { value: 'quality', label: 'Sort: Best quality' },
+    ], filters.sort);
     ctx.status('lib-filter-clear').addEventListener('click', onFilterClear);
+    syncFilterChrome();
     return () => {
       ctx
         .status('lib-banner-retry')
@@ -891,8 +1045,7 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       ctx.status('lib-clear').removeEventListener('click', onClearClick);
       searchInput.removeEventListener('input', onSearchInput);
       searchInput.removeEventListener('keydown', onSearchKeys);
-      for (const id of filterIds)
-        ctx.status(id).removeEventListener('change', onFilterChange);
+      for (const d of Object.values(filterDds)) d?.destroy();
       ctx
         .status('lib-filter-clear')
         .removeEventListener('click', onFilterClear);

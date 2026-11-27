@@ -337,36 +337,13 @@ import '../styles/global.css';
               role="group"
               aria-label="Filter titles"
             >
-              <select id="lib-filter-kind" class="select" aria-label="Filter by type">
-                <option value="all">All types</option>
-                <option value="movie">Movies</option>
-                <option value="series">TV Series</option>
-              </select>
-              <select id="lib-filter-quality" class="select" aria-label="Filter by quality">
-                <option value="any">Any quality</option>
-                <option value="2160p">2160p · 4K</option>
-                <option value="1080p">1080p</option>
-                <option value="720p">720p</option>
-                <option value="480p">480p</option>
-                <option value="360p">360p</option>
-                <option value="CAM">CAM</option>
-              </select>
-              <select id="lib-filter-language" class="select" aria-label="Filter by language">
-                <option value="any">Any language</option>
-              </select>
-              <select id="lib-filter-year" class="select" aria-label="Filter by year">
-                <option value="any">Any year</option>
-                <option value="2020s">2020s</option>
-                <option value="2010s">2010s</option>
-                <option value="2000s">2000s</option>
-                <option value="older">Before 2000</option>
-              </select>
-              <select id="lib-filter-sort" class="select" aria-label="Sort titles">
-                <option value="feed">Sort: Server order</option>
-                <option value="az">Sort: A–Z</option>
-                <option value="year-desc">Sort: Newest first</option>
-                <option value="year-asc">Sort: Oldest first</option>
-              </select>
+              <div id="lib-filter-kind"></div>
+              <div id="lib-filter-quality"></div>
+              <div id="lib-filter-language"></div>
+              <div id="lib-filter-source"></div>
+              <div id="lib-filter-year-from"></div>
+              <div id="lib-filter-year-to"></div>
+              <div id="lib-filter-sort"></div>
               <button id="lib-filter-clear" class="btn btn-ghost btn-sm hidden">
                 Clear filters
               </button>

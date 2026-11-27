@@ -98,6 +98,7 @@ describe('title filters', () => {
     year: 1998,
     language: 'BN',
     bestQuality: '480p',
+    sourceName: 'DHAKA-FLIX-9',
   };
   const noYear: TitleDto = { ...movie, title: 'Mystery', year: null };
 
@@ -124,25 +125,41 @@ describe('title filters', () => {
     ).toBe(false);
   });
 
-  it('year bands include their edges and exclude yearless titles', () => {
-    const y2020s = { ...DEFAULT_FILTERS, year: '2020s' };
-    expect(titleMatchesFilters(movie, y2020s)).toBe(true); // 2024
-    expect(titleMatchesFilters(oldBn, y2020s)).toBe(false); // 1998
-    expect(titleMatchesFilters(noYear, y2020s)).toBe(false);
+  it('minimum quality uses the ladder, not string order', () => {
+    const hd = { ...DEFAULT_FILTERS, quality: 'min:720p' };
+    expect(titleMatchesFilters(movie, hd)).toBe(true); // 1080p
+    expect(titleMatchesFilters(series, hd)).toBe(true); // 720p
+    expect(titleMatchesFilters(oldBn, hd)).toBe(false); // 480p
     expect(
-      titleMatchesFilters(oldBn, { ...DEFAULT_FILTERS, year: 'older' }),
-    ).toBe(true);
-    expect(
-      titleMatchesFilters(
-        { ...movie, year: 2000 },
-        { ...DEFAULT_FILTERS, year: '2000s' },
-      ),
-    ).toBe(true);
+      titleMatchesFilters(series, {
+        ...DEFAULT_FILTERS,
+        quality: 'min:1080p',
+      }),
+    ).toBe(false);
     expect(
       titleMatchesFilters(
-        { ...movie, year: 2000 },
-        { ...DEFAULT_FILTERS, year: 'older' },
+        { ...movie, bestQuality: null },
+        { ...DEFAULT_FILTERS, quality: 'min:720p' },
       ),
+    ).toBe(false);
+  });
+
+  it('source matches the server name exactly', () => {
+    const f = { ...DEFAULT_FILTERS, source: 'DHAKA-FLIX-9' };
+    expect(titleMatchesFilters(oldBn, f)).toBe(true);
+    expect(titleMatchesFilters(movie, f)).toBe(false);
+  });
+
+  it('year range is inclusive and excludes yearless titles', () => {
+    const range = { ...DEFAULT_FILTERS, yearFrom: '1990', yearTo: '2020' };
+    expect(titleMatchesFilters(oldBn, range)).toBe(true); // 1998
+    expect(titleMatchesFilters(movie, range)).toBe(false); // 2024
+    expect(titleMatchesFilters(noYear, range)).toBe(false);
+    expect(
+      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, yearFrom: '2024' }),
+    ).toBe(true);
+    expect(
+      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, yearTo: '2023' }),
     ).toBe(false);
   });
 
@@ -161,6 +178,12 @@ describe('title filters', () => {
         sort: 'year-desc',
       }).map((t) => t.title),
     ).toEqual(['Show', 'Film', 'Purono Film']);
+    expect(
+      applyTitleFilters(input, {
+        ...DEFAULT_FILTERS,
+        sort: 'quality',
+      }).map((t) => t.title),
+    ).toEqual(['Film', 'Show', 'Purono Film']);
     expect(
       applyTitleFilters(input, { ...DEFAULT_FILTERS, kind: 'movie' }).map(
         (t) => t.title,

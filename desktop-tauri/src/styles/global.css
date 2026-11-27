@@ -326,6 +326,46 @@ img {
     @apply block text-secondary font-medium text-ink-2 mb-1.5;
   }
 
+  /* ---- custom dropdown (ui.ts createDropdown) ----
+     Native <select> paints as OS webview chrome — bright system
+     boxes on the dark theme — so filter controls are hand-drawn
+     from the same tokens as .select/.btn. */
+  .dd {
+    @apply relative;
+  }
+  .dd-btn {
+    @apply inline-flex cursor-pointer items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 py-2 text-control text-ink outline-none transition-colors;
+    transition-duration: var(--dur-fast);
+  }
+  .dd-btn:hover {
+    @apply border-accent;
+  }
+  .dd-btn[aria-expanded='true'] {
+    @apply border-accent;
+  }
+  .dd-chev {
+    @apply shrink-0 text-ink-3 transition-transform;
+    transition-duration: var(--dur-fast);
+  }
+  .dd-btn[aria-expanded='true'] .dd-chev {
+    transform: rotate(180deg);
+  }
+  .dd-list {
+    @apply absolute left-0 top-full z-40 mt-1 max-h-64 min-w-full overflow-auto rounded-md border border-border-strong bg-raised py-1 shadow-lg;
+  }
+  .dd-opt {
+    @apply flex cursor-pointer items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-control text-ink-2;
+  }
+  .dd-opt.dd-active {
+    @apply bg-surface text-ink;
+  }
+  .dd-opt[aria-selected='true'] {
+    @apply font-medium text-accent;
+  }
+  .dd-opt .ic {
+    @apply shrink-0;
+  }
+
   /* ---- navigation ---- */
   .nav-item {
     @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-body font-medium text-ink-2 transition-colors;
