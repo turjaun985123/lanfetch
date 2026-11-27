@@ -55,6 +55,8 @@ likewise unchanged; v1 exists only on the HTTP transport.
 | `remove_source` | `DELETE /api/v1/sources/{name}` | `SourceDto[]` |
 | `set_source_enabled` | `PATCH /api/v1/sources/{name}` | `SourceDto[]` |
 | `update_settings` | `PUT /api/v1/settings` | `SettingsDto` |
+| `get_web_token` | `GET /api/v1/web-token` | `string` |
+| `regenerate_web_token` | `POST /api/v1/web-token/regenerate` | `string` |
 | `get_favorites` | `GET /api/v1/favorites` | `TitleDto[]` |
 | `toggle_favorite` | `POST /api/v1/favorites/toggle` | `boolean` |
 | `poster_srcs` | `POST /api/v1/posters` | `string[]` |

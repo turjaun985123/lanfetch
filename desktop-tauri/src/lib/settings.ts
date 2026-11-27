@@ -11,7 +11,7 @@
 // every control with named handlers; dispose removes them all.
 import * as api from './api';
 import type { SettingsDto } from './api';
-import { toast } from './ui';
+import { confirmDialog, toast } from './ui';
 
 export interface SettingsCtx {
   /** The shell's element-by-id helper. */
@@ -221,6 +221,37 @@ export function createSettings(ctx: SettingsCtx): SettingsScreen {
       }
     };
 
+    // Web access (Wave 5B, ADR-003): the pairing token for the
+    // web edition. Loaded as Settings mounts; Regenerate asks
+    // first (it locks out every other paired device), then
+    // paints the new token — in web mode this browser adopts it
+    // inside api.regenerateWebToken().
+    const tokenEl = ctx.status('set-web-token');
+    void api
+      .getWebToken()
+      .then((t) => {
+        tokenEl.textContent = t;
+      })
+      .catch(() => {
+        tokenEl.textContent = 'Unavailable in this preview';
+      });
+    const regenBtn = ctx.status('set-web-token-regen');
+    const onRegen = async () => {
+      const ok = await confirmDialog({
+        title: 'Regenerate web access token?',
+        body: 'Every device paired with the current token is locked out immediately. This browser stays paired.',
+        confirmLabel: 'Regenerate',
+      });
+      if (!ok) return;
+      try {
+        tokenEl.textContent = await api.regenerateWebToken();
+        toast('New web access token generated');
+      } catch {
+        toast('Could not regenerate the token.', 'alert');
+      }
+    };
+    regenBtn.addEventListener('click', onRegen);
+
     for (const b of themeBtns) b.addEventListener('click', onThemeChoice);
     const themeSwitch = ctx.status('theme-switch');
     themeSwitch.addEventListener('keydown', onThemeKeys);
@@ -230,6 +261,7 @@ export function createSettings(ctx: SettingsCtx): SettingsScreen {
     for (const a of navItems) a.addEventListener('click', onSettingsNav);
     for (const b of copyBtns) b.addEventListener('click', onCopyClick);
     return () => {
+      regenBtn.removeEventListener('click', onRegen);
       for (const b of themeBtns)
         b.removeEventListener('click', onThemeChoice);
       themeSwitch.removeEventListener('keydown', onThemeKeys);

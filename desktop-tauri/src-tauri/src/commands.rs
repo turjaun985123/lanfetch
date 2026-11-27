@@ -544,6 +544,20 @@ pub fn update_settings(
     SettingsDto::from(&settings)
 }
 
+/// The web API access token (ADR-003): Settings shows it so the
+/// user can pair another device with the web edition, and offers
+/// regeneration — which locks out every previously paired
+/// device. Reading creates the token on first use.
+#[tauri::command]
+pub fn get_web_token() -> String {
+    crate::store::load_or_create_web_token()
+}
+
+#[tauri::command]
+pub fn regenerate_web_token() -> String {
+    crate::store::regenerate_web_token()
+}
+
 #[tauri::command]
 pub fn add_source(
     state: State<'_, AppState>,

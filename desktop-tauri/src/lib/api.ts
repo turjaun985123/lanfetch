@@ -336,3 +336,26 @@ export function redownloadDownload(id: number): Promise<DownloadListDto> {
 export function checkUpdate(): Promise<string | null> {
   return invoke<string | null>('check_update');
 }
+
+/** The web access token (ADR-003), created on first read. */
+export function getWebToken(): Promise<string> {
+  return invoke<string>('get_web_token');
+}
+
+/**
+ * Replace the web access token. In web mode this browser is
+ * itself a paired device: it adopts the new token so its own
+ * session survives the regeneration that locks out every other
+ * paired device.
+ */
+export async function regenerateWebToken(): Promise<string> {
+  const token = await invoke<string>('regenerate_web_token');
+  if (!isTauri) {
+    try {
+      sessionStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      /* private mode: the next reload re-pairs via the fragment */
+    }
+  }
+  return token;
+}

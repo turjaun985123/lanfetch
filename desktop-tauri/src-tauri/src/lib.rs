@@ -108,6 +108,8 @@ pub fn run() {
             commands::clear_completed_downloads,
             commands::search_titles,
             commands::update_settings,
+            commands::get_web_token,
+            commands::regenerate_web_token,
             commands::add_source,
             commands::remove_source,
             commands::set_source_enabled,

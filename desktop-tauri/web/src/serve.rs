@@ -343,15 +343,27 @@ fn token_eq(a: &str, b: &str) -> bool {
 /// <token>` on any /api/* call. The single exception is the SSE
 /// stream, where EventSource cannot set headers, so `?token=` is
 /// accepted there — and only there.
+/// The token the server currently honors. Regeneration
+/// (Settings, in either edition) replaces the token file;
+/// reading it back here makes a regeneration take effect
+/// immediately rather than at the next server restart — a
+/// revoked pairing must stop working when the user revokes it.
+/// Falls back to the startup snapshot if the file is somehow
+/// unreadable.
+fn expected_token(cfg: &ServerCfg) -> String {
+    lanfetch_engine::store::current_web_token().unwrap_or_else(|| cfg.token.clone())
+}
+
 fn authorized(request: &Request, cfg: &ServerCfg) -> bool {
+    let expected = expected_token(cfg);
     if let Some(h) = request.header("authorization") {
         if let Some(t) = h.strip_prefix("Bearer ") {
-            return token_eq(t.trim(), &cfg.token);
+            return token_eq(t.trim(), &expected);
         }
     }
     if request.path == "/api/events" || request.path == "/api/v1/events" {
         if let Some(t) = query_param(&request.query, "token") {
-            return token_eq(&t, &cfg.token);
+            return token_eq(&t, &expected);
         }
     }
     false
@@ -660,6 +672,10 @@ fn v1_handle(state: &AppState, cfg: &ServerCfg, request: &Request) -> Result<Val
             )
         }
         ("PUT", ["settings"]) => v1_dispatch(state, "update_settings", &body),
+        ("GET", ["web-token"]) => v1_dispatch(state, "get_web_token", &json!({})),
+        ("POST", ["web-token", "regenerate"]) => {
+            v1_dispatch(state, "regenerate_web_token", &json!({}))
+        }
         ("GET", ["favorites"]) => v1_dispatch(state, "get_favorites", &json!({})),
         ("POST", ["favorites", "toggle"]) => v1_dispatch(state, "toggle_favorite", &body),
         ("POST", ["posters"]) => v1_dispatch(state, "poster_srcs", &body),
@@ -950,6 +966,8 @@ fn dispatch(state: &AppState, cmd: &str, args: &Value) -> Result<Value, String> 
             state.manager.apply_settings(settings.clone());
             to_json(SettingsDto::from(&settings))
         }
+        "get_web_token" => to_json(lanfetch_engine::store::load_or_create_web_token()),
+        "regenerate_web_token" => to_json(lanfetch_engine::store::regenerate_web_token()),
         "add_source" => to_json(add_source(
             state,
             arg_str(args, "name")?,
