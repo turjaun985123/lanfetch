@@ -96,7 +96,10 @@ pub fn transfer_agent() -> ureq::Agent {
 /// final, user-facing failure.
 #[derive(Debug)]
 pub enum CallError {
-    Ureq(ureq::Error),
+    // Boxed: ureq::Error is much larger than a String, and this
+    // enum is returned by every engine HTTP call (clippy
+    // large_enum_variant).
+    Ureq(Box<ureq::Error>),
     Rejected(String),
 }
 
@@ -201,7 +204,7 @@ pub fn call_following(
             _ => {}
         }
         let Some(location) = location else {
-            return result.map_err(CallError::Ureq);
+            return result.map_err(|e| CallError::Ureq(Box::new(e)));
         };
         if hops >= MAX_REDIRECTS {
             return Err(CallError::Rejected("too many redirects".into()));
@@ -288,8 +291,10 @@ pub fn fetch_listing(url: &str) -> Result<Vec<DirEntry>, String> {
     let resp = call_following(&http_agent(), false, url, |r| r).map_err(|e| match e {
         // An HTTP status means the server IS reachable — callers
         // (the failure cooldown) must not treat it as an outage.
-        CallError::Ureq(ureq::Error::Status(code, _)) => format!("http status {code}"),
-        CallError::Ureq(other) => format!("request failed: {other}"),
+        CallError::Ureq(e) => match &*e {
+            ureq::Error::Status(code, _) => format!("http status {code}"),
+            other => format!("request failed: {other}"),
+        },
         // A rejected redirect is a reachable server misbehaving:
         // its own message, and NOT the transport-failure class.
         CallError::Rejected(m) => m,
@@ -866,29 +871,31 @@ pub fn run_download(
                         *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
                         return;
                     }
-                    Err(CallError::Ureq(ureq::Error::Status(416, _))) => {
-                        // Range not satisfiable: benign only when the
-                        // segment is already fully on disk; otherwise the
-                        // file shrank or changed under the resume.
-                        let s = seg.lock().unwrap_or_else(|e| e.into_inner());
-                        if s.remaining() > 0 {
-                            progress.failed.store(true, Ordering::SeqCst);
-                            *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(
-                                "range not satisfiable — file may have changed; restart needed"
-                                    .into(),
-                            );
+                    Err(CallError::Ureq(e)) => match &*e {
+                        ureq::Error::Status(416, _) => {
+                            // Range not satisfiable: benign only when the
+                            // segment is already fully on disk; otherwise the
+                            // file shrank or changed under the resume.
+                            let s = seg.lock().unwrap_or_else(|e| e.into_inner());
+                            if s.remaining() > 0 {
+                                progress.failed.store(true, Ordering::SeqCst);
+                                *progress.message.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+                                    "range not satisfiable — file may have changed; restart needed"
+                                        .into(),
+                                );
+                            }
+                            return;
                         }
-                        return;
-                    }
-                    Err(CallError::Ureq(ureq::Error::Status(code, _))) => {
-                        progress.failed.store(true, Ordering::SeqCst);
-                        *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Some(format!("segment failed: HTTP {code}"));
-                        return;
-                    }
-                    // Transport errors (refused, reset, timeout) retry
-                    // through the stall/backoff path below.
-                    Err(CallError::Ureq(ureq::Error::Transport(_))) => None,
+                        ureq::Error::Status(code, _) => {
+                            progress.failed.store(true, Ordering::SeqCst);
+                            *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(format!("segment failed: HTTP {code}"));
+                            return;
+                        }
+                        // Transport errors (refused, reset, timeout) retry
+                        // through the stall/backoff path below.
+                        ureq::Error::Transport(_) => None,
+                    },
                 };
                 let mut hit_eof = false;
                 if let Some(resp) = resp {
