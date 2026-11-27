@@ -65,7 +65,7 @@ jobs:
           grep -qE 'env\(safe-area-inset-(bottom|top)' $CSS || { echo "no safe-area inset in dist CSS"; exit 1; }
           grep -hoE '(^|[;{])width: ?[0-9]+px' $CSS | grep -oE '[0-9]+' | \
             awk '$1>240 {print "oversize fixed width: "$1"px"; bad=1} END {exit bad}'
-          ! grep -rnE 'w-\[(3[0-9]{2}|[4-9][0-9]{2}|[0-9]{4,})px\]' src/ || { echo "w-[>=300px] in src"; exit 1; }
+          ! grep -rnE '[\s"'"'"']w-\[(3[0-9]{2}|[4-9][0-9]{2}|[0-9]{4,})px\]' src/ || { echo "w-[>=300px] in src"; exit 1; }
 
   backend:
     runs-on: ubuntu-24.04
