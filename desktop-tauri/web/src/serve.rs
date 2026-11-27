@@ -24,7 +24,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -50,7 +50,14 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-type Subscribers = Arc<Mutex<Vec<Sender<u64>>>>;
+/// SSE subscribers, each with a unique id so a stream removes
+/// exactly its own registration when it ends (audit: dead
+/// senders used to be pruned only when a download stamp fired,
+/// so quiet-period disconnects leaked slots until /api/events
+/// wedged at 503).
+type Subscribers = Arc<Mutex<Vec<(u64, Sender<u64>)>>>;
+
+static NEXT_SUBSCRIBER: AtomicU64 = AtomicU64::new(1);
 
 /// Hard caps (SECURITY.md S3): total in-flight connections and SSE
 /// subscribers. Excess connections get a fast 503, never an
@@ -93,7 +100,7 @@ pub fn run(port: u16, lan: bool) -> ! {
         let bridge = manager.clone();
         manager.set_notifier(Arc::new(move || {
             let stamp = bridge.stamp();
-            lock(&subs).retain(|tx| tx.send(stamp).is_ok());
+            lock(&subs).retain(|(_, tx)| tx.send(stamp).is_ok());
         }));
     }
     let state = Arc::new(AppState {
@@ -220,8 +227,24 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
         }
     }
     let mut body = vec![0u8; content_length];
-    if content_length > 0 && stream.read_exact(&mut body).is_err() {
-        return None;
+    if content_length > 0 {
+        // The body gets the same whole-transfer deadline as the
+        // head (audit): read_exact alone is bounded only by the
+        // per-read socket timeout, so a client dribbling one byte
+        // per timeout window could hold one of the 32 connection
+        // slots indefinitely — before auth is even checked.
+        let body_started = Instant::now();
+        let mut filled = 0;
+        while filled < content_length {
+            if body_started.elapsed() > Duration::from_secs(30) {
+                return None;
+            }
+            match stream.read(&mut body[filled..]) {
+                Ok(0) => return None,
+                Ok(n) => filled += n,
+                Err(_) => return None,
+            }
+        }
     }
     Some(Request {
         method,
@@ -654,7 +677,18 @@ fn serve_events(stream: &mut TcpStream, subscribers: &Subscribers) {
     // idle-but-healthy stream, so it is lifted here (S3 exception).
     let _ = stream.set_read_timeout(None);
     let (tx, rx): (Sender<u64>, Receiver<u64>) = channel();
-    lock(subscribers).push(tx);
+    let id = NEXT_SUBSCRIBER.fetch_add(1, Ordering::SeqCst);
+    lock(subscribers).push((id, tx));
+    event_loop(stream, &rx);
+    // Audit: unregister on EVERY exit. Dead senders used to be
+    // pruned only by the broadcast retain, which runs only when a
+    // download stamp fires — in a quiet period, disconnected
+    // browsers leaked their slots until the subscriber cap
+    // rejected every new /api/events with 503.
+    lock(subscribers).retain(|(sub_id, _)| *sub_id != id);
+}
+
+fn event_loop(stream: &mut TcpStream, rx: &Receiver<u64>) {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n";
     if stream.write_all(head.as_bytes()).is_err() {
         return;
