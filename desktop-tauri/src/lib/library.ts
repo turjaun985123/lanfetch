@@ -349,6 +349,9 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     const card = document.createElement('button');
     card.type = 'button';
     card.className = 'poster-card';
+    // Identity for syncGrid's DOM reconciliation (one card per
+    // folder in every server-produced list).
+    card.dataset.key = t.folderUrl;
     // The accessible name carries everything the badges show
     // visually (Agent 17): badges themselves are decorative.
     card.setAttribute('aria-label', cardAriaLabel(t));
@@ -403,17 +406,30 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     return card;
   }
 
-  /** Paint titles into the grid (poster batch first). Returns
-   * false when the generation was superseded mid-paint — the
-   * caller then drops everything. */
-  async function paintTitles(
-    titles: TitleDto[],
+  /** Sync the grid's children to exactly `view`, in order.
+   * Existing cards are MOVED, never recreated: the previous
+   * replaceChildren repaint emptied the grid before rebuilding
+   * it, the page height collapsed mid-scroll, and the browser
+   * clamped the scroll position back to the top — on every
+   * sorted page load and every filter change, new pages appeared
+   * to never arrive (user bug report, 2026-11-28). Only titles
+   * without a card yet get one built, after one batched poster
+   * registration. Returns false when the generation was
+   * superseded mid-registration — the caller drops everything. */
+  async function syncGrid(
+    view: TitleDto[],
     gen: number,
     first: boolean,
   ): Promise<boolean> {
     const grid = ctx.status('grid');
     if (first) grid.replaceChildren();
-    const withPosters = titles.filter((t) => t.posterUrl);
+    const existing = new Map<string, HTMLElement>();
+    for (const child of [...grid.children]) {
+      const key = (child as HTMLElement).dataset.key;
+      if (key) existing.set(key, child as HTMLElement);
+    }
+    const missing = view.filter((t) => !existing.has(t.folderUrl));
+    const withPosters = missing.filter((t) => t.posterUrl);
     const srcByUrl = new Map<string, string>();
     if (withPosters.length > 0) {
       const srcs = await api.posterSrcs(
@@ -422,27 +438,38 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       if (gen !== libGen) return false; // superseded while registering
       withPosters.forEach((t, i) => srcByUrl.set(t.posterUrl!, srcs[i]!));
     }
-    const frag = document.createDocumentFragment();
-    titles.forEach((t, i) => {
-      frag.append(
-        makeCard(
+    const keep = new Set<string>();
+    view.forEach((t, i) => {
+      keep.add(t.folderUrl);
+      let card = existing.get(t.folderUrl);
+      if (!card) {
+        card = makeCard(
           t,
           t.posterUrl ? (srcByUrl.get(t.posterUrl) ?? null) : null,
           first && i < 12,
-        ),
-      );
+        );
+        existing.set(t.folderUrl, card);
+      }
+      // appendChild moves a node that is already in the grid, so
+      // walking the view in order leaves the grid in exactly view
+      // order with every surviving card's DOM state (poster load
+      // state included) intact — and the scroll position unmoved.
+      grid.append(card);
     });
-    grid.append(frag);
+    for (const [key, card] of existing) {
+      if (!keep.has(key)) card.remove();
+    }
     if (first) grid.removeAttribute('aria-busy');
     return true;
   }
 
-  /** Repaint the whole loaded set through the current filters.
-   * Returns false when superseded mid-paint, like paintTitles. */
+  /** Repaint the whole loaded set through the current filters,
+   * preserving scroll and surviving cards (syncGrid). Returns
+   * false when superseded mid-paint. */
   async function repaintLoaded(gen: number): Promise<boolean> {
     const view = applyTitleFilters(loadedTitles, filters);
     paintedCount = view.length;
-    return paintTitles(view, gen, true);
+    return syncGrid(view, gen, false);
   }
 
   let dynOptSig = '';
@@ -456,7 +483,9 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     // A signature cache keeps paging from re-rendering the lists.
     const langs = [
       ...new Set(
-        loadedTitles.map((t) => t.language).filter((l) => !!l),
+        loadedTitles
+          .map((t) => t.language)
+          .filter((l): l is string => !!l),
       ),
     ].sort();
     const sources = [
@@ -570,17 +599,13 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     feedHasMore = page.hasMore;
     loadedTitles.push(...page.titles);
     titleCount += page.titles.length;
-    if (filters.sort !== 'feed') {
-      // A non-feed sort is a whole-set ordering: repaint from
-      // memory instead of appending an out-of-order page.
-      if (!(await repaintLoaded(gen))) return;
-    } else {
-      const view = page.titles.filter((t) =>
-        titleMatchesFilters(t, filters),
-      );
-      if (!(await paintTitles(view, gen, first))) return;
-      paintedCount = first ? view.length : paintedCount + view.length;
-    }
+    // One path for every sort order: syncGrid inserts the new
+    // page's cards at their sorted positions and moves (never
+    // recreates) the ones already on screen, so paging can no
+    // longer reset the scroll position.
+    const view = applyTitleFilters(loadedTitles, filters);
+    paintedCount = view.length;
+    if (!(await syncGrid(view, gen, first))) return;
     statusBase =
       titleCount + ' titles' + (feedHasMore ? ' · scroll for more' : '');
     renderStatus();
