@@ -221,6 +221,13 @@ export interface TitleDto {
   language: string | null;
   seasonCount: number;
   bestQuality: string | null;
+  /** Release tag ("WEB-DL", "BluRay", …) — Android filter parity. */
+  sourceTag: string | null;
+  /** Largest file in the folder in bytes; -1 when unknown. */
+  maxSizeBytes: number;
+  hasDualAudio: boolean;
+  /** The folder's modification stamp from the server listing. */
+  modified: string | null;
   copies: number;
   isFavorite: boolean;
 }

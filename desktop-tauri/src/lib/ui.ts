@@ -238,6 +238,208 @@ export function createDropdown(opts: {
   };
 }
 
+export interface MultiDropdown {
+  root: HTMLElement;
+  values(): string[];
+  setValues(v: string[]): void;
+  setOptions(opts: DropdownOption[]): void;
+  destroy(): void;
+}
+
+/** A multi-select facet dropdown (Android filter parity,
+ * 2026-11-28): the APK's filter facets are SETS — several
+ * qualities, languages, servers or release tags at once. Same
+ * chrome and keyboard model as createDropdown, but options
+ * toggle in place and the panel stays open; the button reads
+ * "Label" when the set is empty and "Label · n" otherwise.
+ * Selections survive setOptions rebuilds (facet lists grow as
+ * pages load; a selection is never silently dropped). */
+export function createMultiDropdown(opts: {
+  id: string;
+  label: string;
+  options: DropdownOption[];
+  values: string[];
+  onChange: (values: string[]) => void;
+}): MultiDropdown {
+  let options = opts.options;
+  let selected = new Set(opts.values);
+  let open = false;
+  let active = -1;
+
+  const root = el('div', 'dd');
+  root.id = opts.id;
+  const btn = el('button', 'dd-btn');
+  btn.type = 'button';
+  btn.setAttribute('aria-haspopup', 'listbox');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-label', opts.label);
+  const text = el('span', 'dd-text');
+  const chev = icon('chevron-down', 16);
+  chev.classList.add('dd-chev');
+  btn.append(text, chev);
+  const list = el('ul', 'dd-list hidden');
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-multiselectable', 'true');
+  list.setAttribute('aria-label', opts.label);
+  root.append(btn, list);
+
+  function renderList(): void {
+    list.replaceChildren();
+    options.forEach((o, i) => {
+      const li = el('li', 'dd-opt');
+      li.id = opts.id + '-opt-' + i;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', String(selected.has(o.value)));
+      if (selected.has(o.value)) li.append(icon('check', 16));
+      li.append(document.createTextNode(o.label));
+      if (i === active) li.classList.add('dd-active');
+      li.addEventListener('click', () => toggle(o.value));
+      li.addEventListener('pointermove', () => setActive(i));
+      list.append(li);
+    });
+  }
+
+  function syncButton(): void {
+    text.textContent =
+      selected.size === 0
+        ? opts.label
+        : opts.label + ' · ' + selected.size;
+    root.classList.toggle('dd-on', selected.size > 0);
+    btn.setAttribute('aria-expanded', String(open));
+    if (open && active >= 0)
+      btn.setAttribute('aria-activedescendant', opts.id + '-opt-' + active);
+    else btn.removeAttribute('aria-activedescendant');
+  }
+
+  function setActive(i: number): void {
+    active =
+      options.length === 0
+        ? -1
+        : Math.max(0, Math.min(i, options.length - 1));
+    [...list.children].forEach((c, j) =>
+      c.classList.toggle('dd-active', j === active),
+    );
+    const node = list.children[active] as HTMLElement | undefined;
+    if (node) node.scrollIntoView({ block: 'nearest' });
+    syncButton();
+  }
+
+  function onDocPointer(e: Event): void {
+    if (!root.contains(e.target as Node)) setOpen(false);
+  }
+
+  function setOpen(next: boolean): void {
+    if (next === open) return;
+    open = next;
+    list.classList.toggle('hidden', !open);
+    if (open) {
+      active = Math.max(
+        0,
+        options.findIndex((o) => selected.has(o.value)),
+      );
+      renderList();
+      document.addEventListener('pointerdown', onDocPointer, true);
+    } else {
+      document.removeEventListener('pointerdown', onDocPointer, true);
+    }
+    syncButton();
+  }
+
+  function toggle(v: string): void {
+    if (selected.has(v)) selected.delete(v);
+    else selected.add(v);
+    renderList();
+    syncButton();
+    opts.onChange([...selected]);
+  }
+
+  function onBtnClick(): void {
+    setOpen(!open);
+  }
+
+  function onKey(e: KeyboardEvent): void {
+    if (!open) {
+      if (
+        e.key === 'ArrowDown' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'Enter' ||
+        e.key === ' '
+      ) {
+        e.preventDefault();
+        setOpen(true);
+      }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setActive(active + 1);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setActive(active - 1);
+        break;
+      case 'Home':
+        e.preventDefault();
+        setActive(0);
+        break;
+      case 'End':
+        e.preventDefault();
+        setActive(options.length - 1);
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (active >= 0 && options[active]) toggle(options[active].value);
+        break;
+      case 'Escape':
+        e.preventDefault();
+        setOpen(false);
+        btn.focus();
+        break;
+      case 'Tab':
+        setOpen(false);
+        break;
+      default:
+        if (e.key.length === 1) {
+          const ch = e.key.toLowerCase();
+          for (let k = 0; k < options.length; k++) {
+            const idx = (active + 1 + k) % options.length;
+            if (options[idx].label.toLowerCase().startsWith(ch)) {
+              setActive(idx);
+              break;
+            }
+          }
+        }
+    }
+  }
+
+  btn.addEventListener('click', onBtnClick);
+  btn.addEventListener('keydown', onKey);
+  renderList();
+  syncButton();
+
+  return {
+    root,
+    values: () => [...selected],
+    setValues(v: string[]): void {
+      selected = new Set(v);
+      renderList();
+      syncButton();
+    },
+    setOptions(next: DropdownOption[]): void {
+      options = next;
+      renderList();
+      syncButton();
+    },
+    destroy(): void {
+      document.removeEventListener('pointerdown', onDocPointer, true);
+      btn.removeEventListener('click', onBtnClick);
+      btn.removeEventListener('keydown', onKey);
+    },
+  };
+}
+
 /** Transient feedback (Agent 26/31): status toasts are polite,
  * alert toasts assertive; one event never raises both. Toasts
  * live in the #toast-region rendered by index.astro. */

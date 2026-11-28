@@ -343,6 +343,11 @@ img {
   .dd-btn[aria-expanded='true'] {
     @apply border-accent;
   }
+  /* A multi-select facet with a non-empty set (Android filter
+     parity): accent border + label, count is in the text. */
+  .dd.dd-on .dd-btn {
+    @apply border-accent text-accent;
+  }
   .dd-chev {
     @apply shrink-0 text-ink-3 transition-transform;
     transition-duration: var(--dur-fast);

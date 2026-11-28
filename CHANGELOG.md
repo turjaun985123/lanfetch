@@ -7,6 +7,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- Library filter rebuilt to Android APK parity (2026-11-28): the filter
+  model, semantics and sorts now match the app's CatalogFilter /
+  TitleFilterEngine — multi-select facet sets for type, quality,
+  language, server and release tag (OR within a dimension, AND across),
+  an inclusive year range, the APK's minimum-size presets
+  (700 MB / 1.5 GB / 4 GB), a dual-audio toggle, and its five sorts
+  (Newest = feed order, Title, Year, Size largest/smallest). The engine
+  now parses each listing row's modification stamp, orders crawl
+  siblings by container year then recency, expands the newest year
+  container before fetching older ones, and carries the folder stamp
+  plus source tag, largest-file size and dual-audio flag on every
+  title — the pieces whose absence buried the newest (2026) series
+  on desktop while the APK showed them.
+
 ### Fixed
 
 - Audit remediation (2026-11-28, external end-to-end audit): a finished

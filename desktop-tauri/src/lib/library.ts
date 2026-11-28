@@ -16,7 +16,14 @@
 // observer.
 import * as api from './api';
 import type { CategoryDto, FeedPageDto, TitleDto } from './api';
-import { createDropdown, el, icon, type Dropdown } from './ui';
+import {
+  createDropdown,
+  createMultiDropdown,
+  el,
+  icon,
+  type Dropdown,
+  type MultiDropdown,
+} from './ui';
 
 export interface LibraryCtx {
   /** The shell's element-by-id helper. */
@@ -93,76 +100,102 @@ export function cardAriaLabel(t: TitleDto): string {
   );
 }
 
-/** Library filters (user request, post-V2; redesigned after the
- * user's "too minimalistic / system-default" verdict): applied
- * client-side to the titles loaded so far — feed pages, favorites
+/** Library filters — ANDROID PARITY (2026-11-28): the model,
+ * semantics and sorts port the APK's CatalogFilter /
+ * TitleFilterEngine exactly (the user judged the desktop filter
+ * against the APK and found it wanting): multi-select facet SETS
+ * (empty set = no constraint; OR within a dimension, AND across
+ * dimensions), an inclusive year range that excludes year-less
+ * titles whenever a bound is set, a minimum-size threshold, a
+ * dual-audio toggle, and the APK's five sorts — Newest (the feed
+ * order itself), Title, Year, Size down, Size up. Applied
+ * client-side to the titles loaded so far; feed pages, favorites
  * and search results all flow through the same loaded set. The
- * controls are custom dropdowns (ui.ts createDropdown), never
- * native selects. Pure core — unit-tested. */
+ * controls are custom dropdowns (ui.ts), never native selects.
+ * Pure core — unit-tested. */
+export type TitleSort = 'feed' | 'title' | 'year-desc' | 'size-desc' | 'size-asc';
+
 export interface TitleFilters {
-  kind: string; // 'all' | 'movie' | 'series'
-  quality: string; // 'any' | exact ('1080p', 'CAM', …) | 'min:720p'
-  language: string; // 'any' | an exact TitleDto.language
-  source: string; // 'any' | an exact TitleDto.sourceName
-  yearFrom: string; // 'any' | a year, e.g. '2015' (inclusive)
-  yearTo: string; // 'any' | a year (inclusive)
-  sort: string; // 'feed' | 'az' | 'year-desc' | 'year-asc' | 'quality'
+  kinds: string[];
+  qualities: string[];
+  languages: string[];
+  sources: string[];
+  sourceTags: string[];
+  yearFrom: number | null;
+  yearTo: number | null;
+  minSizeBytes: number | null;
+  dualAudioOnly: boolean;
+  sort: TitleSort;
 }
 
 export const DEFAULT_FILTERS: TitleFilters = {
-  kind: 'all',
-  quality: 'any',
-  language: 'any',
-  source: 'any',
-  yearFrom: 'any',
-  yearTo: 'any',
+  kinds: [],
+  qualities: [],
+  languages: [],
+  sources: [],
+  sourceTags: [],
+  yearFrom: null,
+  yearTo: null,
+  minSizeBytes: null,
+  dualAudioOnly: false,
   sort: 'feed',
 };
 
-/** The catalog's quality ladder, worst → best (mirrors the
- * ranking in engine catalog.rs). Unknown/absent quality ranks -1. */
-export const QUALITY_LADDER = [
-  'CAM',
-  '360p',
-  '480p',
-  '720p',
-  '1080p',
+/** The catalog's quality ladder, best → worst (facet option
+ * ordering, mirroring TitleFilterEngine.qualityOrder). */
+export const QUALITY_ORDER = [
   '2160p',
+  '1080p',
+  '720p',
+  '480p',
+  '360p',
+  'CAM',
 ];
 
-export function qualityRank(q: string | null): number {
-  return q === null ? -1 : QUALITY_LADDER.indexOf(q);
-}
+/** Minimum-size presets from the APK's filter sheet. */
+export const SIZE_PRESETS: { value: string; label: string }[] = [
+  { value: '', label: 'Any size' },
+  { value: '700000000', label: '700 MB +' },
+  { value: '1500000000', label: '1.5 GB +' },
+  { value: '4000000000', label: '4 GB +' },
+];
 
 export function filtersActive(f: TitleFilters): boolean {
   return (
-    f.kind !== 'all' ||
-    f.quality !== 'any' ||
-    f.language !== 'any' ||
-    f.source !== 'any' ||
-    f.yearFrom !== 'any' ||
-    f.yearTo !== 'any' ||
+    f.kinds.length > 0 ||
+    f.qualities.length > 0 ||
+    f.languages.length > 0 ||
+    f.sources.length > 0 ||
+    f.sourceTags.length > 0 ||
+    f.yearFrom !== null ||
+    f.yearTo !== null ||
+    f.minSizeBytes !== null ||
+    f.dualAudioOnly ||
     f.sort !== 'feed'
   );
 }
 
 export function titleMatchesFilters(t: TitleDto, f: TitleFilters): boolean {
-  if (f.kind !== 'all' && t.kind !== f.kind) return false;
-  if (f.quality !== 'any') {
-    if (f.quality.startsWith('min:')) {
-      if (qualityRank(t.bestQuality) < qualityRank(f.quality.slice(4)))
-        return false;
-    } else if (t.bestQuality !== f.quality) return false;
-  }
-  if (f.language !== 'any' && t.language !== f.language) return false;
-  if (f.source !== 'any' && t.sourceName !== f.source) return false;
-  if (f.yearFrom !== 'any' || f.yearTo !== 'any') {
-    if (t.year === null) return false;
-    if (f.yearFrom !== 'any' && t.year < Number(f.yearFrom)) return false;
-    if (f.yearTo !== 'any' && t.year > Number(f.yearTo)) return false;
-  }
+  if (f.kinds.length > 0 && !f.kinds.includes(t.kind)) return false;
+  if (f.qualities.length > 0 && !(t.bestQuality !== null && f.qualities.includes(t.bestQuality)))
+    return false;
+  if (f.languages.length > 0 && !(t.language !== null && f.languages.includes(t.language)))
+    return false;
+  if (f.sources.length > 0 && !(t.sourceName !== null && f.sources.includes(t.sourceName)))
+    return false;
+  if (f.sourceTags.length > 0 && !(t.sourceTag !== null && f.sourceTags.includes(t.sourceTag)))
+    return false;
+  // A set year bound excludes year-less titles (the APK's rule).
+  if (f.yearFrom !== null && !(t.year !== null && t.year >= f.yearFrom)) return false;
+  if (f.yearTo !== null && !(t.year !== null && t.year <= f.yearTo)) return false;
+  // Unknown size is -1, so it fails every positive threshold.
+  if (f.minSizeBytes !== null && !(t.maxSizeBytes >= f.minSizeBytes)) return false;
+  if (f.dualAudioOnly && !t.hasDualAudio) return false;
   return true;
 }
+
+const byTitle = (a: TitleDto, b: TitleDto): number =>
+  a.title.toLowerCase().localeCompare(b.title.toLowerCase());
 
 /** Filter + sort a loaded title list without mutating it. */
 export function applyTitleFilters(
@@ -170,17 +203,30 @@ export function applyTitleFilters(
   f: TitleFilters,
 ): TitleDto[] {
   const out = titles.filter((t) => titleMatchesFilters(t, f));
-  if (f.sort === 'az') out.sort((a, b) => a.title.localeCompare(b.title));
-  else if (f.sort === 'year-desc')
-    out.sort((a, b) => (b.year ?? -1) - (a.year ?? -1));
-  else if (f.sort === 'year-asc')
-    out.sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999));
-  else if (f.sort === 'quality')
-    out.sort(
-      (a, b) =>
-        qualityRank(b.bestQuality) - qualityRank(a.bestQuality) ||
-        a.title.localeCompare(b.title),
-    );
+  switch (f.sort) {
+    case 'title':
+      out.sort(byTitle);
+      break;
+    case 'year-desc':
+      out.sort(
+        (a, b) =>
+          (b.year ?? Number.MIN_SAFE_INTEGER) -
+            (a.year ?? Number.MIN_SAFE_INTEGER) || byTitle(a, b),
+      );
+      break;
+    case 'size-desc':
+      out.sort((a, b) => b.maxSizeBytes - a.maxSizeBytes || byTitle(a, b));
+      break;
+    case 'size-asc': {
+      // The APK sends unknown sizes (-1) LAST ascending.
+      const key = (t: TitleDto): number =>
+        t.maxSizeBytes < 0 ? Number.MAX_SAFE_INTEGER : t.maxSizeBytes;
+      out.sort((a, b) => key(a) - key(b) || byTitle(a, b));
+      break;
+    }
+    default:
+      break; // 'feed' — the crawl order IS Android's Newest.
+  }
   return out;
 }
 
@@ -202,25 +248,23 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
   // loadedTitles so a filter change can repaint from memory
   // without another server round-trip. titleCount counts the
   // loaded set; paintedCount counts what survived the filters.
-  let filters: TitleFilters = { ...DEFAULT_FILTERS };
-  type FilterField =
-    | 'kind'
-    | 'quality'
-    | 'language'
-    | 'source'
-    | 'yearFrom'
-    | 'yearTo'
-    | 'sort';
+  let filters: TitleFilters = { ...DEFAULT_FILTERS, kinds: [], qualities: [], languages: [], sources: [], sourceTags: [] };
+  type SingleField = 'yearFrom' | 'yearTo' | 'size' | 'sort';
+  type MultiField = 'kinds' | 'qualities' | 'languages' | 'sources' | 'sourceTags';
   /** Custom dropdown instances, created in mount() (loaders only
    * run after mount, so the nulls are never observed). */
-  const filterDds: Record<FilterField, Dropdown | null> = {
-    kind: null,
-    quality: null,
-    language: null,
-    source: null,
+  const filterDds: Record<SingleField, Dropdown | null> = {
     yearFrom: null,
     yearTo: null,
+    size: null,
     sort: null,
+  };
+  const filterMds: Record<MultiField, MultiDropdown | null> = {
+    kinds: null,
+    qualities: null,
+    languages: null,
+    sources: null,
+    sourceTags: null,
   };
   let loadedTitles: TitleDto[] = [];
   let paintedCount = 0;
@@ -473,28 +517,25 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
   }
 
   let dynOptSig = '';
+  let dualOnly = false;
   function syncFilterChrome(): void {
     ctx
       .status('lib-filter-clear')
       .classList.toggle('hidden', !filtersActive(filters));
-    // Dynamic options (language, server, years) follow what has
-    // actually loaded; the current selection is always kept in
-    // the set so a control never silently resets while paging.
-    // A signature cache keeps paging from re-rendering the lists.
-    const langs = [
-      ...new Set(
-        loadedTitles
-          .map((t) => t.language)
-          .filter((l): l is string => !!l),
-      ),
-    ].sort();
-    const sources = [
-      ...new Set(
-        loadedTitles
-          .map((t) => t.sourceName)
-          .filter((s): s is string => !!s),
-      ),
-    ].sort();
+    // Facet options follow what has actually loaded (the APK
+    // computes facets from its pool the same way); selections are
+    // preserved across rebuilds so a control never silently
+    // resets while paging. A signature cache keeps paging from
+    // re-rendering the lists on every page.
+    const distinct = (pick: (t: TitleDto) => string | null): string[] => [
+      ...new Set(loadedTitles.map(pick).filter((v): v is string => !!v)),
+    ];
+    const langs = distinct((t) => t.language).sort();
+    const sources = distinct((t) => t.sourceName).sort();
+    const tags = distinct((t) => t.sourceTag).sort();
+    const quals = distinct((t) => t.bestQuality).sort(
+      (a, b) => QUALITY_ORDER.indexOf(a) - QUALITY_ORDER.indexOf(b),
+    );
     const years = [
       ...new Set(
         loadedTitles
@@ -507,55 +548,33 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
     const sig = [
       langs.join(','),
       sources.join(','),
+      tags.join(','),
+      quals.join(','),
       years.join(','),
-      filters.language,
-      filters.source,
-      filters.yearFrom,
-      filters.yearTo,
+      String(filters.yearFrom),
+      String(filters.yearTo),
     ].join('|');
     if (sig === dynOptSig) return;
     dynOptSig = sig;
-    const withCurrent = (
-      base: { value: string; label: string },
-      values: string[],
-      current: string,
-    ) => {
-      const opts = [base];
-      for (const v of values)
-        if (!opts.some((o) => o.value === v))
-          opts.push({ value: v, label: v });
-      if (current !== 'any' && !opts.some((o) => o.value === current))
-        opts.push({ value: current, label: current });
+    const toOpts = (values: string[]) =>
+      values.map((v) => ({ value: v, label: v }));
+    filterMds.languages?.setOptions(toOpts(langs));
+    filterMds.sources?.setOptions(toOpts(sources));
+    filterMds.sourceTags?.setOptions(toOpts(tags));
+    filterMds.qualities?.setOptions(toOpts(quals));
+    const yearOpts = (
+      base: string,
+      current: number | null,
+    ): { value: string; label: string }[] => {
+      const opts = [{ value: '', label: base }];
+      for (const y of years)
+        if (!opts.some((o) => o.value === y)) opts.push({ value: y, label: y });
+      if (current !== null && !opts.some((o) => o.value === String(current)))
+        opts.push({ value: String(current), label: String(current) });
       return opts;
     };
-    filterDds.language?.setOptions(
-      withCurrent(
-        { value: 'any', label: 'Any language' },
-        langs,
-        filters.language,
-      ),
-    );
-    filterDds.source?.setOptions(
-      withCurrent(
-        { value: 'any', label: 'Any server' },
-        sources,
-        filters.source,
-      ),
-    );
-    filterDds.yearFrom?.setOptions(
-      withCurrent(
-        { value: 'any', label: 'Year from' },
-        years,
-        filters.yearFrom,
-      ),
-    );
-    filterDds.yearTo?.setOptions(
-      withCurrent(
-        { value: 'any', label: 'Year to' },
-        years,
-        filters.yearTo,
-      ),
-    );
+    filterDds.yearFrom?.setOptions(yearOpts('Year from', filters.yearFrom));
+    filterDds.yearTo?.setOptions(yearOpts('Year to', filters.yearTo));
   }
 
   async function applyFiltersAndRepaint(): Promise<void> {
@@ -568,25 +587,47 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
   }
 
   function readFilterControls(): void {
+    const yearBound = (v: string | undefined): number | null => {
+      if (v === undefined || v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const sizeVal = filterDds.size?.value() ?? '';
     filters = {
-      kind: filterDds.kind?.value() ?? DEFAULT_FILTERS.kind,
-      quality: filterDds.quality?.value() ?? DEFAULT_FILTERS.quality,
-      language: filterDds.language?.value() ?? DEFAULT_FILTERS.language,
-      source: filterDds.source?.value() ?? DEFAULT_FILTERS.source,
-      yearFrom: filterDds.yearFrom?.value() ?? DEFAULT_FILTERS.yearFrom,
-      yearTo: filterDds.yearTo?.value() ?? DEFAULT_FILTERS.yearTo,
-      sort: filterDds.sort?.value() ?? DEFAULT_FILTERS.sort,
+      kinds: filterMds.kinds?.values() ?? [],
+      qualities: filterMds.qualities?.values() ?? [],
+      languages: filterMds.languages?.values() ?? [],
+      sources: filterMds.sources?.values() ?? [],
+      sourceTags: filterMds.sourceTags?.values() ?? [],
+      yearFrom: yearBound(filterDds.yearFrom?.value()),
+      yearTo: yearBound(filterDds.yearTo?.value()),
+      minSizeBytes: sizeVal === '' ? null : Number(sizeVal),
+      dualAudioOnly: dualOnly,
+      sort: (filterDds.sort?.value() ?? 'feed') as TitleSort,
     };
   }
 
   function clearFilters(): void {
-    filters = { ...DEFAULT_FILTERS };
-    filterDds.kind?.setValue('all');
-    filterDds.quality?.setValue('any');
-    filterDds.language?.setValue('any');
-    filterDds.source?.setValue('any');
-    filterDds.yearFrom?.setValue('any');
-    filterDds.yearTo?.setValue('any');
+    filters = {
+      ...DEFAULT_FILTERS,
+      kinds: [],
+      qualities: [],
+      languages: [],
+      sources: [],
+      sourceTags: [],
+    };
+    dualOnly = false;
+    const dualBtn = ctx.status('lib-filter-dual');
+    dualBtn.setAttribute('aria-pressed', 'false');
+    dualBtn.classList.remove('is-active');
+    filterMds.kinds?.setValues([]);
+    filterMds.qualities?.setValues([]);
+    filterMds.languages?.setValues([]);
+    filterMds.sources?.setValues([]);
+    filterMds.sourceTags?.setValues([]);
+    filterDds.yearFrom?.setValue('');
+    filterDds.yearTo?.setValue('');
+    filterDds.size?.setValue('');
     filterDds.sort?.setValue('feed');
     void applyFiltersAndRepaint();
   }
@@ -996,8 +1037,8 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       void applyFiltersAndRepaint();
     };
     const onFilterClear = () => clearFilters();
-    const mkDropdown = (
-      field: FilterField,
+    const mkSingle = (
+      field: SingleField,
       mountId: string,
       label: string,
       options: { value: string; label: string }[],
@@ -1013,49 +1054,60 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       filterDds[field] = dd;
       ctx.status(mountId).append(dd.root);
     };
-    mkDropdown('kind', 'lib-filter-kind', 'Filter by type', [
-      { value: 'all', label: 'All types' },
+    const mkMulti = (
+      field: MultiField,
+      mountId: string,
+      label: string,
+      options: { value: string; label: string }[],
+    ) => {
+      const md = createMultiDropdown({
+        id: mountId + '-dd',
+        label,
+        options,
+        values: [],
+        onChange: onFilterChange,
+      });
+      filterMds[field] = md;
+      ctx.status(mountId).append(md.root);
+    };
+    mkMulti('kinds', 'lib-filter-kind', 'Type', [
       { value: 'movie', label: 'Movies' },
       { value: 'series', label: 'TV Series' },
-    ], filters.kind);
-    mkDropdown('quality', 'lib-filter-quality', 'Filter by quality', [
-      { value: 'any', label: 'Any quality' },
-      { value: 'min:1080p', label: '1080p & up' },
-      { value: 'min:720p', label: '720p & up' },
-      { value: '2160p', label: '2160p · 4K' },
-      { value: '1080p', label: '1080p' },
-      { value: '720p', label: '720p' },
-      { value: '480p', label: '480p' },
-      { value: '360p', label: '360p' },
-      { value: 'CAM', label: 'CAM' },
-    ], filters.quality);
-    mkDropdown('language', 'lib-filter-language', 'Filter by language', [
-      { value: 'any', label: 'Any language' },
-    ], filters.language);
-    mkDropdown('source', 'lib-filter-source', 'Filter by server', [
-      { value: 'any', label: 'Any server' },
-    ], filters.source);
-    mkDropdown(
+    ]);
+    mkMulti('qualities', 'lib-filter-quality', 'Quality', []);
+    mkMulti('languages', 'lib-filter-language', 'Language', []);
+    mkMulti('sources', 'lib-filter-source', 'Server', []);
+    mkMulti('sourceTags', 'lib-filter-tag', 'Release', []);
+    mkSingle(
       'yearFrom',
       'lib-filter-year-from',
       'Filter by earliest year',
-      [{ value: 'any', label: 'Year from' }],
-      filters.yearFrom,
+      [{ value: '', label: 'Year from' }],
+      '',
     );
-    mkDropdown(
+    mkSingle(
       'yearTo',
       'lib-filter-year-to',
       'Filter by latest year',
-      [{ value: 'any', label: 'Year to' }],
-      filters.yearTo,
+      [{ value: '', label: 'Year to' }],
+      '',
     );
-    mkDropdown('sort', 'lib-filter-sort', 'Sort titles', [
-      { value: 'feed', label: 'Sort: Server order' },
-      { value: 'az', label: 'Sort: A–Z' },
-      { value: 'year-desc', label: 'Sort: Newest first' },
-      { value: 'year-asc', label: 'Sort: Oldest first' },
-      { value: 'quality', label: 'Sort: Best quality' },
-    ], filters.sort);
+    mkSingle('size', 'lib-filter-size', 'Filter by minimum size', SIZE_PRESETS, '');
+    mkSingle('sort', 'lib-filter-sort', 'Sort titles', [
+      { value: 'feed', label: 'Sort: Newest' },
+      { value: 'title', label: 'Sort: Title A–Z' },
+      { value: 'year-desc', label: 'Sort: Year' },
+      { value: 'size-desc', label: 'Sort: Size · largest' },
+      { value: 'size-asc', label: 'Sort: Size · smallest' },
+    ], 'feed');
+    const dualBtn = ctx.status('lib-filter-dual');
+    const onDualToggle = () => {
+      dualOnly = !dualOnly;
+      dualBtn.setAttribute('aria-pressed', String(dualOnly));
+      dualBtn.classList.toggle('is-active', dualOnly);
+      onFilterChange();
+    };
+    dualBtn.addEventListener('click', onDualToggle);
     ctx.status('lib-filter-clear').addEventListener('click', onFilterClear);
     syncFilterChrome();
     return () => {
@@ -1075,6 +1127,8 @@ export function createLibrary(ctx: LibraryCtx): LibraryScreen {
       searchInput.removeEventListener('input', onSearchInput);
       searchInput.removeEventListener('keydown', onSearchKeys);
       for (const d of Object.values(filterDds)) d?.destroy();
+      for (const d of Object.values(filterMds)) d?.destroy();
+      dualBtn.removeEventListener('click', onDualToggle);
       ctx
         .status('lib-filter-clear')
         .removeEventListener('click', onFilterClear);

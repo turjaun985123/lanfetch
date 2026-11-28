@@ -25,6 +25,10 @@ const movie: TitleDto = {
   language: 'EN',
   seasonCount: 0,
   bestQuality: '1080p',
+  sourceTag: 'WEB-DL',
+  maxSizeBytes: 4_500_000_000,
+  hasDualAudio: false,
+  modified: '2026-11-20 10:00',
   copies: 1,
   isFavorite: false,
 };
@@ -34,6 +38,9 @@ const series: TitleDto = {
   kind: 'series',
   seasonCount: 3,
   bestQuality: '720p',
+  sourceTag: 'BluRay',
+  maxSizeBytes: 1_200_000_000,
+  hasDualAudio: true,
 };
 
 describe('chipActive', () => {
@@ -91,7 +98,7 @@ describe('cardAriaLabel', () => {
   });
 });
 
-describe('title filters', () => {
+describe('title filters (Android TitleFilterEngine parity)', () => {
   const oldBn: TitleDto = {
     ...movie,
     title: 'Purono Film',
@@ -99,8 +106,20 @@ describe('title filters', () => {
     language: 'BN',
     bestQuality: '480p',
     sourceName: 'DHAKA-FLIX-9',
+    sourceTag: null,
+    maxSizeBytes: 650_000_000,
   };
-  const noYear: TitleDto = { ...movie, title: 'Mystery', year: null };
+  const noYear: TitleDto = {
+    ...movie,
+    title: 'Mystery',
+    year: null,
+    sourceTag: null,
+    maxSizeBytes: -1,
+  };
+  const F = (p: Partial<typeof DEFAULT_FILTERS>) => ({
+    ...DEFAULT_FILTERS,
+    ...p,
+  });
 
   it('the defaults match everything and count as inactive', () => {
     expect(filtersActive(DEFAULT_FILTERS)).toBe(false);
@@ -109,86 +128,100 @@ describe('title filters', () => {
     expect(titleMatchesFilters(noYear, DEFAULT_FILTERS)).toBe(true);
   });
 
-  it('kind, quality and language match exactly', () => {
-    const f = { ...DEFAULT_FILTERS, kind: 'series' };
-    expect(filtersActive(f)).toBe(true);
-    expect(titleMatchesFilters(series, f)).toBe(true);
-    expect(titleMatchesFilters(movie, f)).toBe(false);
-    expect(
-      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, quality: '720p' }),
-    ).toBe(false);
-    expect(
-      titleMatchesFilters(oldBn, { ...DEFAULT_FILTERS, language: 'BN' }),
-    ).toBe(true);
-    expect(
-      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, language: 'BN' }),
-    ).toBe(false);
-  });
-
-  it('minimum quality uses the ladder, not string order', () => {
-    const hd = { ...DEFAULT_FILTERS, quality: 'min:720p' };
-    expect(titleMatchesFilters(movie, hd)).toBe(true); // 1080p
-    expect(titleMatchesFilters(series, hd)).toBe(true); // 720p
-    expect(titleMatchesFilters(oldBn, hd)).toBe(false); // 480p
-    expect(
-      titleMatchesFilters(series, {
-        ...DEFAULT_FILTERS,
-        quality: 'min:1080p',
-      }),
-    ).toBe(false);
+  it('facet sets are OR within a dimension', () => {
+    const kinds = F({ kinds: ['series'] });
+    expect(filtersActive(kinds)).toBe(true);
+    expect(titleMatchesFilters(series, kinds)).toBe(true);
+    expect(titleMatchesFilters(movie, kinds)).toBe(false);
+    const both = F({ kinds: ['movie', 'series'] });
+    expect(titleMatchesFilters(movie, both)).toBe(true);
+    expect(titleMatchesFilters(series, both)).toBe(true);
+    const quals = F({ qualities: ['720p', '480p'] });
+    expect(titleMatchesFilters(series, quals)).toBe(true);
+    expect(titleMatchesFilters(oldBn, quals)).toBe(true);
+    expect(titleMatchesFilters(movie, quals)).toBe(false);
     expect(
       titleMatchesFilters(
         { ...movie, bestQuality: null },
-        { ...DEFAULT_FILTERS, quality: 'min:720p' },
+        F({ qualities: ['1080p'] }),
       ),
+    ).toBe(false);
+    expect(titleMatchesFilters(oldBn, F({ languages: ['BN'] }))).toBe(true);
+    expect(titleMatchesFilters(movie, F({ languages: ['BN'] }))).toBe(false);
+    expect(
+      titleMatchesFilters(oldBn, F({ sources: ['DHAKA-FLIX-9'] })),
+    ).toBe(true);
+    expect(
+      titleMatchesFilters(movie, F({ sources: ['DHAKA-FLIX-9'] })),
     ).toBe(false);
   });
 
-  it('source matches the server name exactly', () => {
-    const f = { ...DEFAULT_FILTERS, source: 'DHAKA-FLIX-9' };
+  it('source tag facet matches the release tag; null never matches', () => {
+    expect(titleMatchesFilters(movie, F({ sourceTags: ['WEB-DL'] }))).toBe(true);
+    expect(titleMatchesFilters(series, F({ sourceTags: ['WEB-DL'] }))).toBe(false);
+    expect(titleMatchesFilters(oldBn, F({ sourceTags: ['WEB-DL'] }))).toBe(false);
+    expect(
+      titleMatchesFilters(series, F({ sourceTags: ['WEB-DL', 'BluRay'] })),
+    ).toBe(true);
+  });
+
+  it('dimensions combine with AND', () => {
+    const f = F({ kinds: ['movie'], languages: ['BN'] });
     expect(titleMatchesFilters(oldBn, f)).toBe(true);
     expect(titleMatchesFilters(movie, f)).toBe(false);
+    expect(titleMatchesFilters(series, f)).toBe(false);
   });
 
   it('year range is inclusive and excludes yearless titles', () => {
-    const range = { ...DEFAULT_FILTERS, yearFrom: '1990', yearTo: '2020' };
+    const range = F({ yearFrom: 1990, yearTo: 2020 });
     expect(titleMatchesFilters(oldBn, range)).toBe(true); // 1998
     expect(titleMatchesFilters(movie, range)).toBe(false); // 2024
     expect(titleMatchesFilters(noYear, range)).toBe(false);
-    expect(
-      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, yearFrom: '2024' }),
-    ).toBe(true);
-    expect(
-      titleMatchesFilters(movie, { ...DEFAULT_FILTERS, yearTo: '2023' }),
-    ).toBe(false);
+    expect(titleMatchesFilters(movie, F({ yearFrom: 2024 }))).toBe(true);
+    expect(titleMatchesFilters(movie, F({ yearTo: 2023 }))).toBe(false);
+    expect(titleMatchesFilters(noYear, F({ yearFrom: 1900 }))).toBe(false);
   });
 
-  it('applyTitleFilters filters, sorts and never mutates its input', () => {
-    const input = [series, oldBn, movie];
+  it('minimum size uses the largest file; unknown size fails', () => {
+    const f = F({ minSizeBytes: 700_000_000 });
+    expect(titleMatchesFilters(movie, f)).toBe(true); // 4.5 GB
+    expect(titleMatchesFilters(series, f)).toBe(true); // 1.2 GB
+    expect(titleMatchesFilters(oldBn, f)).toBe(false); // 650 MB
+    expect(titleMatchesFilters(noYear, f)).toBe(false); // unknown (-1)
+    expect(titleMatchesFilters(movie, F({ minSizeBytes: 4_000_000_000 }))).toBe(true);
+    expect(titleMatchesFilters(series, F({ minSizeBytes: 4_000_000_000 }))).toBe(false);
+  });
+
+  it('dual audio only keeps dual-audio titles', () => {
+    const f = F({ dualAudioOnly: true });
+    expect(filtersActive(f)).toBe(true);
+    expect(titleMatchesFilters(series, f)).toBe(true);
+    expect(titleMatchesFilters(movie, f)).toBe(false);
+  });
+
+  it('applyTitleFilters sorts the Android way and never mutates', () => {
+    const input = [series, oldBn, movie, noYear];
     const snapshot = [...input];
+    // 'feed' keeps the crawl order untouched.
     expect(applyTitleFilters(input, DEFAULT_FILTERS)).toEqual(input);
     expect(
-      applyTitleFilters(input, { ...DEFAULT_FILTERS, sort: 'az' }).map(
-        (t) => t.title,
-      ),
-    ).toEqual(['Film', 'Purono Film', 'Show']);
+      applyTitleFilters(input, F({ sort: 'title' })).map((t) => t.title),
+    ).toEqual(['Film', 'Mystery', 'Purono Film', 'Show']);
+    // Year desc: 2024 ties break by title; yearless sinks last.
     expect(
-      applyTitleFilters(input, {
-        ...DEFAULT_FILTERS,
-        sort: 'year-desc',
-      }).map((t) => t.title),
-    ).toEqual(['Show', 'Film', 'Purono Film']);
+      applyTitleFilters(input, F({ sort: 'year-desc' })).map((t) => t.title),
+    ).toEqual(['Film', 'Show', 'Purono Film', 'Mystery']);
+    // Size desc by largest file; unknown (-1) last.
     expect(
-      applyTitleFilters(input, {
-        ...DEFAULT_FILTERS,
-        sort: 'quality',
-      }).map((t) => t.title),
-    ).toEqual(['Film', 'Show', 'Purono Film']);
+      applyTitleFilters(input, F({ sort: 'size-desc' })).map((t) => t.title),
+    ).toEqual(['Film', 'Show', 'Purono Film', 'Mystery']);
+    // Size asc: smallest first, unknown size still last.
     expect(
-      applyTitleFilters(input, { ...DEFAULT_FILTERS, kind: 'movie' }).map(
-        (t) => t.title,
-      ),
-    ).toEqual(['Purono Film', 'Film']);
+      applyTitleFilters(input, F({ sort: 'size-asc' })).map((t) => t.title),
+    ).toEqual(['Purono Film', 'Show', 'Film', 'Mystery']);
+    expect(
+      applyTitleFilters(input, F({ kinds: ['movie'] })).map((t) => t.title),
+    ).toEqual(['Purono Film', 'Film', 'Mystery']);
     expect(input).toEqual(snapshot);
   });
 });
