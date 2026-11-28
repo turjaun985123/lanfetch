@@ -25,6 +25,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Scrollbars no longer react to the pointer (user instruction,
+  2026-11-28): the window's own scrollbar is not drawn at all —
+  scrolling is by wheel, touch and keyboard — and every inner
+  scrollbar (dropdown lists) keeps the identical thumb in hover
+  and active states.
 - Audit remediation (2026-11-28, external end-to-end audit): a finished
   download can no longer overwrite an existing file in Downloads — names
   are chosen against the filesystem as well as the task list, and

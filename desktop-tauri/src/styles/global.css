@@ -224,7 +224,21 @@ img {
   outline-offset: 2px;
 }
 
-/* Quiet, theme-aware scrollbars. */
+/* Quiet, theme-aware scrollbars — and STATIC ones: the user
+   has twice rejected scrollbars that react to the pointer (the
+   system overlay bar swells and brightens on hover). The
+   window's own scrollbar is therefore not drawn at all (the app
+   scrolls by wheel, touch and keyboard, like the chips row
+   already did), and every inner scrollbar keeps the identical
+   thumb in hover and active states — no hover effect, anywhere. */
+html,
+body {
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
@@ -238,6 +252,10 @@ img {
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active {
+  background-color: var(--border-strong);
 }
 *::-webkit-scrollbar-track {
   background: transparent;
