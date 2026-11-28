@@ -419,9 +419,10 @@ fn feed_titles_inherit_their_year_containers_year() {
 /// modification stamp from the parent listing.
 fn two_year_server() -> Handler {
     Arc::new(move |req: &Req| {
-        let html = if req.path.contains("New Anime") {
+        // Request paths arrive percent-encoded ("New%20Anime").
+        let html = if req.path.contains("New%20Anime") {
             "<html><body><a href=\"New Anime - 01.mkv\">New Anime - 01.mkv</a> 2026-11-26 12:30</body></html>"
-        } else if req.path.contains("Old Anime") {
+        } else if req.path.contains("Old%20Anime") {
             "<html><body><a href=\"Old Anime - 01.mkv\">Old Anime - 01.mkv</a> 2024-03-01 10:00</body></html>"
         } else if req.path.contains("(2026)") {
             "<html><body><a href=\"New Anime/\">New Anime</a> 2026-11-26 12:00</body></html>"
