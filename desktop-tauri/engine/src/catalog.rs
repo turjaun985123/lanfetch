@@ -439,6 +439,29 @@ struct FeedNode {
     /// re-deriving it by scanning streams misroutes children whenever
     /// the origin stream is momentarily empty (audit D5).
     stream: usize,
+    /// The nearest ancestor year container's year ("(2026)"),
+    /// inherited down the crawl. A title folder inside a year
+    /// container usually carries no year in its own name — the
+    /// container IS its year metadata — so without this hint every
+    /// such title parsed as year-less and "Newest first" buried
+    /// exactly the newest series (user bug report, 2026-11-28).
+    year_hint: Option<i32>,
+}
+
+/// The year hint a node's children inherit: the node's own name
+/// wins when it is a year container, else the hint the node
+/// itself inherited.
+fn year_hint_for_children(node: &FeedNode) -> Option<i32> {
+    extract_folder_year(&node.name).or(node.year_hint)
+}
+
+/// Fill a title's missing year from the crawl's container hint.
+/// A title's own parsed year always wins — the hint only covers
+/// names that carry no year of their own.
+fn apply_year_hint(title: &mut Title, hint: Option<i32>) {
+    if title.year.is_none() {
+        title.year = hint;
+    }
 }
 
 fn extract_folder_year(name: &str) -> Option<i32> {
@@ -529,6 +552,7 @@ impl FeedSession {
                         name: cat.name.clone(),
                         depth: 0,
                         stream: stream_idx,
+                        year_hint: None,
                     });
                 }
             }
@@ -614,13 +638,14 @@ impl FeedSession {
                 let Ok(entries) = res else { continue };
 
                 if node.depth > 0 && !is_container_folder(&node.name) {
-                    if let Some(title) = build_title(
+                    if let Some(mut title) = build_title(
                         &node.source_name,
                         &node.category,
                         &node.url,
                         &node.name,
                         &entries,
                     ) {
+                        apply_year_hint(&mut title, node.year_hint);
                         if self.emitted.insert(title.folder_url.clone()) {
                             collected.push(title);
                         }
@@ -647,6 +672,7 @@ impl FeedSession {
                                 name: child.name.clone(),
                                 depth: node.depth + 1,
                                 stream: node.stream,
+                                year_hint: year_hint_for_children(&node),
                             });
                         }
                     }
@@ -1606,6 +1632,53 @@ mod tests {
         let f = to_catalog_file("Show Season 4", &entry("Show.E02.mkv", false), None);
         assert_eq!(f.season, Some(4));
         assert_eq!(f.episode, Some(2));
+    }
+
+    #[test]
+    #[test]
+    fn year_hint_flows_down_from_containers() {
+        // The 2026-anime bug (user report, 2026-11-28): titles
+        // inside a year container must inherit its year, or
+        // "Newest first" can never surface them.
+        fn node(name: &str, hint: Option<i32>) -> FeedNode {
+            FeedNode {
+                source_name: "S".into(),
+                category: "Anime".into(),
+                url: "http://h/a/".into(),
+                name: name.into(),
+                depth: 1,
+                stream: 0,
+                year_hint: hint,
+            }
+        }
+        // A year container starts the hint.
+        assert_eq!(year_hint_for_children(&node("(2026)", None)), Some(2026));
+        // A plain folder passes the inherited hint through.
+        assert_eq!(
+            year_hint_for_children(&node("Some Anime", Some(2026))),
+            Some(2026)
+        );
+        // A nested container overrides the outer one.
+        assert_eq!(
+            year_hint_for_children(&node("(2024)", Some(2026))),
+            Some(2024)
+        );
+        // No container anywhere: no hint.
+        assert_eq!(year_hint_for_children(&node("Some Anime", None)), None);
+        // The hint fills only a MISSING year.
+        let mut t = build_title(
+            "S",
+            "Anime",
+            "http://h/a/Some%20Anime/",
+            "Some Anime",
+            &[entry("Some Anime - 01.mkv", false)],
+        )
+        .unwrap();
+        assert_eq!(t.year, None, "fixture title must start year-less");
+        apply_year_hint(&mut t, Some(2026));
+        assert_eq!(t.year, Some(2026));
+        apply_year_hint(&mut t, Some(1999));
+        assert_eq!(t.year, Some(2026), "a parsed year always wins");
     }
 
     #[test]

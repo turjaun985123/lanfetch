@@ -363,6 +363,56 @@ fn stall_listing_server() -> Handler {
     })
 }
 
+/// A tiny DhakaFlix-shaped tree: a year container holding one
+/// series folder whose own name carries NO year — the layout
+/// behind the "2026 anime never surfaces under Newest" report.
+fn year_container_server() -> Handler {
+    Arc::new(move |req: &Req| {
+        let html = if req.path.contains("Some") {
+            "<html><body><a href=\"Some Anime - 01.mkv\">Some Anime - 01.mkv</a></body></html>"
+        } else if req.path.contains("(2026)") {
+            "<html><body><a href=\"Some Anime/\">Some Anime</a></body></html>"
+        } else {
+            "<html><body><a href=\"(2026)/\">(2026)</a></body></html>"
+        };
+        Resp {
+            status: 200,
+            headers: vec![h("Content-Length", html.len())],
+            body: html.as_bytes().to_vec(),
+            drip: false,
+        }
+    })
+}
+
+/// Year containers lend their year to the titles inside them
+/// (user bug report, 2026-11-28): "Some Anime" has no year in
+/// its own name, but it lives under "(2026)" — the emitted
+/// title must carry 2026, or the client's Newest-first sort
+/// (year-less titles sink last) can never surface it.
+#[test]
+fn feed_titles_inherit_their_year_containers_year() {
+    let _home = fresh_home("yearhint");
+    let server = TestServer::start(year_container_server());
+    let root = format!("http://127.0.0.1:{}/cat/", server.port);
+    let categories = vec![lanfetch_engine::catalog::Category {
+        name: "Anime".to_string(),
+        locations: vec![("SRC".to_string(), root)],
+    }];
+    let mut feed = lanfetch_engine::catalog::FeedSession::new(&categories, Some("Anime"));
+    let page = feed.next_page(48);
+    let anime: Vec<_> = page.iter().filter(|t| t.title == "Some Anime").collect();
+    assert_eq!(
+        anime.len(),
+        1,
+        "expected exactly the series title in the page"
+    );
+    assert_eq!(
+        anime[0].year,
+        Some(2026),
+        "a title inside the (2026) container must inherit 2026"
+    );
+}
+
 // ------------------------------------------------------------ harness
 
 static HOME_LOCK: Mutex<()> = Mutex::new(());
