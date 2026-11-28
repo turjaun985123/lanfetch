@@ -24,24 +24,36 @@ const isTauri =
 // the SSE stream, which cannot set headers (documented exception).
 const TOKEN_KEY = 'lanfetch-web-token';
 
+// The pairing token lives in memory FIRST (audit fix,
+// 2026-11-28): sessionStorage is only the persistence layer.
+// The old code read storage exclusively and scrubbed the URL
+// fragment unconditionally, so in a storage-disabled context
+// (private mode, hardened browser) the token was captured and
+// thrown away in the same tick and every call came back 401 —
+// despite a comment claiming a hash fallback that never existed.
+let memoryToken: string | null = null;
+
 function webToken(): string | null {
   if (isTauri) return null;
+  if (memoryToken) return memoryToken;
   try {
-    return sessionStorage.getItem(TOKEN_KEY);
+    memoryToken = sessionStorage.getItem(TOKEN_KEY);
   } catch {
-    return null;
+    memoryToken = null;
   }
+  return memoryToken;
 }
 
 if (!isTauri && typeof window !== 'undefined') {
   const match = window.location.hash.match(/#t=([A-Za-z0-9]+)/);
   if (match) {
+    memoryToken = match[1];
     try {
       sessionStorage.setItem(TOKEN_KEY, match[1]);
     } catch {
-      // Private mode / storage disabled: pairing lasts one page
-      // load — the token still applies to this session's calls via
-      // the hash until the first navigation scrubs it.
+      // Private mode / storage disabled: the in-memory copy
+      // above keeps this page load paired; only a reload in a
+      // storage-disabled context needs a fresh pairing link.
     }
     history.replaceState(
       null,
@@ -178,9 +190,19 @@ export function probeSources(): Promise<SourceProbeDto[]> {
 
 /** Register remote poster URLs; returns `lanfetch-poster://` srcs
  * aligned with the input. Bytes travel via the protocol handler,
- * never through IPC. */
-export function posterSrcs(urls: string[]): Promise<string[]> {
-  return invoke<string[]>('poster_srcs', { urls });
+ * never through IPC. In web mode the srcs are `/posters/<key>`
+ * URLs loaded by <img> elements, which cannot set headers — so
+ * in LAN mode the pairing token rides as a query parameter, the
+ * same documented exception as the SSE stream (audit fix,
+ * 2026-11-28: the poster route is token-gated now). */
+export async function posterSrcs(urls: string[]): Promise<string[]> {
+  const srcs = await invoke<string[]>('poster_srcs', { urls });
+  if (isTauri) return srcs;
+  const token = webToken();
+  if (!token) return srcs;
+  return srcs.map((s) =>
+    s.startsWith('/posters/') ? `${s}?token=${token}` : s,
+  );
 }
 
 export interface CategoryDto {
@@ -351,10 +373,13 @@ export function getWebToken(): Promise<string> {
 export async function regenerateWebToken(): Promise<string> {
   const token = await invoke<string>('regenerate_web_token');
   if (!isTauri) {
+    // Adopt the new token immediately (memory first, storage as
+    // persistence) so this browser doesn't lock itself out.
+    memoryToken = token;
     try {
       sessionStorage.setItem(TOKEN_KEY, token);
     } catch {
-      /* private mode: the next reload re-pairs via the fragment */
+      /* private mode: the in-memory copy carries this session */
     }
   }
   return token;

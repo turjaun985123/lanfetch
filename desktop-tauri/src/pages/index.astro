@@ -8,6 +8,12 @@ import '../styles/global.css';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>LanFetch</title>
+    {/* The two is:inline scripts below are allow-listed in both
+        CSP copies (web/src/serve.rs WEB_CSP and
+        src-tauri/tauri.conf.json) by their sha256 hashes. Editing
+        either script changes its hash and CSP-strict browsers
+        will block it again — recompute both hashes and update
+        both CSPs in the same commit. */}
     <script is:inline>
       // Theme before first paint (no flash): stored choice wins,
       // otherwise follow the OS.

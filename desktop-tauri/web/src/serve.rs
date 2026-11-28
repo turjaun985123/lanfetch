@@ -258,7 +258,13 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
 /// The CSP served with the page in web mode: the Tauri shell's
 /// policy (tauri.conf.json) minus its IPC/poster schemes, which a
 /// browser never uses (SECURITY.md S6).
-const WEB_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
+// The two sha256 hashes in script-src belong to the pre-paint
+// inline scripts in index.astro (theme + rail, audit fix
+// 2026-11-28): without them a CSP-strict browser blocked the
+// scripts outright and the first paint flashed the wrong theme.
+// Editing either script changes its hash — recompute and update
+// BOTH CSP copies (here and tauri.conf.json) in the same commit.
+const WEB_CSP: &str = "default-src 'self'; script-src 'self' 'sha256-IfF0QdCRUSmDroK7x3rlV13ncN3xLtulgRg0mP/9EtA=' 'sha256-PjqGTu2BDTOcyLkQMHkhC1GPuN6K1jF31UgJm21Eg6M='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'";
 
 fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]) {
     // Security headers on every response (SECURITY.md S6).
@@ -340,9 +346,12 @@ fn token_eq(a: &str, b: &str) -> bool {
 }
 
 /// Authorization in --lan mode (ADR-003): `Authorization: Bearer
-/// <token>` on any /api/* call. The single exception is the SSE
-/// stream, where EventSource cannot set headers, so `?token=` is
-/// accepted there — and only there.
+/// <token>` on any /api/* call. The exceptions are the two
+/// browser elements that cannot set headers — the SSE stream
+/// (EventSource) and poster images (<img>) — where `?token=` is
+/// accepted, and only there. (Posters joined the gate in the
+/// 2026-11-28 audit fix wave: they used to be served to anyone
+/// on the LAN who could guess a key.)
 /// The token the server currently honors. Regeneration
 /// (Settings, in either edition) replaces the token file;
 /// reading it back here makes a regeneration take effect
@@ -361,7 +370,10 @@ fn authorized(request: &Request, cfg: &ServerCfg) -> bool {
             return token_eq(t.trim(), &expected);
         }
     }
-    if request.path == "/api/events" || request.path == "/api/v1/events" {
+    if request.path == "/api/events"
+        || request.path == "/api/v1/events"
+        || request.path.starts_with("/posters/")
+    {
         if let Some(t) = query_param(&request.query, "token") {
             return token_eq(&t, &expected);
         }
@@ -450,9 +462,12 @@ fn handle(
     }
     // ADR-003: in --lan mode every /api/* route except the health
     // probe requires the token — reads included, because reads
-    // disclose the library and the queue.
+    // disclose the library and the queue. Poster images are gated
+    // the same way (audit fix, 2026-11-28): a poster key is a
+    // deterministic hash, so an ungated route let anyone on the
+    // LAN enumerate what the library contains.
     if cfg.lan
-        && path.starts_with("/api/")
+        && (path.starts_with("/api/") || path.starts_with("/posters/"))
         && path != "/api/v1/health"
         && !authorized(&request, &cfg)
     {
@@ -1537,6 +1552,34 @@ mod tests {
 
     fn body_of(response: &str) -> &str {
         response.split("\r\n\r\n").nth(1).unwrap_or("")
+    }
+
+    // Audit fix (2026-11-28): poster images are token-gated in
+    // LAN mode like every other read. <img> cannot set headers,
+    // so posters accept the query form too — the same exception
+    // as SSE, and for the same reason.
+    #[test]
+    fn posters_are_token_gated_in_lan_mode() {
+        let _guard = lock(&HOME_LOCK);
+        test_home();
+        let _ = std::fs::remove_file(lanfetch_engine::store::web_token_path());
+        let cfg = test_cfg(true, "sekrit-token");
+        assert!(!authorized(
+            &request("GET", "/posters/abc123", "", vec![], &[]),
+            &cfg
+        ));
+        assert!(!authorized(
+            &request("GET", "/posters/abc123", "token=nope", vec![], &[]),
+            &cfg
+        ));
+        assert!(authorized(
+            &request("GET", "/posters/abc123", "token=sekrit-token", vec![], &[]),
+            &cfg
+        ));
+        assert!(authorized(
+            &request("GET", "/posters/abc123", "", bearer("sekrit-token"), &[]),
+            &cfg
+        ));
     }
 
     // SECURITY.md item 2 (unit level): the bearer token — and
