@@ -45,6 +45,11 @@ pub struct Title {
     pub best_source_tag: Option<String>,
     pub best_codec: Option<String>,
     pub dual_audio: bool,
+    /// The folder's own modification stamp from the parent
+    /// listing, when the server prints one. Android parity
+    /// (2026-11-28): the APK threads it from the crawl node into
+    /// the title; it backs recency ordering in the library.
+    pub modified: Option<String>,
     /// How many pool titles the view layer merged into this one
     /// (the same movie as separate 720p/1080p folders) — 1 when
     /// unmerged. Set by merge_copies; constructors leave it at 1.
@@ -294,6 +299,7 @@ pub fn build_title(
             .next()
             .or_else(|| parse_codec(raw_name)),
         dual_audio: files.iter().any(|f| f.audio.is_some()) || parse_audio(raw_name).is_some(),
+        modified: None,
         copies: 1,
         fav_any: false,
         files,
@@ -446,6 +452,10 @@ struct FeedNode {
     /// such title parsed as year-less and "Newest first" buried
     /// exactly the newest series (user bug report, 2026-11-28).
     year_hint: Option<i32>,
+    /// This folder's modification stamp from its parent listing
+    /// (Android's Node carries the same field). Assigned onto the
+    /// title when this node builds one.
+    modified: Option<String>,
 }
 
 /// The year hint a node's children inherit: the node's own name
@@ -507,15 +517,22 @@ fn is_container_folder(name: &str) -> bool {
 }
 
 fn sort_newest_first(mut dirs: Vec<&DirEntry>) -> Vec<&DirEntry> {
+    // Android parity (LiveFeedSession.sortNewestFirst): container
+    // year desc, then the listing modification stamp desc (the
+    // most recently uploaded folders first), then name asc. The
+    // old port had no modified field at all, so same-year folders
+    // arrived in plain name order no matter how new they were.
     dirs.sort_by(|a, b| {
-        (
-            extract_folder_year(&b.name).unwrap_or(i32::MIN),
-            a.name.to_lowercase(),
-        )
-            .cmp(&(
-                extract_folder_year(&a.name).unwrap_or(i32::MIN),
-                b.name.to_lowercase(),
-            ))
+        extract_folder_year(&b.name)
+            .unwrap_or(i32::MIN)
+            .cmp(&extract_folder_year(&a.name).unwrap_or(i32::MIN))
+            .then_with(|| {
+                b.modified
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(a.modified.as_deref().unwrap_or(""))
+            })
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     dirs
 }
@@ -553,6 +570,7 @@ impl FeedSession {
                         depth: 0,
                         stream: stream_idx,
                         year_hint: None,
+                        modified: None,
                     });
                 }
             }
@@ -597,21 +615,34 @@ impl FeedSession {
                 break;
             }
             // Round-robin: pop a batch of nodes from the streams.
+            // Android parity (popRoundRobinBatch): a stream that
+            // just yielded a CONTAINER sits out the rest of this
+            // batch — the newest year container gets expanded
+            // before older containers are even fetched, so the
+            // newest content reaches the pool first instead of
+            // being interleaved behind older years.
             let mut batch: Vec<FeedNode> = Vec::new();
+            let mut sat_out: std::collections::HashSet<usize> = std::collections::HashSet::new();
             while batch.len() < BATCH && requests + batch.len() < max_requests {
-                let mut node: Option<FeedNode> = None;
+                let mut popped: Option<(usize, FeedNode)> = None;
                 for _ in 0..self.streams.len().max(1) {
                     if self.streams.is_empty() {
                         break;
                     }
                     let idx = turn % self.streams.len();
                     turn += 1;
-                    if !self.streams[idx].is_empty() {
-                        node = self.streams[idx].pop_front();
+                    if sat_out.contains(&idx) || self.streams[idx].is_empty() {
+                        continue;
+                    }
+                    if let Some(n) = self.streams[idx].pop_front() {
+                        popped = Some((idx, n));
                         break;
                     }
                 }
-                let Some(node) = node else { break };
+                let Some((idx, node)) = popped else { break };
+                if node.depth == 0 || is_container_folder(&node.name) {
+                    sat_out.insert(idx);
+                }
                 batch.push(node);
             }
             if batch.is_empty() {
@@ -646,6 +677,7 @@ impl FeedSession {
                         &entries,
                     ) {
                         apply_year_hint(&mut title, node.year_hint);
+                        title.modified = node.modified.clone();
                         if self.emitted.insert(title.folder_url.clone()) {
                             collected.push(title);
                         }
@@ -673,6 +705,7 @@ impl FeedSession {
                                 depth: node.depth + 1,
                                 stream: node.stream,
                                 year_hint: year_hint_for_children(&node),
+                                modified: child.modified.clone(),
                             });
                         }
                     }
@@ -852,6 +885,7 @@ fn group_h5ai_hits(source_name: &str, root_url: &str, items: Vec<H5aiItem>) -> V
                 } else {
                     None
                 },
+                modified: None,
             };
             files_by_title
                 .entry(title_url)
@@ -921,6 +955,7 @@ fn group_h5ai_hits(source_name: &str, root_url: &str, items: Vec<H5aiItem>) -> V
                     .or_else(|| parse_codec(&raw_name)),
                 dual_audio: files.iter().any(|f| f.audio.is_some())
                     || parse_audio(&raw_name).is_some(),
+                modified: None,
                 copies: 1,
                 fav_any: false,
                 files,
@@ -1002,6 +1037,7 @@ fn breadth_search(source_name: &str, root_url: &str, query: &str) -> Vec<Title> 
                         best_source_tag: file.source_tag.clone(),
                         best_codec: file.codec.clone(),
                         dual_audio: file.audio.is_some(),
+                        modified: None,
                         copies: 1,
                         fav_any: false,
                         files: vec![file],
@@ -1545,6 +1581,7 @@ mod tests {
             url: format!("http://h/{}", name.replace(' ', "%20")),
             is_dir,
             size: None,
+            modified: None,
         }
     }
 
@@ -1567,6 +1604,7 @@ mod tests {
             best_source_tag: None,
             best_codec: None,
             dual_audio: false,
+            modified: None,
             copies: 1,
             fav_any: false,
         }
@@ -1636,6 +1674,22 @@ mod tests {
 
     #[test]
     #[test]
+    fn newest_first_orders_by_year_then_modified() {
+        // Android parity: same-year folders order by their
+        // listing modification stamp (newest upload first), and
+        // a year container outranks any same-level folder
+        // regardless of stamps.
+        let mut a = entry("Alpha", true);
+        a.modified = Some("2026-11-20 10:00".into());
+        let mut b = entry("Beta", true);
+        b.modified = Some("2026-11-25 10:00".into());
+        let c = entry("(2026)", true);
+        let sorted = sort_newest_first(vec![&a, &b, &c]);
+        let names: Vec<&str> = sorted.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["(2026)", "Beta", "Alpha"]);
+    }
+
+    #[test]
     fn year_hint_flows_down_from_containers() {
         // The 2026-anime bug (user report, 2026-11-28): titles
         // inside a year container must inherit its year, or
@@ -1649,6 +1703,7 @@ mod tests {
                 depth: 1,
                 stream: 0,
                 year_hint: hint,
+                modified: None,
             }
         }
         // A year container starts the hint.

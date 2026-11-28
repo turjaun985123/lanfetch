@@ -192,6 +192,16 @@ pub struct TitleDto {
     pub language: Option<String>,
     pub season_count: usize,
     pub best_quality: Option<String>,
+    /// Android filter parity (2026-11-28): the APK's filter sheet
+    /// facets on source tag, minimum size and dual audio, and
+    /// sorts by size — the engine computed all of these already
+    /// but the DTO never carried them.
+    pub source_tag: Option<String>,
+    /// Largest file in the folder, bytes; -1 when unknown.
+    pub max_size_bytes: i64,
+    pub has_dual_audio: bool,
+    /// The folder's modification stamp from the server listing.
+    pub modified: Option<String>,
     pub copies: usize,
     pub is_favorite: bool,
 }
@@ -209,6 +219,10 @@ impl TitleDto {
             language: t.language.clone(),
             season_count: t.season_count,
             best_quality: t.best_quality.clone(),
+            source_tag: t.best_source_tag.clone(),
+            max_size_bytes: t.max_size,
+            has_dual_audio: t.dual_audio,
+            modified: t.modified.clone(),
             copies: t.copies,
             is_favorite,
         }

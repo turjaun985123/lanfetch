@@ -413,6 +413,55 @@ fn feed_titles_inherit_their_year_containers_year() {
     );
 }
 
+/// Two year containers with dated rows (Android-parity crawl
+/// order): the (2026) container's series must be emitted before
+/// the (2024) one, and titles must carry their folder's
+/// modification stamp from the parent listing.
+fn two_year_server() -> Handler {
+    Arc::new(move |req: &Req| {
+        let html = if req.path.contains("New Anime") {
+            "<html><body><a href=\"New Anime - 01.mkv\">New Anime - 01.mkv</a> 2026-11-26 12:30</body></html>"
+        } else if req.path.contains("Old Anime") {
+            "<html><body><a href=\"Old Anime - 01.mkv\">Old Anime - 01.mkv</a> 2024-03-01 10:00</body></html>"
+        } else if req.path.contains("(2026)") {
+            "<html><body><a href=\"New Anime/\">New Anime</a> 2026-11-26 12:00</body></html>"
+        } else if req.path.contains("(2024)") {
+            "<html><body><a href=\"Old Anime/\">Old Anime</a> 2024-03-01 09:00</body></html>"
+        } else {
+            "<html><body><a href=\"(2024)/\">(2024)</a> 2024-05-01 09:15 <a href=\"(2026)/\">(2026)</a> 2026-11-25 09:15</body></html>"
+        };
+        Resp {
+            status: 200,
+            headers: vec![h("Content-Length", html.len())],
+            body: html.as_bytes().to_vec(),
+            drip: false,
+        }
+    })
+}
+
+/// Crawl order parity (2026-11-28): newest year container first,
+/// and the title inherits its folder's modified stamp — the two
+/// mechanisms that make Android's library surface the newest
+/// series in the first pages.
+#[test]
+fn feed_visits_newest_year_container_first_and_carries_modified() {
+    let _home = fresh_home("yearorder");
+    let server = TestServer::start(two_year_server());
+    let root = format!("http://127.0.0.1:{}/cat/", server.port);
+    let categories = vec![lanfetch_engine::catalog::Category {
+        name: "Anime".to_string(),
+        locations: vec![("SRC".to_string(), root)],
+    }];
+    let mut feed = lanfetch_engine::catalog::FeedSession::new(&categories, Some("Anime"));
+    let page = feed.next_page(48);
+    let titles: Vec<&str> = page.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, vec!["New Anime", "Old Anime"]);
+    assert_eq!(page[0].year, Some(2026));
+    assert_eq!(page[0].modified.as_deref(), Some("2026-11-26 12:00"));
+    assert_eq!(page[1].year, Some(2024));
+    assert_eq!(page[1].modified.as_deref(), Some("2024-03-01 09:00"));
+}
+
 // ------------------------------------------------------------ harness
 
 static HOME_LOCK: Mutex<()> = Mutex::new(());

@@ -45,6 +45,27 @@ pub struct DirEntry {
     pub url: String,
     pub is_dir: bool,
     pub size: Option<u64>,
+    /// The listing's modification stamp for this entry, verbatim
+    /// ("2026-11-28 10:30" on h5ai, "28-Nov-2026 10:30" on
+    /// Apache). Android parity (2026-11-28): the APK captures it
+    /// per entry and the crawl sorts siblings by it — without it
+    /// the Rust crawl could not order folders by recency at all.
+    pub modified: Option<String>,
+}
+
+static MODIFIED_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}|\d{2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}|\d{2}-[A-Za-z]{3}-\d{4}",
+    )
+    .unwrap()
+});
+
+/// The modification stamp in a listing row's tail text, when the
+/// server prints one (same shapes Android's AutoindexParser
+/// accepts).
+fn parse_modified_after(row: &str) -> Option<String> {
+    let text = strip_tags(row);
+    MODIFIED_RE.find(&text).map(|m| m.as_str().to_string())
 }
 
 /// One process-wide agent: building a fresh Agent per call (the old
@@ -374,6 +395,7 @@ pub fn parse_listing(html: &str, base_url: &str) -> Vec<DirEntry> {
         let row_end = find_ci(html, "</tr>", text_end)
             .unwrap_or_else(|| floor_char_boundary(html, text_end + 200));
         let size = parse_size_after(&html[text_end..row_end]);
+        let modified = parse_modified_after(&html[text_end..row_end]);
         let is_dir = href.ends_with('/');
         let clean_href = href.trim_end_matches('/');
         let decoded_href = percent_decode(clean_href);
@@ -392,6 +414,7 @@ pub fn parse_listing(html: &str, base_url: &str) -> Vec<DirEntry> {
             url,
             is_dir,
             size: if is_dir { None } else { size },
+            modified,
         });
     }
     // Folders first, then files, each alphabetical — like the Android app.
@@ -1223,6 +1246,25 @@ mod tests {
         }
         assert_eq!(segs.iter().map(|s| s.len()).sum::<u64>(), total);
         assert!(segs.iter().all(|s| s.len() >= (1 << 20)));
+    }
+
+    #[test]
+    fn parse_listing_extracts_modified_stamps() {
+        // Android parity (2026-11-28): the APK reads each row's
+        // date into DirEntry.modified and the crawl sorts by it.
+        // h5ai prints "YYYY-MM-DD HH:MM"; Apache prints
+        // "DD-Mon-YYYY HH:MM". Rows without a date stay None.
+        let html = "<tr><td><a href=\"New/\">New</a></td><td>2026-11-25 09:15</td></tr>\
+                    <tr><td><a href=\"Old/\">Old</a></td><td>25-Nov-2024 08:00</td></tr>\
+                    <tr><td><a href=\"Plain/\">Plain</a></td><td>-</td></tr>";
+        let entries = parse_listing(html, "http://h/cat/");
+        let by_name = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+        assert_eq!(by_name("New").modified.as_deref(), Some("2026-11-25 09:15"));
+        assert_eq!(
+            by_name("Old").modified.as_deref(),
+            Some("25-Nov-2024 08:00")
+        );
+        assert_eq!(by_name("Plain").modified, None);
     }
 
     #[test]

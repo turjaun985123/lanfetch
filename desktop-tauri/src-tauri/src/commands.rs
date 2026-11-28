@@ -424,6 +424,10 @@ pub fn get_favorites(state: State<'_, AppState>) -> Vec<TitleDto> {
             language: s.language.clone(),
             season_count: s.season_count,
             best_quality: s.best_quality.clone(),
+            source_tag: s.best_source_tag.clone(),
+            max_size_bytes: -1,
+            has_dual_audio: s.dual_audio,
+            modified: None,
             copies: 1,
             is_favorite: true,
         })
