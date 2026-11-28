@@ -5,6 +5,25 @@ All notable changes to LanFetch are recorded here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Audit remediation (2026-11-28, external end-to-end audit): a finished
+  download can no longer overwrite an existing file in Downloads — names
+  are chosen against the filesystem as well as the task list, and
+  completion lands through an atomic no-overwrite link, falling back to a
+  counter name; a 206 response whose `Content-Range` total disagrees with
+  the probed size is now rejected, so bytes from two versions of a file
+  can never mix into a "completed" download; transient HTTP statuses
+  (429/500/502/503/504) retry with backoff and honor `Retry-After`
+  instead of failing the download outright; poster images are
+  token-gated in `--lan` mode like every other read; the web pairing
+  token survives storage-disabled browsers via an in-memory copy;
+  Library/Detail download badges resolve to the live task when a URL
+  was downloaded more than once; the theme/sidebar pre-paint scripts
+  are allow-listed in both CSPs by hash, ending the first-paint flash.
+
 ## [2.0.0] - TBD
 
 ### Added

@@ -506,6 +506,188 @@ fn range_206_wrong_content_range_rejected() {
     );
 }
 
+/// A server whose 206s carry the right start/end but a TOTAL that
+/// belongs to a different version of the file (audit P1 flavor).
+fn wrong_total_server(body: Arc<Vec<u8>>) -> Handler {
+    Arc::new(move |req: &Req| {
+        let total = body.len() as u64;
+        if req.method == "HEAD" {
+            return Resp {
+                status: 200,
+                headers: vec![
+                    h("Content-Length", total),
+                    h("Accept-Ranges", "bytes"),
+                    h("ETag", "\"v1\""),
+                ],
+                body: Vec::new(),
+                drip: false,
+            };
+        }
+        let (start, end) = req.range.unwrap_or((0, None));
+        let end = end.unwrap_or(total - 1).min(total - 1);
+        let slice = body[start as usize..=end as usize].to_vec();
+        Resp {
+            status: 206,
+            headers: vec![
+                h("Content-Length", slice.len()),
+                h(
+                    "Content-Range",
+                    format!("bytes {start}-{end}/{}", total + 999),
+                ),
+                h("ETag", "\"v1\""),
+            ],
+            body: slice,
+            drip: false,
+        }
+    })
+}
+
+/// CP-2 total validation (audit P1, 2026-11-28): a 206 whose
+/// Content-Range total disagrees with the probed size must be
+/// rejected like any other lie — the task fails and no byte is
+/// ever credited, so two file versions can never mix into a
+/// "completed" download.
+#[test]
+fn range_206_wrong_total_rejected() {
+    let home = fresh_home("wrongtotal");
+    let body = Arc::new(body_pattern(200_000));
+    let server = TestServer::start(wrong_total_server(body));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("movie.mkv"), "movie.mkv".to_string());
+    let id = only_task_id(&mgr);
+    // The bounded stall-retry ladder takes ~16 s to exhaust.
+    wait_for(&mgr, id, DlState::Failed, Duration::from_secs(90));
+    let tasks = mgr.tasks.lock().unwrap_or_else(|e| e.into_inner());
+    let t = tasks.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(
+        t.downloaded(),
+        0,
+        "wrong-version bytes must never be credited"
+    );
+    drop(tasks);
+    assert!(
+        !home.dir.join("Downloads/LanFetch/movie.mkv").exists(),
+        "a wrong-version download must never reach the final name"
+    );
+}
+
+/// A server that answers the first `failures` ranged GETs with a
+/// transient status (503/429…), then serves ranges correctly
+/// (audit P2 flavor: transient retry).
+fn flaky_status_server(
+    body: Arc<Vec<u8>>,
+    failures: u32,
+    code: u16,
+    retry_after: Option<u64>,
+) -> Handler {
+    let seen = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    Arc::new(move |req: &Req| {
+        let total = body.len() as u64;
+        if req.method == "HEAD" {
+            return Resp {
+                status: 200,
+                headers: vec![
+                    h("Content-Length", total),
+                    h("Accept-Ranges", "bytes"),
+                    h("ETag", "\"v1\""),
+                ],
+                body: Vec::new(),
+                drip: false,
+            };
+        }
+        if req.range.is_some() && seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failures
+        {
+            let mut headers = vec![h("Content-Length", 0)];
+            if let Some(secs) = retry_after {
+                headers.push(h("Retry-After", secs));
+            }
+            return Resp {
+                status: code,
+                headers,
+                body: Vec::new(),
+                drip: false,
+            };
+        }
+        match req.range {
+            Some((start, end)) => {
+                let end = end.unwrap_or(total - 1).min(total - 1);
+                let slice = body[start as usize..=end as usize].to_vec();
+                Resp {
+                    status: 206,
+                    headers: vec![
+                        h("Content-Length", slice.len()),
+                        h("Content-Range", format!("bytes {start}-{end}/{total}")),
+                        h("ETag", "\"v1\""),
+                    ],
+                    body: slice,
+                    drip: false,
+                }
+            }
+            None => Resp {
+                status: 200,
+                headers: vec![h("Content-Length", total), h("ETag", "\"v1\"")],
+                body: (*body).clone(),
+                drip: false,
+            },
+        }
+    })
+}
+
+/// Transient retry (audit P2, 2026-11-28): two 503s at the start
+/// of a download must NOT fail it — the worker backs off and
+/// retries, and the file completes byte-exact. (Pre-fix, the
+/// first 503 failed the task immediately.)
+#[test]
+fn transient_503_retries_and_completes() {
+    let _home = fresh_home("flaky503");
+    let body = Arc::new(body_pattern(200_000));
+    let server = TestServer::start(flaky_status_server(Arc::clone(&body), 2, 503, None));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("movie.mkv"), "movie.mkv".to_string());
+    let id = only_task_id(&mgr);
+    wait_for(&mgr, id, DlState::Completed, Duration::from_secs(60));
+    assert_eq!(final_bytes(&_home, "movie.mkv"), *body);
+}
+
+/// Transient retry with Retry-After (audit P2, 2026-11-28): a
+/// single 429 carrying Retry-After is honored and the download
+/// still completes byte-exact.
+#[test]
+fn transient_429_retry_after_completes() {
+    let _home = fresh_home("flaky429");
+    let body = Arc::new(body_pattern(200_000));
+    let server = TestServer::start(flaky_status_server(Arc::clone(&body), 1, 429, Some(1)));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("movie.mkv"), "movie.mkv".to_string());
+    let id = only_task_id(&mgr);
+    wait_for(&mgr, id, DlState::Completed, Duration::from_secs(60));
+    assert_eq!(final_bytes(&_home, "movie.mkv"), *body);
+}
+
+/// Audit P1 end-to-end (2026-11-28): a file the user already has
+/// in Downloads (its task was cleared long ago) must survive a
+/// fresh download of the same name — the new download lands on
+/// the counter name, byte-exact, and the old file is untouched.
+#[test]
+fn existing_downloads_file_is_never_overwritten() {
+    let home = fresh_home("overwrite");
+    let dl = home.dir.join("Downloads/LanFetch");
+    std::fs::create_dir_all(&dl).unwrap();
+    std::fs::write(dl.join("movie.mkv"), b"the user's existing file").unwrap();
+    let body = Arc::new(body_pattern(200_000));
+    let server = TestServer::start(range_server(Arc::clone(&body)));
+    let mgr = Manager::load();
+    mgr.enqueue(server.url("movie.mkv"), "movie.mkv".to_string());
+    let id = only_task_id(&mgr);
+    wait_for(&mgr, id, DlState::Completed, Duration::from_secs(60));
+    assert_eq!(
+        std::fs::read(dl.join("movie.mkv")).unwrap(),
+        b"the user's existing file",
+        "the pre-existing file must be byte-identical afterwards"
+    );
+    assert_eq!(final_bytes(&home, "movie (2).mkv"), *body);
+}
+
 /// CP-4/RC-2: progress claimed in downloads.json but the .part was
 /// deleted while the app was closed → the missing bytes are
 /// re-fetched; the file completes byte-exact, never with holes.

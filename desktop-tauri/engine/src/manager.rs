@@ -198,14 +198,21 @@ fn validate_plan(mut segments: Vec<Segment>) -> Vec<Segment> {
 /// completion silently overwrites the first. When the desired
 /// name is taken, insert a browser-style counter before the
 /// extension: `movie.mkv` → `movie (2).mkv` → `movie (3).mkv`.
+/// Split a filename into (stem, extension-with-dot) for counter
+/// insertion: `movie.mkv` → (`movie`, `.mkv`); a leading dot or
+/// no dot at all leaves the whole name as the stem.
+fn name_parts(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    }
+}
+
 fn unique_name(desired: &str, taken: impl Fn(&str) -> bool) -> String {
     if !taken(desired) {
         return desired.to_string();
     }
-    let (stem, ext) = match desired.rfind('.') {
-        Some(i) if i > 0 => (&desired[..i], &desired[i..]),
-        _ => (desired, ""),
-    };
+    let (stem, ext) = name_parts(desired);
     let mut n = 2;
     loop {
         let candidate = format!("{stem} ({n}){ext}");
@@ -213,6 +220,45 @@ fn unique_name(desired: &str, taken: impl Fn(&str) -> bool) -> String {
             return candidate;
         }
         n += 1;
+    }
+}
+
+/// Move a completed `.part` to its final name WITHOUT ever
+/// overwriting an existing file (audit P1, 2026-11-28). POSIX
+/// `rename` silently replaces its target, so a name that was
+/// free at enqueue time could still destroy a file by completion
+/// time — the user copied one in, another LanFetch process wrote
+/// it, or the completed task that owned it was cleared from the
+/// list while its file stayed. `hard_link` is the atomic
+/// no-overwrite create: it fails with AlreadyExists instead of
+/// replacing, and the `.part` (same directory, same filesystem)
+/// is unlinked once the link lands. If the desired name was
+/// taken in the meantime, the completion lands on the next free
+/// counter name rather than failing a finished download, and the
+/// caller records the name actually used.
+fn finalize_no_overwrite(
+    part: &std::path::Path,
+    dir: &std::path::Path,
+    name: &str,
+) -> std::io::Result<String> {
+    let (stem, ext) = name_parts(name);
+    let mut n = 1u32;
+    loop {
+        let candidate = if n == 1 {
+            name.to_string()
+        } else {
+            format!("{stem} ({n}){ext}")
+        };
+        match std::fs::hard_link(part, dir.join(&candidate)) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(part);
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                n += 1;
+            }
+            Err(e) => return Err(e),
+        }
     }
 }
 
@@ -390,9 +436,26 @@ impl Manager {
     /// (Wave 14: the Library used to show no download state).
     pub fn task_by_url(&self, url: &str) -> Option<(DlState, f64)> {
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        // Audit P2 (2026-11-28): one URL can own several tasks —
+        // a Completed one and its later re-download. Returning the
+        // FIRST match (the old behavior) showed the finished
+        // task's state forever and hid the live download behind
+        // it. Prefer the most active task; among equals the
+        // newest wins (tasks are stored in creation order, and
+        // max_by_key returns the last maximum).
+        fn rank(s: DlState) -> u8 {
+            match s {
+                DlState::Running => 5,
+                DlState::Queued => 4,
+                DlState::Paused => 3,
+                DlState::Failed => 2,
+                DlState::Completed => 1,
+            }
+        }
         tasks
             .iter()
-            .find(|t| t.url == url)
+            .filter(|t| t.url == url)
+            .max_by_key(|t| rank(t.state))
             .map(|t| (t.state, t.fraction()))
     }
 
@@ -472,9 +535,19 @@ impl Manager {
             } else {
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
                 // H1: the stored name must be unique across all
-                // tasks — every path derives from it.
+                // tasks — every path derives from it. Audit P1
+                // (2026-11-28): the FILESYSTEM counts as taken too
+                // — a completed task that was cleared from the
+                // list leaves its file behind, and re-downloading
+                // the same name must land on a counter name, not
+                // overwrite the file the user already has.
                 let clean = sanitize_keep_ext(&name);
-                let unique = unique_name(&clean, |n| tasks.iter().any(|t| t.name == n));
+                let dir = downloads_dir();
+                let unique = unique_name(&clean, |n| {
+                    tasks.iter().any(|t| t.name == n)
+                        || dir.join(n).exists()
+                        || dir.join(format!("{n}.part")).exists()
+                });
                 tasks.push(Task {
                     id,
                     url: url.clone(),
@@ -861,10 +934,14 @@ impl Manager {
                 tasks.iter().any(|t| t.id == id)
             };
             let mut rename_error: Option<String> = None;
+            // Audit P1: the name the file actually landed under —
+            // finalize_no_overwrite may pick a counter name when
+            // the desired one was taken after enqueue.
+            let mut final_name: Option<String> = None;
             if finished && exists {
-                let final_path = dir.join(&name);
-                match std::fs::rename(&part, &final_path) {
-                    Ok(()) => {
+                match finalize_no_overwrite(&part, &dir, &name) {
+                    Ok(landed) => {
+                        final_name = Some(landed);
                         // Best-effort directory fsync so the rename
                         // itself survives a power loss (CP-5).
                         if let Ok(d) = std::fs::File::open(&dir) {
@@ -888,6 +965,12 @@ impl Manager {
                 if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
                     t.segments = out;
                     if finished {
+                        // Audit P1: record the name the file
+                        // actually landed under — every path and
+                        // DTO derives from the task name.
+                        if let Some(landed) = &final_name {
+                            t.name = landed.clone();
+                        }
                         t.state = DlState::Completed;
                         t.speed_bps = 0.0;
                     } else if failed {
@@ -1080,6 +1163,41 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn finalize_never_overwrites_an_existing_file() {
+        // Audit P1 (2026-11-28): completion must land beside an
+        // existing same-named file, never on top of it.
+        let dir = std::env::temp_dir().join(format!(
+            "lanfetch-finalize-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let part = dir.join("movie.mkv.part");
+        std::fs::write(&part, b"new bytes").unwrap();
+        // Free name: lands as-is, .part consumed.
+        let landed = finalize_no_overwrite(&part, &dir, "movie.mkv").unwrap();
+        assert_eq!(landed, "movie.mkv");
+        assert!(!part.exists());
+        assert_eq!(std::fs::read(dir.join("movie.mkv")).unwrap(), b"new bytes");
+        // Taken name: the existing file's bytes are sacred — the
+        // new completion lands on the counter name.
+        let part2 = dir.join("movie.mkv.part");
+        std::fs::write(&part2, b"second download").unwrap();
+        let landed2 = finalize_no_overwrite(&part2, &dir, "movie.mkv").unwrap();
+        assert_eq!(landed2, "movie (2).mkv");
+        assert_eq!(std::fs::read(dir.join("movie.mkv")).unwrap(), b"new bytes");
+        assert_eq!(
+            std::fs::read(dir.join("movie (2).mkv")).unwrap(),
+            b"second download"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn unique_name_counters_collisions() {
         // H1: free names pass through; collisions get the
         // browser-style counter before the extension.
@@ -1104,6 +1222,51 @@ mod tests {
             unique_name("README", |n| plain.iter().any(|u| u == n)),
             "README (2)"
         );
+    }
+
+    #[test]
+    fn task_by_url_prefers_the_live_task() {
+        // Audit P2 (2026-11-28): a Completed task and its
+        // re-download share one URL — the lookup that drives the
+        // Library/Detail badges must report the LIVE task, not
+        // the first (finished) one.
+        fn fake(id: u64, url: &str, state: DlState) -> Task {
+            Task {
+                id,
+                url: url.to_string(),
+                name: "movie.mkv".to_string(),
+                total: 100,
+                validator: None,
+                segments: Vec::new(),
+                state,
+                error: None,
+                pause_flag: Arc::new(AtomicBool::new(false)),
+                pause_intent: false,
+                probing: false,
+                progress: Arc::new(Progress::new(100)),
+                speed_bps: 0.0,
+                last_tick_bytes: 0,
+                last_tick_at: std::time::Instant::now(),
+            }
+        }
+        let m = Manager::load();
+        {
+            let mut tasks = m.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            tasks.clear();
+            tasks.push(fake(1, "http://s/movie.mkv", DlState::Completed));
+            tasks.push(fake(2, "http://s/movie.mkv", DlState::Running));
+            tasks.push(fake(3, "http://s/other.mkv", DlState::Paused));
+        }
+        assert_eq!(
+            m.task_by_url("http://s/movie.mkv").map(|(s, _)| s),
+            Some(DlState::Running),
+            "the running re-download must win over the completed task"
+        );
+        assert_eq!(
+            m.task_by_url("http://s/other.mkv").map(|(s, _)| s),
+            Some(DlState::Paused)
+        );
+        assert_eq!(m.task_by_url("http://s/absent.mkv"), None);
     }
 
     #[test]

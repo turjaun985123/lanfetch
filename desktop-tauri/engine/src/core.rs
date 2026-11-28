@@ -216,6 +216,16 @@ pub fn call_following(
 
 /// Parse a `Content-Range` header ("bytes <start>-<end>/<total|*>").
 /// Returns (start, end, total) with total None for "*".
+/// HTTP statuses that mean "ask again later", not "this file is
+/// gone": rate limiting and transient server faults. The segment
+/// worker retries these through its bounded stall/backoff ladder
+/// (honoring Retry-After); every other status fails the task at
+/// once. Audit fix, 2026-11-28 (the pre-fix worker failed a
+/// download outright on a single 503).
+pub fn is_transient_status(code: u16) -> bool {
+    matches!(code, 429 | 500 | 502 | 503 | 504)
+}
+
 pub fn parse_content_range(value: &str) -> Option<(u64, u64, Option<u64>)> {
     let rest = value.trim().strip_prefix("bytes ")?.trim();
     let (range, total) = rest.split_once('/')?;
@@ -796,10 +806,17 @@ pub fn run_download(
         }
     };
     let total_known = segments.iter().all(|s| s.end != u64::MAX);
-    if total_known {
+    // The plan's expected total size, when known: every 206 the
+    // workers accept must declare exactly this total in its
+    // Content-Range (audit P1, 2026-11-28 — see the CP-2 check in
+    // the segment worker).
+    let expected_total: Option<u64> = if total_known {
         let total = segments.iter().map(|s| s.len()).sum::<u64>();
         let _ = file.set_len(total);
-    }
+        Some(total)
+    } else {
+        None
+    };
     let file = Arc::new(file);
     let seg_state: Vec<Arc<Mutex<Segment>>> = segments
         .drain(..)
@@ -837,6 +854,9 @@ pub fn run_download(
             // the segment — the old loop re-requested the remaining range
             // immediately, forever, at full speed.
             let mut stalled = 0u32;
+            // Set from a transient response's Retry-After header:
+            // the next stall sleep waits at least this long.
+            let mut retry_floor = Duration::ZERO;
             let mut last_done = seg.lock().unwrap_or_else(|e| e.into_inner()).done;
             loop {
                 if pause.load(Ordering::SeqCst) || progress.failed.load(Ordering::SeqCst) {
@@ -886,11 +906,29 @@ pub fn run_download(
                             }
                             return;
                         }
-                        ureq::Error::Status(code, _) => {
-                            progress.failed.store(true, Ordering::SeqCst);
-                            *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
-                                Some(format!("segment failed: HTTP {code}"));
-                            return;
+                        ureq::Error::Status(code, r) => {
+                            if is_transient_status(*code) {
+                                // Audit fix (2026-11-28): 429/5xx is
+                                // the server asking for patience, not
+                                // a verdict on the file — retry
+                                // through the stall/backoff ladder
+                                // below (bounded by the same budget),
+                                // honoring Retry-After when sent.
+                                // The HTTP-date form is not parsed;
+                                // the ladder's own backoff applies.
+                                if let Some(secs) = r
+                                    .header("Retry-After")
+                                    .and_then(|v| v.trim().parse::<u64>().ok())
+                                {
+                                    retry_floor = Duration::from_secs(secs.min(300));
+                                }
+                                None
+                            } else {
+                                progress.failed.store(true, Ordering::SeqCst);
+                                *progress.message.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(format!("segment failed: HTTP {code}"));
+                                return;
+                            }
                         }
                         // Transport errors (refused, reset, timeout) retry
                         // through the stall/backoff path below.
@@ -915,8 +953,27 @@ pub fn run_download(
                         usable = resp
                             .header("Content-Range")
                             .and_then(parse_content_range)
-                            .map(|(cs, ce, _total)| {
-                                cs == from && ce >= cs && (to == u64::MAX || ce == to)
+                            .map(|(cs, ce, total)| {
+                                cs == from
+                                    && ce >= cs
+                                    && (to == u64::MAX || ce == to)
+                                    // Audit P1 (2026-11-28): the
+                                    // declared total must also match
+                                    // the plan's expected size. A
+                                    // server that swaps the file
+                                    // mid-download (or ignores
+                                    // If-Range) can answer a perfectly
+                                    // in-range 206 for a DIFFERENT
+                                    // version of the file — start/end
+                                    // alone cannot detect that, the
+                                    // total can. A missing total with
+                                    // a known plan size is likewise
+                                    // unusable.
+                                    && match (total, expected_total) {
+                                        (Some(t), Some(exp)) => t == exp,
+                                        (None, Some(_)) => false,
+                                        _ => true,
+                                    }
                             })
                             .unwrap_or(false);
                     }
@@ -1013,7 +1070,10 @@ pub fn run_download(
                             Some("download stalled — server stopped sending data".into());
                         return;
                     }
-                    let backoff_ms = (250u64 << stalled.min(4)).min(4000);
+                    let backoff_ms = (250u64 << stalled.min(4))
+                        .min(4000)
+                        .max(retry_floor.as_millis() as u64);
+                    retry_floor = Duration::ZERO;
                     let mut slept = 0u64;
                     while slept < backoff_ms {
                         if pause.load(Ordering::SeqCst) || progress.failed.load(Ordering::SeqCst) {
@@ -1125,6 +1185,16 @@ mod tests {
         assert_eq!(parse_content_range("items 0-1/2"), None);
         assert_eq!(parse_content_range("bytes 5-3/10"), Some((5, 3, Some(10))));
         assert_eq!(parse_content_range(""), None);
+    }
+
+    #[test]
+    fn transient_statuses_are_the_retryable_set() {
+        for code in [429u16, 500, 502, 503, 504] {
+            assert!(is_transient_status(code), "{code} must be transient");
+        }
+        for code in [200u16, 206, 301, 400, 401, 403, 404, 410, 416, 501] {
+            assert!(!is_transient_status(code), "{code} must fail at once");
+        }
     }
 
     #[test]
